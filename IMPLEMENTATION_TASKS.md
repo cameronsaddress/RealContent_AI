@@ -2,6 +2,8 @@
 
 Complete checklist for building all 10 workflows with exact specifications.
 
+**RECOMMENDED APPROACH**: Use built-in nodes and community nodes where available, start from templates.
+
 ---
 
 ## PHASE 0: Prerequisites
@@ -19,7 +21,19 @@ mkdir -p /home/canderson/n8n/assets/{fonts,logos,audio,videos,avatar,captions,ou
 - [ ] Download Montserrat-Bold.ttf to `assets/fonts/`
 - [ ] Add logo.png to `assets/logos/`
 
-### 0.3 Get Required API Keys
+### 0.3 Install Community Nodes
+In n8n: Settings → Community Nodes → Install
+
+| Package Name | Service | Purpose |
+|--------------|---------|---------|
+| `@apify/n8n-nodes-apify` | Apify | Web scraping (TikTok, Reddit, YouTube, X) |
+| `@elevenlabs/n8n-nodes-elevenlabs` | ElevenLabs | Voice cloning & TTS |
+| `n8n-nodes-heygen` | HeyGen | AI avatar video generation |
+| `n8n-nodes-pexels` | Pexels | Stock video search |
+| `n8n-nodes-blotato` | Blotato | Multi-platform publishing |
+| `n8n-nodes-ffmpeg` | FFmpeg | Video processing (optional - can use Execute Command) |
+
+### 0.4 Get Required API Keys
 - [ ] **Apify**: https://console.apify.com/account/integrations
 - [ ] **HeyGen**: https://app.heygen.com/settings/api
 - [ ] **Pexels**: https://www.pexels.com/api/new/
@@ -27,7 +41,7 @@ mkdir -p /home/canderson/n8n/assets/{fonts,logos,audio,videos,avatar,captions,ou
 - [ ] **ElevenLabs Voice ID**: Clone voice and get ID from https://elevenlabs.io/voice-lab
 - [ ] **HeyGen Avatar ID**: Create avatar and get ID from HeyGen dashboard
 
-### 0.4 Update .env File
+### 0.5 Update .env File
 Add missing keys:
 ```
 APIFY_API_KEY=
@@ -38,51 +52,92 @@ BLOTATO_API_KEY=
 ELEVENLABS_VOICE_ID=
 ```
 
+### 0.6 Reference Templates to Import/Modify
+These templates from n8n.io can be imported and modified:
+
+| Template | URL | Use For |
+|----------|-----|---------|
+| Automated news video with HeyGen | https://n8n.io/workflows/2897 | WF6: Avatar generation |
+| AI videos to social media with Blotato | https://n8n.io/workflows/3816 | WF9: Publishing |
+| ElevenLabs voice synthesis | Search n8n.io/workflows | WF5: Voiceover |
+| Apify scraping | Search n8n.io/workflows | WF1: Content discovery |
+
+---
+
+## Built-in vs Community Nodes Reference
+
+### Built-in Nodes (No Installation Needed)
+| Node | Use Case |
+|------|----------|
+| Schedule Trigger | Timed runs (daily 6am, every 15 min, weekly) |
+| Webhook Trigger | UI-triggered events from React dashboard |
+| HTTP Request | Any API without dedicated node |
+| Postgres | Database queries (content_ideas, scripts, assets) |
+| Execute Command | Shell commands (FFmpeg in container) |
+| OpenRouter Chat Model | Grok 4.1 via OpenRouter API |
+| OpenAI | Whisper transcription |
+| If | Conditional logic (score >= 7, status checks) |
+| Merge | Combining data from parallel paths |
+| Code | Custom JavaScript transformation |
+| Wait | Polling delays (HeyGen completion) |
+| Execute Workflow | Chain workflows together |
+
+### Community Nodes (Install Required)
+| Node | Package | Use Case |
+|------|---------|----------|
+| Apify | `@apify/n8n-nodes-apify` | Run scraping actors |
+| ElevenLabs | `@elevenlabs/n8n-nodes-elevenlabs` | Text-to-speech |
+| HeyGen | `n8n-nodes-heygen` | Avatar video generation |
+| Pexels | `n8n-nodes-pexels` | Stock video search |
+| Blotato | `n8n-nodes-blotato` | Multi-platform publish |
+
 ---
 
 ## PHASE 1: n8n Credentials Setup
 
-### 1.1 Create OpenRouter Credential
-- [ ] Go to n8n → Settings → Credentials → Add Credential
-- [ ] Type: **Header Auth**
-- [ ] Name: `openrouter`
-- [ ] Header Name: `Authorization`
-- [ ] Header Value: `Bearer {{ $env.OPENROUTER_API_KEY }}`
+**NOTE**: Community nodes have their own credential types. After installing each community node, its credential type becomes available.
 
-### 1.2 Create OpenAI Credential
+### 1.1 OpenRouter Credential (Built-in)
+- [ ] Go to n8n → Settings → Credentials → Add Credential
+- [ ] Search for: **OpenRouter**
+- [ ] Type: OpenRouter API (built-in, uses OpenAI-compatible format)
+- [ ] API Key: Your OpenRouter API key
+- [ ] Base URL: `https://openrouter.ai/api/v1` (should be default)
+
+### 1.2 OpenAI Credential (Built-in)
 - [ ] Type: **OpenAI API**
 - [ ] Name: `openai`
-- [ ] API Key: Use from .env
+- [ ] API Key: Your OpenAI API key (for Whisper only)
 
-### 1.3 Create ElevenLabs Credential
-- [ ] Type: **Header Auth**
-- [ ] Name: `elevenlabs`
-- [ ] Header Name: `xi-api-key`
-- [ ] Header Value: `{{ $env.ELEVENLABS_API_KEY }}`
+### 1.3 ElevenLabs Credential (Community Node)
+- [ ] **First**: Install `@elevenlabs/n8n-nodes-elevenlabs` community node
+- [ ] Type: **ElevenLabs API** (appears after installing node)
+- [ ] API Key: Your ElevenLabs API key
 
-### 1.4 Create HeyGen Credential
-- [ ] Type: **Header Auth**
-- [ ] Name: `heygen`
-- [ ] Header Name: `X-Api-Key`
-- [ ] Header Value: `{{ $env.HEYGEN_API_KEY }}`
+### 1.4 HeyGen Credential (Community Node)
+- [ ] **First**: Install `n8n-nodes-heygen` community node
+- [ ] Type: **HeyGen API** (appears after installing node)
+- [ ] API Key: Your HeyGen API key
 
-### 1.5 Create Apify Credential
-- [ ] Type: **Header Auth**
-- [ ] Name: `apify`
-- [ ] Header Name: `Authorization`
-- [ ] Header Value: `Bearer {{ $env.APIFY_API_KEY }}`
+### 1.5 Apify Credential (Community Node)
+- [ ] **First**: Install `@apify/n8n-nodes-apify` community node
+- [ ] Type: **Apify API** (appears after installing node)
+- [ ] API Token: Your Apify API token
 
-### 1.6 Create Pexels Credential
-- [ ] Type: **Header Auth**
-- [ ] Name: `pexels`
-- [ ] Header Name: `Authorization`
-- [ ] Header Value: `{{ $env.PEXELS_API_KEY }}`
+### 1.6 Pexels Credential (Community Node)
+- [ ] **First**: Install `n8n-nodes-pexels` community node
+- [ ] Type: **Pexels API** (appears after installing node)
+- [ ] API Key: Your Pexels API key
 
-### 1.7 Create Blotato Credential
+### 1.7 Blotato Credential (Community Node)
+- [ ] **First**: Install `n8n-nodes-blotato` community node
+- [ ] Type: **Blotato API** (appears after installing node)
+- [ ] API Key: Your Blotato API key
+
+### 1.8 HTTP Header Auth Fallback (if community nodes unavailable)
+If any community node doesn't install, create Header Auth credentials:
 - [ ] Type: **Header Auth**
-- [ ] Name: `blotato`
-- [ ] Header Name: `Authorization`
-- [ ] Header Value: `Bearer {{ $env.BLOTATO_API_KEY }}`
+- [ ] Configure header name/value per API documentation
 
 ---
 

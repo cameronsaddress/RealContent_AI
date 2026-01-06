@@ -180,6 +180,38 @@ class PipelineRun(Base):
     run_metadata = Column(JSONB)
 
 
+class ScrapeRunStatus(str, enum.Enum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class ScrapeRun(Base):
+    __tablename__ = "scrape_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    niche = Column(Text)
+    hashtags = Column(JSONB)
+    platforms = Column(JSONB)
+    status = Column(SQLEnum(ScrapeRunStatus, name="scrape_run_status", create_type=False), default=ScrapeRunStatus.pending)
+    results_count = Column(Integer, default=0)
+    results_data = Column(JSONB)
+    error_message = Column(Text)
+    started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True))
+
+
+class NichePreset(Base):
+    __tablename__ = "niche_presets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(Text, unique=True)
+    keywords = Column(JSONB)
+    hashtags = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 def get_db():
     db = SessionLocal()
     try:

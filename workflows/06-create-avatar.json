@@ -1,0 +1,397 @@
+{
+  "name": "06-CREATE-AVATAR",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/scripts/{{ $json.script_id }}",
+        "options": {}
+      },
+      "id": "get-script",
+      "name": "Get Script Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for HeyGen API\nconst script = $input.first().json;\nconst input = $('When Called by Another Workflow').first().json;\n\nreturn [{\n  json: {\n    script_id: script.id,\n    content_idea_id: script.content_idea_id,\n    audio_path: input.audio_path,\n    voice_track_id: input.voice_track_id,\n    duration_seconds: input.duration_seconds,\n    script_text: script.full_script || script.script\n  }\n}];"
+      },
+      "id": "prepare-data",
+      "name": "Prepare HeyGen Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.heygen.com/v2/video/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"video_inputs\": [\n    {\n      \"character\": {\n        \"type\": \"avatar\",\n        \"avatar_id\": \"{{ $env.HEYGEN_AVATAR_ID || 'Kristin_pubblic_3_20240108' }}\",\n        \"avatar_style\": \"normal\"\n      },\n      \"voice\": {\n        \"type\": \"audio\",\n        \"audio_url\": \"{{ $env.N8N_PUBLIC_URL || 'http://100.83.153.43:5678' }}/webhook/serve-audio/{{ $json.script_id }}\"\n      },\n      \"background\": {\n        \"type\": \"color\",\n        \"value\": \"#00FF00\"\n      }\n    }\n  ],\n  \"dimension\": {\n    \"width\": 1080,\n    \"height\": 1920\n  },\n  \"aspect_ratio\": \"9:16\",\n  \"test\": false\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "create-heygen-video",
+      "name": "Create HeyGen Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract video generation ID\nconst response = $input.first().json;\nconst prepData = $('Prepare HeyGen Data').first().json;\n\nif (!response.data?.video_id) {\n  throw new Error(`HeyGen API error: ${JSON.stringify(response)}`);\n}\n\nreturn [{\n  json: {\n    script_id: prepData.script_id,\n    content_idea_id: prepData.content_idea_id,\n    heygen_video_id: response.data.video_id,\n    voice_track_id: prepData.voice_track_id\n  }\n}];"
+      },
+      "id": "extract-video-id",
+      "name": "Extract Video ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait-initial",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1250, 300],
+      "webhookId": "heygen-wait-1"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.heygen.com/v1/video_status.get?video_id={{ $json.heygen_video_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "check-status",
+      "name": "Check Video Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-completed",
+              "leftValue": "={{ $json.data?.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-completed",
+      "name": "Video Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-failed",
+              "leftValue": "={{ $json.data?.status }}",
+              "rightValue": "failed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-failed",
+      "name": "Video Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "wait-retry",
+      "name": "Wait 15s & Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2250, 500],
+      "webhookId": "heygen-wait-2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle failed video generation\nconst data = $input.first().json;\nthrow new Error(`HeyGen video generation failed: ${data.data?.error || 'Unknown error'}`);"
+      },
+      "id": "handle-failure",
+      "name": "Handle Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare for retry - pass through heygen_video_id\nconst statusResponse = $('Check Video Status').first().json;\nconst extractData = $('Extract Video ID').first().json;\n\nreturn [{\n  json: {\n    script_id: extractData.script_id,\n    content_idea_id: extractData.content_idea_id,\n    heygen_video_id: extractData.heygen_video_id,\n    voice_track_id: extractData.voice_track_id\n  }\n}];"
+      },
+      "id": "prep-retry",
+      "name": "Prep for Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Check Video Status').first().json.data.video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "download-avatar",
+      "name": "Download Avatar Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 100]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/assets/avatar/{{ $('Extract Video ID').first().json.script_id }}_avatar.mp4",
+        "options": {}
+      },
+      "id": "save-avatar",
+      "name": "Save Avatar Video",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [2250, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/avatar-videos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"script_id\": {{ $('Extract Video ID').first().json.script_id }},\n  \"heygen_video_id\": \"{{ $('Extract Video ID').first().json.heygen_video_id }}\",\n  \"local_path\": \"/home/node/assets/avatar/{{ $('Extract Video ID').first().json.script_id }}_avatar.mp4\",\n  \"status\": \"completed\"\n}",
+        "options": {}
+      },
+      "id": "save-avatar-record",
+      "name": "Save Avatar Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 100]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $('Extract Video ID').first().json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"avatar_ready\"\n}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2750, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for next workflow (07-COMBINE-VIDS)\nconst extractData = $('Extract Video ID').first().json;\nconst avatarRecord = $('Save Avatar Record').first().json;\n\nreturn [{\n  json: {\n    script_id: extractData.script_id,\n    content_idea_id: extractData.content_idea_id,\n    avatar_video_id: avatarRecord.id,\n    avatar_path: `/home/node/assets/avatar/${extractData.script_id}_avatar.mp4`,\n    voice_track_id: extractData.voice_track_id\n  }\n}];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare for Combine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3000, 100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-combine",
+      "name": "Execute 07-COMBINE-VIDS",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [3250, 100]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Get Script Details", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Script Details": {
+      "main": [
+        [{ "node": "Prepare HeyGen Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare HeyGen Data": {
+      "main": [
+        [{ "node": "Create HeyGen Video", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create HeyGen Video": {
+      "main": [
+        [{ "node": "Extract Video ID", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Video ID": {
+      "main": [
+        [{ "node": "Wait 30s", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 30s": {
+      "main": [
+        [{ "node": "Check Video Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Video Status": {
+      "main": [
+        [{ "node": "Video Completed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Video Completed?": {
+      "main": [
+        [{ "node": "Download Avatar Video", "type": "main", "index": 0 }],
+        [{ "node": "Video Failed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Video Failed?": {
+      "main": [
+        [{ "node": "Handle Failure", "type": "main", "index": 0 }],
+        [{ "node": "Wait 15s & Retry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 15s & Retry": {
+      "main": [
+        [{ "node": "Prep for Retry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prep for Retry": {
+      "main": [
+        [{ "node": "Check Video Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Download Avatar Video": {
+      "main": [
+        [{ "node": "Save Avatar Video", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Avatar Video": {
+      "main": [
+        [{ "node": "Save Avatar Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Avatar Record": {
+      "main": [
+        [{ "node": "Update Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [{ "node": "Prepare for Combine", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Combine": {
+      "main": [
+        [{ "node": "Execute 07-COMBINE-VIDS", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

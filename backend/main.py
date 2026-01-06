@@ -5,11 +5,14 @@ from sqlalchemy import func, text
 from typing import List, Optional
 import os
 
+import httpx
 from models import (
     get_db, ContentIdea as ContentIdeaModel, Script as ScriptModel,
     Asset as AssetModel, Published as PublishedModel, Analytics as AnalyticsModel,
     PipelineRun as PipelineRunModel, ContentStatus as DBContentStatus,
-    PillarType as DBPillarType, PlatformType as DBPlatformType
+    PillarType as DBPillarType, PlatformType as DBPlatformType,
+    ScrapeRun as ScrapeRunModel, NichePreset as NichePresetModel,
+    ScrapeRunStatus as DBScrapeRunStatus
 )
 from schemas import (
     ContentIdea, ContentIdeaCreate, ContentIdeaUpdate,
@@ -17,7 +20,9 @@ from schemas import (
     Asset, AssetCreate, AssetUpdate,
     Published, PublishedCreate, PublishedUpdate,
     Analytics, AnalyticsCreate, AnalyticsUpdate,
-    PipelineOverview, PipelineStats, ContentStatus, PillarType, PlatformType
+    PipelineOverview, PipelineStats, ContentStatus, PillarType, PlatformType,
+    ScrapeRun, ScrapeRunCreate, ScrapeResponse, ScrapeRunStatus,
+    NichePreset, NichePresetCreate
 )
 
 app = FastAPI(
@@ -404,3 +409,148 @@ def bulk_reject_ideas(idea_ids: List[int], db: Session = Depends(get_db)):
     ).update({"status": "rejected"}, synchronize_session=False)
     db.commit()
     return {"message": f"Rejected {updated} ideas"}
+
+
+# ==================== Trend Scraping ====================
+
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://n8n:5678/webhook/scrape-trends")
+
+
+@app.post("/api/scrape/run", response_model=ScrapeResponse)
+async def run_scrape(scrape_request: ScrapeRunCreate, db: Session = Depends(get_db)):
+    """Trigger a trend scrape with niche targeting"""
+    # Create scrape run record
+    db_run = ScrapeRunModel(
+        niche=scrape_request.niche,
+        hashtags=scrape_request.hashtags,
+        platforms=scrape_request.platforms,
+        status=DBScrapeRunStatus.running
+    )
+    db.add(db_run)
+    db.commit()
+    db.refresh(db_run)
+
+    # Build hashtags from niche if not provided
+    hashtags = scrape_request.hashtags
+    if not hashtags:
+        # Generate hashtags from niche keywords
+        niche_words = scrape_request.niche.lower().replace(',', ' ').split()
+        hashtags = [w.strip() for w in niche_words if len(w.strip()) > 2]
+
+    # Call n8n webhook
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                N8N_WEBHOOK_URL,
+                json={
+                    "niche": scrape_request.niche,
+                    "hashtags": hashtags,
+                    "platforms": scrape_request.platforms or ["tiktok", "instagram"],
+                    "results_per_platform": 20
+                }
+            )
+            result = response.json()
+
+        # Update scrape run with results
+        db_run.status = DBScrapeRunStatus.completed if result.get("success") else DBScrapeRunStatus.failed
+        db_run.results_count = result.get("analyzedCount", 0)
+        db_run.results_data = result
+        db_run.completed_at = func.now()
+        if not result.get("success"):
+            db_run.error_message = result.get("error", "Unknown error")
+        db.commit()
+
+        return ScrapeResponse(**result)
+
+    except Exception as e:
+        db_run.status = DBScrapeRunStatus.failed
+        db_run.error_message = str(e)
+        db_run.completed_at = func.now()
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Scrape failed: {str(e)}")
+
+
+@app.get("/api/scrape/runs", response_model=List[ScrapeRun])
+def list_scrape_runs(
+    limit: int = Query(default=20, le=100),
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """List recent scrape runs"""
+    return db.query(ScrapeRunModel).order_by(
+        ScrapeRunModel.started_at.desc()
+    ).offset(offset).limit(limit).all()
+
+
+@app.get("/api/scrape/runs/{run_id}", response_model=ScrapeRun)
+def get_scrape_run(run_id: int, db: Session = Depends(get_db)):
+    """Get a specific scrape run with results"""
+    run = db.query(ScrapeRunModel).filter(ScrapeRunModel.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Scrape run not found")
+    return run
+
+
+@app.post("/api/scrape/use-trend")
+def use_trend_as_idea(trend: dict, db: Session = Depends(get_db)):
+    """Convert a trend into a content idea for the pipeline"""
+    # Map platform string to enum
+    platform_map = {
+        "tiktok": DBPlatformType.tiktok,
+        "instagram": DBPlatformType.instagram,
+        "youtube": DBPlatformType.youtube
+    }
+    # Map pillar string to enum
+    pillar_map = {
+        "market_intelligence": DBPillarType.market_intelligence,
+        "educational_tips": DBPillarType.educational_tips,
+        "lifestyle_local": DBPillarType.lifestyle_local,
+        "brand_humanization": DBPillarType.brand_humanization
+    }
+
+    db_idea = ContentIdeaModel(
+        source_url=trend.get("url"),
+        source_platform=platform_map.get(trend.get("platform")),
+        original_text=trend.get("title", ""),
+        pillar=pillar_map.get(trend.get("pillar")),
+        viral_score=trend.get("viral_score", 7),
+        suggested_hook=trend.get("suggested_hook", ""),
+        status=DBContentStatus.pending
+    )
+    db.add(db_idea)
+    db.commit()
+    db.refresh(db_idea)
+    return {"message": "Trend added to pipeline", "content_idea_id": db_idea.id}
+
+
+# ==================== Niche Presets ====================
+
+@app.get("/api/niche-presets", response_model=List[NichePreset])
+def list_niche_presets(db: Session = Depends(get_db)):
+    """List all saved niche presets"""
+    return db.query(NichePresetModel).order_by(NichePresetModel.name).all()
+
+
+@app.post("/api/niche-presets", response_model=NichePreset)
+def create_niche_preset(preset: NichePresetCreate, db: Session = Depends(get_db)):
+    """Create a new niche preset"""
+    db_preset = NichePresetModel(
+        name=preset.name,
+        keywords=preset.keywords,
+        hashtags=preset.hashtags
+    )
+    db.add(db_preset)
+    db.commit()
+    db.refresh(db_preset)
+    return db_preset
+
+
+@app.delete("/api/niche-presets/{preset_id}")
+def delete_niche_preset(preset_id: int, db: Session = Depends(get_db)):
+    """Delete a niche preset"""
+    preset = db.query(NichePresetModel).filter(NichePresetModel.id == preset_id).first()
+    if not preset:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    db.delete(preset)
+    db.commit()
+    return {"message": "Preset deleted"}

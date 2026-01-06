@@ -1,0 +1,313 @@
+{
+  "name": "04-GET-VIDEO",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/scripts/{{ $json.script_id }}",
+        "options": {}
+      },
+      "id": "get-script",
+      "name": "Get Script Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract B-roll search terms from script\nconst script = $input.first().json;\nconst suggestedBroll = script.suggested_broll || [];\n\n// Create search queries for each B-roll scene\nconst searches = suggestedBroll.map((scene, index) => ({\n  json: {\n    script_id: script.id,\n    content_idea_id: script.content_idea_id,\n    scene_index: index,\n    search_query: scene,\n    // Add real estate context to generic searches\n    enhanced_query: scene.toLowerCase().includes('real estate') || \n                   scene.toLowerCase().includes('home') || \n                   scene.toLowerCase().includes('house') \n                   ? scene \n                   : `${scene} real estate`\n  }\n}));\n\n// If no B-roll suggestions, create default searches based on pillar\nif (searches.length === 0) {\n  const pillar = script.pillar || 'educational_tips';\n  const defaults = {\n    market_intelligence: ['real estate market data', 'house exterior modern', 'city skyline'],\n    educational_tips: ['home inspection', 'signing documents', 'house tour'],\n    lifestyle_local: ['neighborhood community', 'local coffee shop', 'park families'],\n    brand_humanization: ['business professional', 'handshake meeting', 'office workspace']\n  };\n  const queries = defaults[pillar] || defaults.educational_tips;\n  return queries.map((q, i) => ({\n    json: {\n      script_id: script.id,\n      content_idea_id: script.content_idea_id,\n      scene_index: i,\n      search_query: q,\n      enhanced_query: q\n    }\n  }));\n}\n\nreturn searches;"
+      },
+      "id": "prepare-searches",
+      "name": "Prepare Search Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.pexels.com/videos/search?query={{ encodeURIComponent($json.enhanced_query) }}&per_page=3&orientation=portrait",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "search-pexels",
+      "name": "Search Pexels Videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pexels",
+          "name": "pexels"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Pexels results and select best video\nconst input = $input.first().json;\nconst videos = input.videos || [];\nconst prevData = $('Prepare Search Queries').first().json;\n\nif (videos.length === 0) {\n  return [{\n    json: {\n      script_id: prevData.script_id,\n      content_idea_id: prevData.content_idea_id,\n      scene_index: prevData.scene_index,\n      search_query: prevData.search_query,\n      video_found: false,\n      error: 'No videos found'\n    }\n  }];\n}\n\n// Select best video (prefer HD, portrait orientation)\nconst video = videos[0];\nconst videoFiles = video.video_files || [];\n\n// Find HD portrait version\nlet selectedFile = videoFiles.find(f => f.quality === 'hd' && f.height > f.width) ||\n                   videoFiles.find(f => f.quality === 'hd') ||\n                   videoFiles[0];\n\nreturn [{\n  json: {\n    script_id: prevData.script_id,\n    content_idea_id: prevData.content_idea_id,\n    scene_index: prevData.scene_index,\n    search_query: prevData.search_query,\n    video_found: true,\n    pexels_id: video.id,\n    video_url: selectedFile.link,\n    video_width: selectedFile.width,\n    video_height: selectedFile.height,\n    duration: video.duration,\n    photographer: video.user.name\n  }\n}];"
+      },
+      "id": "select-video",
+      "name": "Select Best Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "video-found",
+              "leftValue": "={{ $json.video_found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-video-found",
+      "name": "Video Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "download-video",
+      "name": "Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/assets/videos/{{ $('Select Best Video').first().json.script_id }}_scene{{ $('Select Best Video').first().json.scene_index }}.mp4",
+        "options": {}
+      },
+      "id": "save-video",
+      "name": "Save Video File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1750, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/broll-clips",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"script_id\": {{ $('Select Best Video').first().json.script_id }},\n  \"scene_index\": {{ $('Select Best Video').first().json.scene_index }},\n  \"search_query\": \"{{ $('Select Best Video').first().json.search_query }}\",\n  \"pexels_id\": {{ $('Select Best Video').first().json.pexels_id }},\n  \"local_path\": \"/home/node/assets/videos/{{ $('Select Best Video').first().json.script_id }}_scene{{ $('Select Best Video').first().json.scene_index }}.mp4\",\n  \"duration\": {{ $('Select Best Video').first().json.duration }},\n  \"photographer\": \"{{ $('Select Best Video').first().json.photographer }}\"\n}",
+        "options": {}
+      },
+      "id": "save-broll-record",
+      "name": "Save B-Roll Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {},
+      "id": "no-video",
+      "name": "No Video Found",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all B-roll results\nconst items = $input.all();\nconst firstItem = items[0]?.json || {};\n\n// Get script_id from any available source\nlet scriptId = firstItem.script_id;\nlet contentIdeaId = firstItem.content_idea_id;\n\n// Try to get from saved records\nif (!scriptId) {\n  const savedRecords = $('Save B-Roll Record').all();\n  if (savedRecords.length > 0) {\n    scriptId = savedRecords[0].json.script_id;\n  }\n}\n\nconst successCount = items.filter(i => i.json.id || i.json.pexels_id).length;\n\nreturn [{\n  json: {\n    script_id: scriptId,\n    content_idea_id: contentIdeaId,\n    broll_clips_found: successCount,\n    status: successCount > 0 ? 'success' : 'partial'\n  }\n}];"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"video_ready\"\n}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2750, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for next workflow (05-CREATE-VOICE)\nconst data = $input.first().json;\n\nreturn [{\n  json: {\n    script_id: data.script_id,\n    content_idea_id: data.content_idea_id\n  }\n}];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare for Voice Gen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3000, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-voice",
+      "name": "Execute 05-CREATE-VOICE",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [3250, 300]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Get Script Details", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Script Details": {
+      "main": [
+        [{ "node": "Prepare Search Queries", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Search Queries": {
+      "main": [
+        [{ "node": "Search Pexels Videos", "type": "main", "index": 0 }]
+      ]
+    },
+    "Search Pexels Videos": {
+      "main": [
+        [{ "node": "Select Best Video", "type": "main", "index": 0 }]
+      ]
+    },
+    "Select Best Video": {
+      "main": [
+        [{ "node": "Video Found?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Video Found?": {
+      "main": [
+        [{ "node": "Download Video", "type": "main", "index": 0 }],
+        [{ "node": "No Video Found", "type": "main", "index": 0 }]
+      ]
+    },
+    "Download Video": {
+      "main": [
+        [{ "node": "Save Video File", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Video File": {
+      "main": [
+        [{ "node": "Save B-Roll Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save B-Roll Record": {
+      "main": [
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "No Video Found": {
+      "main": [
+        [{ "node": "Merge Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [{ "node": "Aggregate Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [{ "node": "Update Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [{ "node": "Prepare for Voice Gen", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Voice Gen": {
+      "main": [
+        [{ "node": "Execute 05-CREATE-VOICE", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -20,8 +20,15 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       # API Keys for n8n workflows
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - APIFY_API_KEY=${APIFY_API_KEY}
+      - HEYGEN_API_KEY=${HEYGEN_API_KEY}
+      - HEYGEN_AVATAR_ID=${HEYGEN_AVATAR_ID}
+      - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - BLOTATO_API_KEY=${BLOTATO_API_KEY}
+      - N8N_PUBLIC_URL=${N8N_PUBLIC_URL}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./workflows:/home/node/workflows
@@ -55,12 +62,14 @@ services:
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/scrape-trends
     ports:
       - "8000:8000"
     volumes:
       - ./assets:/app/assets
     depends_on:
       - postgres
+      - n8n
 
   frontend:
     build:

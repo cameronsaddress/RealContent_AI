@@ -142,9 +142,49 @@ CREATE TABLE pipeline_runs (
     metadata JSONB
 );
 
+-- Scrape run status enum
+CREATE TYPE scrape_run_status AS ENUM (
+    'pending',
+    'running',
+    'completed',
+    'failed'
+);
+
+-- Scrape runs table (for tracking trend scrapes)
+CREATE TABLE scrape_runs (
+    id SERIAL PRIMARY KEY,
+    niche TEXT,
+    hashtags JSONB,
+    platforms JSONB,
+    status scrape_run_status DEFAULT 'pending',
+    results_count INTEGER DEFAULT 0,
+    results_data JSONB,
+    error_message TEXT,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Niche presets table (saved niche configurations)
+CREATE TABLE niche_presets (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    keywords JSONB,
+    hashtags JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Insert default niche presets
+INSERT INTO niche_presets (name, keywords, hashtags) VALUES
+('Real Estate', '["real estate", "realtor", "home buying", "selling home"]', '["realestate", "realtor", "homebuying", "firsttimehomebuyer", "housingmarket"]'),
+('Mortgage', '["mortgage", "home loan", "refinance", "interest rates"]', '["mortgage", "homeloan", "refinance", "mortgagetips", "homebuyer"]'),
+('Investment', '["real estate investing", "rental property", "property investment"]', '["realestateinvesting", "rentalproperty", "passiveincome", "investingtips"]'),
+('Luxury Homes', '["luxury real estate", "million dollar homes", "luxury living"]', '["luxuryrealestate", "luxuryhomes", "milliondollarlisting", "dreamhome"]');
+
 -- Create indexes for common queries
 CREATE INDEX idx_content_ideas_status ON content_ideas(status);
 CREATE INDEX idx_content_ideas_pillar ON content_ideas(pillar);
+CREATE INDEX idx_scrape_runs_status ON scrape_runs(status);
+CREATE INDEX idx_scrape_runs_started ON scrape_runs(started_at DESC);
 CREATE INDEX idx_content_ideas_created ON content_ideas(created_at DESC);
 CREATE INDEX idx_scripts_status ON scripts(status);
 CREATE INDEX idx_assets_status ON assets(status);

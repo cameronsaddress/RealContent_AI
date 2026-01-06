@@ -1,0 +1,279 @@
+{
+  "name": "02-AUTO-TRIGGER",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-pipeline",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 400],
+      "webhookId": "trigger-pipeline"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-triggers",
+      "name": "Merge Triggers",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-specific-id",
+              "leftValue": "={{ $json.body?.content_idea_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-specific-id",
+      "name": "Has Specific ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/content-ideas/{{ $json.body.content_idea_id }}",
+        "options": {}
+      },
+      "id": "get-specific-idea",
+      "name": "Get Specific Idea",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://backend:8000/api/content-ideas?status=approved&limit=1",
+        "options": {}
+      },
+      "id": "get-next-approved",
+      "name": "Get Next Approved",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle both single item and array responses\nconst data = $input.first().json;\n\nif (Array.isArray(data)) {\n  if (data.length === 0) {\n    return [{ json: { hasContent: false } }];\n  }\n  return [{ json: { ...data[0], hasContent: true } }];\n} else if (data && data.id) {\n  return [{ json: { ...data, hasContent: true } }];\n} else {\n  return [{ json: { hasContent: false } }];\n}"
+      },
+      "id": "normalize-result",
+      "name": "Normalize Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [950, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-content",
+              "leftValue": "={{ $json.hasContent }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-content",
+      "name": "Has Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1150, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $json.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"script_generating\"\n}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "Update to script_generating",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for next workflow\nconst idea = $('Normalize Result').first().json;\n\nreturn [{\n  json: {\n    content_idea_id: idea.id,\n    original_text: idea.original_text,\n    pillar: idea.pillar,\n    suggested_hook: idea.suggested_hook,\n    source_platform: idea.source_platform,\n    source_url: idea.source_url\n  }\n}];"
+      },
+      "id": "prepare-data",
+      "name": "Prepare for Script Gen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 200]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-script-gen",
+      "name": "Execute 03-SCRIPT-GEN",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1800, 200]
+    },
+    {
+      "parameters": {},
+      "id": "no-content",
+      "name": "No Content Available",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1400, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"message\": \"Pipeline triggered\", \"content_idea_id\": $('Normalize Result').first().json.id } }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 200]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [{ "node": "Merge Triggers", "type": "main", "index": 0 }]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [{ "node": "Merge Triggers", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Triggers": {
+      "main": [
+        [{ "node": "Has Specific ID?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Specific ID?": {
+      "main": [
+        [{ "node": "Get Specific Idea", "type": "main", "index": 0 }],
+        [{ "node": "Get Next Approved", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Specific Idea": {
+      "main": [
+        [{ "node": "Normalize Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Next Approved": {
+      "main": [
+        [{ "node": "Normalize Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Normalize Result": {
+      "main": [
+        [{ "node": "Has Content?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Content?": {
+      "main": [
+        [{ "node": "Update to script_generating", "type": "main", "index": 0 }],
+        [{ "node": "No Content Available", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update to script_generating": {
+      "main": [
+        [{ "node": "Prepare for Script Gen", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Script Gen": {
+      "main": [
+        [{ "node": "Execute 03-SCRIPT-GEN", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute 03-SCRIPT-GEN": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

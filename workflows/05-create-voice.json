@@ -1,0 +1,243 @@
+{
+  "name": "05-CREATE-VOICE",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/scripts/{{ $json.script_id }}",
+        "options": {}
+      },
+      "id": "get-script",
+      "name": "Get Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare script text for TTS\nconst script = $input.first().json;\n\n// Clean script for TTS:\n// - Remove [PAUSE] markers (ElevenLabs handles pacing)\n// - Convert *emphasis* to SSML-like cues\n// - Clean up formatting\nlet text = script.full_script || script.script || '';\n\n// Remove [PAUSE] - ElevenLabs will add natural pauses\ntext = text.replace(/\\[PAUSE\\]/gi, '...');\n\n// Remove emphasis markers (keep the text)\ntext = text.replace(/\\*(.*?)\\*/g, '$1');\n\n// Clean up multiple spaces and newlines\ntext = text.replace(/\\s+/g, ' ').trim();\n\n// Append CTA if present\nif (script.cta) {\n  text = text + ' ... ' + script.cta;\n}\n\nreturn [{\n  json: {\n    script_id: script.id,\n    content_idea_id: script.content_idea_id,\n    text_for_tts: text,\n    estimated_duration: script.estimated_duration || 45\n  }\n}];"
+      },
+      "id": "prepare-text",
+      "name": "Prepare Text for TTS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.elevenlabs.io/v1/text-to-speech/{{ $env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "audio/mpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"{{ $json.text_for_tts.replace(/\"/g, '\\\\\"').replace(/\\n/g, ' ') }}\",\n  \"model_id\": \"eleven_multilingual_v2\",\n  \"voice_settings\": {\n    \"stability\": 0.5,\n    \"similarity_boost\": 0.75,\n    \"style\": 0.5,\n    \"use_speaker_boost\": true\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "generate-speech",
+      "name": "Generate Speech (ElevenLabs)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "elevenlabs",
+          "name": "elevenlabs"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/assets/audio/{{ $('Prepare Text for TTS').first().json.script_id }}_voice.mp3",
+        "options": {}
+      },
+      "id": "save-audio",
+      "name": "Save Audio File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "command": "=ffprobe -v quiet -show_entries format=duration -of csv=p=0 /home/node/assets/audio/{{ $('Prepare Text for TTS').first().json.script_id }}_voice.mp3"
+      },
+      "id": "get-duration",
+      "name": "Get Audio Duration",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse duration and prepare record\nconst output = $input.first().json;\nconst prepData = $('Prepare Text for TTS').first().json;\n\n// Parse duration from ffprobe output\nlet duration = 0;\ntry {\n  duration = parseFloat(output.stdout.trim()) || prepData.estimated_duration;\n} catch (e) {\n  duration = prepData.estimated_duration;\n}\n\nreturn [{\n  json: {\n    script_id: prepData.script_id,\n    content_idea_id: prepData.content_idea_id,\n    audio_path: `/home/node/assets/audio/${prepData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10\n  }\n}];"
+      },
+      "id": "parse-duration",
+      "name": "Parse Duration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/voice-tracks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"script_id\": {{ $json.script_id }},\n  \"local_path\": \"{{ $json.audio_path }}\",\n  \"duration_seconds\": {{ $json.duration_seconds }},\n  \"voice_id\": \"{{ $env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM' }}\",\n  \"model\": \"eleven_multilingual_v2\"\n}",
+        "options": {}
+      },
+      "id": "save-voice-record",
+      "name": "Save Voice Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $('Parse Duration').first().json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"voice_ready\"\n}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for next workflow (06-CREATE-AVATAR)\nconst voiceRecord = $('Save Voice Record').first().json;\nconst parseData = $('Parse Duration').first().json;\n\nreturn [{\n  json: {\n    script_id: parseData.script_id,\n    content_idea_id: parseData.content_idea_id,\n    voice_track_id: voiceRecord.id,\n    audio_path: parseData.audio_path,\n    duration_seconds: parseData.duration_seconds\n  }\n}];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare for Avatar Gen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-avatar",
+      "name": "Execute 06-CREATE-AVATAR",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2500, 300]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Get Script", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Script": {
+      "main": [
+        [{ "node": "Prepare Text for TTS", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Text for TTS": {
+      "main": [
+        [{ "node": "Generate Speech (ElevenLabs)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Speech (ElevenLabs)": {
+      "main": [
+        [{ "node": "Save Audio File", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Audio File": {
+      "main": [
+        [{ "node": "Get Audio Duration", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Audio Duration": {
+      "main": [
+        [{ "node": "Parse Duration", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Duration": {
+      "main": [
+        [{ "node": "Save Voice Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Voice Record": {
+      "main": [
+        [{ "node": "Update Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [{ "node": "Prepare for Avatar Gen", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Avatar Gen": {
+      "main": [
+        [{ "node": "Execute 06-CREATE-AVATAR", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

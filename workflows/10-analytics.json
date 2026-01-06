@@ -1,0 +1,394 @@
+{
+  "name": "10-ANALYTICS",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily 9am Analytics",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "workflow-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-triggers",
+      "name": "Merge Triggers",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://backend:8000/api/published",
+        "options": {}
+      },
+      "id": "get-posts-to-update",
+      "name": "Get Posts to Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-posts",
+              "leftValue": "={{ Array.isArray($json) ? $json.length : 1 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-posts",
+      "name": "Has Posts to Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-posts",
+      "name": "Split Posts",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {},
+      "id": "no-posts",
+      "name": "No Posts to Update",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract platform post IDs from individual columns\nconst post = $input.first().json;\nconst platforms = [];\n\n// Map individual columns to array for processing\nif (post.tiktok_id) platforms.push({ platform: 'tiktok', post_id: post.tiktok_id, url: post.tiktok_url });\nif (post.ig_id) platforms.push({ platform: 'instagram', post_id: post.ig_id, url: post.ig_url });\nif (post.yt_id) platforms.push({ platform: 'youtube', post_id: post.yt_id, url: post.yt_url });\nif (post.linkedin_id) platforms.push({ platform: 'linkedin', post_id: post.linkedin_id, url: post.linkedin_url });\nif (post.x_id) platforms.push({ platform: 'twitter', post_id: post.x_id, url: post.x_url });\nif (post.facebook_id) platforms.push({ platform: 'facebook', post_id: post.facebook_id, url: post.facebook_url });\nif (post.threads_id) platforms.push({ platform: 'threads', post_id: post.threads_id, url: post.threads_url });\nif (post.pinterest_id) platforms.push({ platform: 'pinterest', post_id: post.pinterest_id, url: post.pinterest_url });\n\nif (platforms.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\nreturn platforms.map(pp => ({\n  json: {\n    published_id: post.id,\n    platform: pp.platform,\n    post_id: pp.post_id,\n    post_url: pp.url\n  }\n}));"
+      },
+      "id": "extract-platforms",
+      "name": "Extract Platform Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.blotato.com/v1/posts/{{ $json.post_id }}/analytics",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-analytics",
+      "name": "Fetch Analytics from Blotato",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "blotato",
+          "name": "blotato"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse analytics response\nconst analytics = $input.first().json;\nconst platformData = $('Extract Platform Posts').first().json;\n\n// Normalize metrics across platforms\nconst metrics = {\n  published_id: platformData.published_id,\n  platform: platformData.platform,\n  views: analytics.views || analytics.impressions || analytics.view_count || 0,\n  likes: analytics.likes || analytics.hearts || analytics.favorite_count || 0,\n  comments: analytics.comments || analytics.comment_count || analytics.replies || 0,\n  shares: analytics.shares || analytics.retweets || analytics.reposts || 0,\n  engagement_rate: 0\n};\n\n// Calculate engagement rate\nif (metrics.views > 0) {\n  const totalEngagements = metrics.likes + metrics.comments + metrics.shares;\n  metrics.engagement_rate = Math.round((totalEngagements / metrics.views) * 10000) / 100;\n}\n\nreturn [{ json: metrics }];"
+      },
+      "id": "parse-analytics",
+      "name": "Parse Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/analytics",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"published_id\": {{ $json.published_id }},\n  \"platform\": \"{{ $json.platform }}\",\n  \"views\": {{ $json.views }},\n  \"likes\": {{ $json.likes }},\n  \"comments\": {{ $json.comments }},\n  \"shares\": {{ $json.shares }},\n  \"engagement_rate\": {{ $json.engagement_rate }}\n}",
+        "options": {}
+      },
+      "id": "save-analytics",
+      "name": "Save Analytics Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate analytics for the published post\nconst items = $input.all();\n\nif (items.length === 0) {\n  return [{ json: { aggregated: false } }];\n}\n\n// Get unique published_id\nconst publishedId = items[0].json.published_id;\n\n// Sum up metrics across platforms\nconst totals = {\n  total_views: 0,\n  total_likes: 0,\n  total_comments: 0,\n  total_shares: 0,\n  platforms_count: items.length\n};\n\nitems.forEach(item => {\n  const data = item.json;\n  totals.total_views += data.views || 0;\n  totals.total_likes += data.likes || 0;\n  totals.total_comments += data.comments || 0;\n  totals.total_shares += data.shares || 0;\n});\n\n// Calculate overall engagement rate\nif (totals.total_views > 0) {\n  const totalEngagements = totals.total_likes + totals.total_comments + totals.total_shares;\n  totals.overall_engagement_rate = Math.round((totalEngagements / totals.total_views) * 10000) / 100;\n} else {\n  totals.overall_engagement_rate = 0;\n}\n\nreturn [{\n  json: {\n    published_id: publishedId,\n    ...totals,\n    aggregated: true\n  }\n}];"
+      },
+      "id": "aggregate-analytics",
+      "name": "Aggregate Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/published/{{ $json.published_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "id": "update-post-analytics",
+      "name": "Update Post Analytics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-viral",
+              "leftValue": "={{ $json.total_views }}",
+              "rightValue": 10000,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-viral",
+      "name": "Is Viral (10k+ views)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2750, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "http://backend:8000/api/content-ideas/1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "id": "mark-viral",
+      "name": "Mark as Viral",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 200]
+    },
+    {
+      "parameters": {},
+      "id": "not-viral",
+      "name": "Not Viral Yet",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3000, 400]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-viral-check",
+      "name": "Merge Viral Check",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [3250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return to split batches for next post\nreturn [{ json: { processed: true } }];"
+      },
+      "id": "continue-loop",
+      "name": "Continue Loop",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3500, 300]
+    },
+    {
+      "parameters": {},
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3750, 300]
+    }
+  ],
+  "connections": {
+    "Daily 9am Analytics": {
+      "main": [
+        [{ "node": "Merge Triggers", "type": "main", "index": 0 }]
+      ]
+    },
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Merge Triggers", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Triggers": {
+      "main": [
+        [{ "node": "Get Posts to Update", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Posts to Update": {
+      "main": [
+        [{ "node": "Has Posts to Update?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Posts to Update?": {
+      "main": [
+        [{ "node": "Split Posts", "type": "main", "index": 0 }],
+        [{ "node": "No Posts to Update", "type": "main", "index": 0 }]
+      ]
+    },
+    "Split Posts": {
+      "main": [
+        [{ "node": "Extract Platform Posts", "type": "main", "index": 0 }],
+        [{ "node": "Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Platform Posts": {
+      "main": [
+        [{ "node": "Fetch Analytics from Blotato", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Analytics from Blotato": {
+      "main": [
+        [{ "node": "Parse Analytics", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Analytics": {
+      "main": [
+        [{ "node": "Save Analytics Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Analytics Record": {
+      "main": [
+        [{ "node": "Aggregate Analytics", "type": "main", "index": 0 }]
+      ]
+    },
+    "Aggregate Analytics": {
+      "main": [
+        [{ "node": "Update Post Analytics", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Post Analytics": {
+      "main": [
+        [{ "node": "Is Viral (10k+ views)?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Viral (10k+ views)?": {
+      "main": [
+        [{ "node": "Mark as Viral", "type": "main", "index": 0 }],
+        [{ "node": "Not Viral Yet", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark as Viral": {
+      "main": [
+        [{ "node": "Merge Viral Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Not Viral Yet": {
+      "main": [
+        [{ "node": "Merge Viral Check", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Viral Check": {
+      "main": [
+        [{ "node": "Continue Loop", "type": "main", "index": 0 }]
+      ]
+    },
+    "Continue Loop": {
+      "main": [
+        [{ "node": "Split Posts", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

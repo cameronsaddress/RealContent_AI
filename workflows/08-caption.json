@@ -1,0 +1,348 @@
+{
+  "name": "08-CAPTION",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/scripts/{{ $json.script_id }}",
+        "options": {}
+      },
+      "id": "get-script",
+      "name": "Get Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/voice-tracks?script_id={{ $json.id }}",
+        "options": {}
+      },
+      "id": "get-voice",
+      "name": "Get Voice Track",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare paths for transcription\nconst script = $('Get Script').first().json;\nconst voiceTrack = $input.first().json;\nconst inputData = $('When Called by Another Workflow').first().json;\n\nconst voicePath = Array.isArray(voiceTrack) ? voiceTrack[0]?.local_path : voiceTrack?.local_path;\n\nreturn [{\n  json: {\n    script_id: script.id,\n    content_idea_id: script.content_idea_id,\n    video_path: inputData.video_path,\n    voice_path: voicePath || `/home/node/assets/audio/${script.id}_voice.mp3`,\n    combined_video_id: inputData.combined_video_id\n  }\n}];"
+      },
+      "id": "prepare-paths",
+      "name": "Prepare Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": []
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "response_format",
+              "value": "srt"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "transcribe-whisper",
+      "name": "Transcribe with Whisper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai",
+          "name": "openai"
+        }
+      },
+      "notes": "Note: This needs the audio file uploaded. In practice, use file binary from previous node."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Alternative: Generate SRT from script text with timing estimates\n// This is a fallback if Whisper API fails or for faster processing\nconst script = $('Get Script').first().json;\nconst prepData = $('Prepare Paths').first().json;\n\n// Get the script text\nconst fullScript = script.full_script || script.script || '';\n\n// Split into sentences\nconst sentences = fullScript\n  .replace(/\\[PAUSE\\]/gi, '')\n  .replace(/\\*(.*?)\\*/g, '$1')\n  .split(/(?<=[.!?])\\s+/)\n  .filter(s => s.trim().length > 0);\n\n// Estimate timing (avg 150 words per minute = 2.5 words per second)\nconst wordsPerSecond = 2.5;\nlet currentTime = 0;\nlet srtContent = '';\n\nsentences.forEach((sentence, index) => {\n  const wordCount = sentence.split(/\\s+/).length;\n  const duration = Math.max(wordCount / wordsPerSecond, 1.5); // Min 1.5 seconds\n  \n  const startTime = formatSrtTime(currentTime);\n  const endTime = formatSrtTime(currentTime + duration);\n  \n  srtContent += `${index + 1}\\n`;\n  srtContent += `${startTime} --> ${endTime}\\n`;\n  srtContent += `${sentence.trim()}\\n\\n`;\n  \n  currentTime += duration + 0.1; // Small gap between captions\n});\n\nfunction formatSrtTime(seconds) {\n  const hrs = Math.floor(seconds / 3600);\n  const mins = Math.floor((seconds % 3600) / 60);\n  const secs = Math.floor(seconds % 60);\n  const ms = Math.round((seconds % 1) * 1000);\n  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;\n}\n\nreturn [{\n  json: {\n    script_id: prepData.script_id,\n    content_idea_id: prepData.content_idea_id,\n    video_path: prepData.video_path,\n    combined_video_id: prepData.combined_video_id,\n    srt_content: srtContent\n  }\n}];"
+      },
+      "id": "generate-srt",
+      "name": "Generate SRT from Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 500]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/assets/captions/{{ $json.script_id }}_captions.srt",
+        "options": {}
+      },
+      "id": "save-srt",
+      "name": "Save SRT File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build FFmpeg command to burn captions into video\nconst data = $('Generate SRT from Script').first().json;\n\nconst inputPath = data.video_path;\nconst srtPath = `/home/node/assets/captions/${data.script_id}_captions.srt`;\nconst outputPath = `/home/node/assets/output/${data.script_id}_captioned.mp4`;\n\n// FFmpeg subtitle filter with styling for social media\n// Large, centered, white text with black outline\nconst subtitleFilter = `subtitles=${srtPath}:force_style='FontName=Arial,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=50'`;\n\nconst ffmpegCmd = `ffmpeg -y -i ${inputPath} -vf \"${subtitleFilter}\" -c:v libx264 -preset fast -crf 23 -c:a copy ${outputPath}`;\n\nreturn [{\n  json: {\n    script_id: data.script_id,\n    content_idea_id: data.content_idea_id,\n    combined_video_id: data.combined_video_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath,\n    srt_path: srtPath\n  }\n}];"
+      },
+      "id": "build-caption-cmd",
+      "name": "Build Caption Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 400]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.ffmpeg_command }}",
+        "timeout": 300
+      },
+      "id": "burn-captions",
+      "name": "Burn Captions (FFmpeg)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1750, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.exitCode }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-success",
+      "name": "Caption Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle caption failure\nconst result = $input.first().json;\nconst cmdData = $('Build Caption Command').first().json;\n\nthrow new Error(`Caption burn failed: ${result.stderr}\\nCommand: ${cmdData.ffmpeg_command}`);"
+      },
+      "id": "handle-failure",
+      "name": "Handle Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 500]
+    },
+    {
+      "parameters": {
+        "command": "=ffprobe -v quiet -show_entries format=duration -of csv=p=0 {{ $('Build Caption Command').first().json.output_path }}"
+      },
+      "id": "get-duration",
+      "name": "Get Final Duration",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare final video record\nconst probeResult = $input.first().json;\nconst cmdData = $('Build Caption Command').first().json;\n\nlet duration = 0;\ntry {\n  duration = parseFloat(probeResult.stdout.trim()) || 60;\n} catch (e) {\n  duration = 60;\n}\n\nreturn [{\n  json: {\n    script_id: cmdData.script_id,\n    content_idea_id: cmdData.content_idea_id,\n    combined_video_id: cmdData.combined_video_id,\n    captioned_path: cmdData.output_path,\n    srt_path: cmdData.srt_path,\n    duration_seconds: Math.round(duration * 10) / 10\n  }\n}];"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/combined-videos/{{ $json.combined_video_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"captioned_path\": \"{{ $json.captioned_path }}\",\n  \"srt_path\": \"{{ $json.srt_path }}\",\n  \"status\": \"captioned\"\n}",
+        "options": {}
+      },
+      "id": "update-combined-record",
+      "name": "Update Combined Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2750, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $('Parse Result').first().json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"captioned\"\n}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "Update Idea Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for next workflow (09-PUBLISH)\nconst parseData = $('Parse Result').first().json;\n\nreturn [{\n  json: {\n    script_id: parseData.script_id,\n    content_idea_id: parseData.content_idea_id,\n    combined_video_id: parseData.combined_video_id,\n    final_video_path: parseData.captioned_path,\n    duration_seconds: parseData.duration_seconds\n  }\n}];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare for Publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-publish",
+      "name": "Execute 09-PUBLISH",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [3500, 300]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Get Script", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Script": {
+      "main": [
+        [{ "node": "Get Voice Track", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Voice Track": {
+      "main": [
+        [{ "node": "Prepare Paths", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Paths": {
+      "main": [
+        [{ "node": "Generate SRT from Script", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate SRT from Script": {
+      "main": [
+        [{ "node": "Save SRT File", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save SRT File": {
+      "main": [
+        [{ "node": "Build Caption Command", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Caption Command": {
+      "main": [
+        [{ "node": "Burn Captions (FFmpeg)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Burn Captions (FFmpeg)": {
+      "main": [
+        [{ "node": "Caption Success?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Caption Success?": {
+      "main": [
+        [{ "node": "Get Final Duration", "type": "main", "index": 0 }],
+        [{ "node": "Handle Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Final Duration": {
+      "main": [
+        [{ "node": "Parse Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [{ "node": "Update Combined Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Combined Record": {
+      "main": [
+        [{ "node": "Update Idea Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Idea Status": {
+      "main": [
+        [{ "node": "Prepare for Publish", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Publish": {
+      "main": [
+        [{ "node": "Execute 09-PUBLISH", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

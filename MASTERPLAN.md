@@ -2,17 +2,25 @@
 
 ## Overview
 
-The pipeline consists of **10 workflow sections** that handle the complete content lifecycle autonomously, managed from the React UI at http://100.83.153.43:3000.
+The pipeline consists of **10 workflow sections** consolidated into a **single unified n8n workflow** (`COMPLETE_PIPELINE.json`) that handles the complete content lifecycle autonomously, managed from the React UI at http://100.83.153.43:3000.
 
 ```
-SCRAPE → AUTO TRIGGER → SCRIPT GEN → GET VIDEO → CREATE VOICE → CREATE AVATAR → COMBINE VIDS → CAPTION → PUBLISH → ANALYTICS
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    COMPLETE_PIPELINE.json (Single Workflow)                 │
+│                                                                             │
+│  SCRAPE → AUTO TRIGGER → SCRIPT GEN → GET VIDEO → CREATE VOICE →           │
+│  CREATE AVATAR → COMBINE VIDS → CAPTION → PUBLISH → FILE SERVER            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key Integration Points:**
+- **Single unified workflow** - All 10 sections in one file for easier management
 - All workflows use PostgreSQL (via FastAPI backend) instead of Airtable
 - Backend API: `http://backend:8000/api/` (internal Docker network)
-- Status changes trigger subsequent workflows via webhooks
-- UI provides manual controls and monitoring
+- Status changes trigger subsequent pipeline stages within the same workflow
+- UI provides manual controls, trend scraping, and monitoring
+- Scraper triggered via webhook from React UI or daily schedule
 
 ---
 
@@ -28,18 +36,18 @@ assets: pending → voice_ready → avatar_generating → avatar_ready → assem
 ### Workflow Triggers
 Each workflow listens for specific status values and updates them on completion, creating an autonomous chain:
 
-| Workflow | Triggers On | Sets Status To |
-|----------|-------------|----------------|
-| 1. Scrape | Schedule (6am daily) | content_ideas.status = 'pending' |
-| 2. Auto Trigger | Schedule (15min) OR content_ideas.status = 'approved' | content_ideas.status = 'script_generating' |
-| 3. Script Gen | content_ideas.status = 'script_generating' | scripts.status = 'script_ready' |
-| 4. Get Video | scripts.status = 'script_ready' | assets.status = 'pending' |
-| 5. Create Voice | assets.status = 'pending' | assets.status = 'voice_ready' |
-| 6. Create Avatar | assets.status = 'voice_ready' | assets.status = 'avatar_ready' |
-| 7. Combine Vids | assets.status = 'avatar_ready' | assets.status = 'assembling' → 'captioning' |
-| 8. Caption | assets.status = 'captioning' | assets.status = 'ready_to_publish' |
-| 9. Publish | assets.status = 'ready_to_publish' | assets.status = 'published' |
-| 10. Analytics | Schedule (weekly) | Updates analytics table |
+| Section | Triggers On | Sets Status To |
+|---------|-------------|----------------|
+| 1. Scrape | Schedule (6am daily) OR Webhook POST /webhook/scrape-trends | content_ideas.status = 'pending' |
+| 2. Auto Trigger | Schedule (15min) OR Webhook POST /webhook/trigger-pipeline | content_ideas.status = 'script_generating' |
+| 3. Script Gen | Continues from Auto Trigger | scripts.status = 'script_ready' |
+| 4. Get Video | Continues from Script Gen | assets.status = 'pending' |
+| 5. Create Voice | Continues from Get Video | assets.status = 'voice_ready' |
+| 6. Create Avatar | Continues from Create Voice | assets.status = 'avatar_ready' |
+| 7. Combine Vids | Continues from Create Avatar | assets.status = 'assembling' → 'captioning' |
+| 8. Caption | Continues from Combine Vids | assets.status = 'ready_to_publish' |
+| 9. Publish | Continues from Caption | assets.status = 'published' |
+| 10. File Server | Webhooks GET /webhook/serve-audio/:id, /webhook/serve-video/:id | Serves files to external APIs |
 
 ---
 
@@ -51,21 +59,29 @@ Configure these credentials in n8n (Settings → Credentials):
 
 | Credential Name | Type | Required Fields |
 |-----------------|------|-----------------|
-| `postgres_content` | Postgres | host=n8n_postgres, port=5432, database=content_pipeline, user=n8n, password=n8n_password |
-| `openrouter` | Header Auth | Name=Authorization, Value=Bearer sk-or-v1-... |
-| `openai` | OpenAI API | API Key (for Whisper only) |
-| `elevenlabs` | Header Auth | Name=xi-api-key, Value=sk_... |
-| `heygen` | Header Auth | Name=X-Api-Key, Value=... |
-| `apify` | Header Auth | Name=Authorization, Value=Bearer ... |
-| `pexels` | Header Auth | Name=Authorization, Value=... |
+| `openrouter` | HTTP Header Auth | Name=Authorization, Value=Bearer sk-or-v1-... |
+| `openai` | HTTP Header Auth | Name=Authorization, Value=Bearer sk-... |
+| `elevenlabs` | HTTP Header Auth | Name=xi-api-key, Value=sk_... |
+| `heygen` | HTTP Header Auth | Name=X-Api-Key, Value=... |
+| `apify` | HTTP Header Auth | Name=Authorization, Value=Bearer apify_api_... |
+| `pexels` | HTTP Header Auth | Name=Authorization, Value=... |
+| `blotato` | HTTP Header Auth | Name=Authorization, Value=Bearer ... |
 
 ### 1.2 Environment Variables
 
 Already configured in `.env` and docker-compose.yml:
 - `ELEVENLABS_API_KEY` - Voice generation
+- `ELEVENLABS_VOICE_ID` - ElevenLabs voice ID
 - `OPENROUTER_API_KEY` - LLM calls (Grok 4.1)
 - `OPENAI_API_KEY` - Whisper transcription
+- `HEYGEN_API_KEY` - Avatar video generation
+- `HEYGEN_AVATAR_ID` - HeyGen avatar ID
+- `PEXELS_API_KEY` - B-roll video search
+- `APIFY_API_KEY` - TikTok/Instagram scraping
+- `BLOTATO_API_KEY` - Multi-platform publishing
 - `DATABASE_URL` - PostgreSQL connection
+- `N8N_HOST` - n8n server hostname
+- `N8N_PUBLIC_URL` - Public URL for file serving webhooks
 
 Access in n8n via: `{{ $env.ELEVENLABS_API_KEY }}`
 
@@ -77,16 +93,39 @@ All workflows interact with the FastAPI backend:
 Base URL (internal): http://backend:8000/api
 Base URL (external): http://100.83.153.43:8000/api
 
-GET    /content-ideas                    - List ideas (filter by status)
+# Content Ideas
+GET    /content-ideas                    - List ideas (filter by status, pillar)
 POST   /content-ideas                    - Create new idea
+GET    /content-ideas/{id}               - Get specific idea
 PATCH  /content-ideas/{id}               - Update idea (status, etc.)
+
+# Scripts
 GET    /scripts?content_idea_id={id}     - Get scripts for idea
 POST   /scripts                          - Create script
+GET    /scripts/{id}                     - Get specific script
 PATCH  /scripts/{id}                     - Update script
+
+# Assets
 GET    /assets?script_id={id}            - Get assets for script
 POST   /assets                           - Create asset record
 PATCH  /assets/{id}                      - Update asset (paths, status)
+
+# Publishing
 POST   /published                        - Create published record
+GET    /published                        - List published posts
+
+# Scraping (NEW)
+POST   /scrape/run                       - Trigger trend scrape (niche, hashtags, platforms)
+GET    /scrape/runs                      - List scrape history
+GET    /scrape/runs/{id}                 - Get specific scrape run
+POST   /scrape/use-trend                 - Convert trend to content idea
+
+# Niche Presets (NEW)
+GET    /niche-presets                    - List saved niche configs
+POST   /niche-presets                    - Create new preset
+DELETE /niche-presets/{id}               - Delete preset
+
+# Dashboard
 GET    /pipeline/stats                   - Dashboard statistics
 ```
 
@@ -94,13 +133,27 @@ GET    /pipeline/stats                   - Dashboard statistics
 
 ## Phase 2: Workflow Implementation
 
-### Workflow 1: SCRAPE (Content Discovery)
+**IMPORTANT:** All sections below are implemented as nodes within the single `COMPLETE_PIPELINE.json` workflow file.
 
-**Purpose:** Automatically discover trending real estate content daily
+### Section 1: SCRAPE (Content Discovery)
 
-**Trigger:** Schedule (daily at 6:00 AM UTC)
+**Purpose:** Discover trending TikTok/Instagram content and create content ideas
 
-**Workflow File:** `workflows/01-scrape.json`
+**Triggers:**
+- Schedule (daily at 6:00 AM UTC) - "Daily 6am Scrape" node
+- Webhook POST `/webhook/scrape-trends` - "Scrape Webhook" node (for UI-triggered scrapes)
+
+**Webhook Request Format:**
+```json
+{
+  "niche": "real estate",
+  "hashtags": ["realestate", "realtor", "homebuying", "firsttimehomebuyer"],
+  "platforms": ["tiktok", "instagram"],
+  "results_per_platform": 20
+}
+```
+
+**Workflow File:** `workflows/COMPLETE_PIPELINE.json` (Section 1 nodes)
 
 ```
 ┌─────────────────┐
@@ -243,15 +296,22 @@ Reddit Scraper:
 
 ---
 
-### Workflow 2: AUTO TRIGGER (Pipeline Orchestrator)
+### Section 2: AUTO TRIGGER (Pipeline Orchestrator)
 
-**Purpose:** Poll for approved content and trigger script generation. Also provides webhook for UI-triggered processing.
+**Purpose:** Poll for approved content and kick off the full video production pipeline. Also provides webhook for UI-triggered processing.
 
 **Triggers:**
-1. Schedule (every 15 minutes)
-2. Webhook (POST /webhook/trigger-pipeline) - for UI "Start Processing" button
+1. Schedule (every 15 minutes) - "Schedule Trigger" node
+2. Webhook POST `/webhook/trigger-pipeline` - "Webhook" node (for UI "Start Processing" button)
 
-**Workflow File:** `workflows/02-auto-trigger.json`
+**Webhook Request Format:**
+```json
+{
+  "content_idea_id": 123  // Optional - processes specific idea, otherwise picks next approved
+}
+```
+
+**Workflow File:** `workflows/COMPLETE_PIPELINE.json` (Section 2 nodes)
 
 ```
 ┌─────────────────┐     ┌─────────────────────────────────────────┐
@@ -360,13 +420,13 @@ const triggerPipeline = async (contentIdeaId) => {
 
 ---
 
-### Workflow 3: SCRIPT GENERATION
+### Section 3: SCRIPT GENERATION
 
-**Purpose:** Generate viral scripts using Grok 4.1, with platform-specific captions
+**Purpose:** Generate viral scripts using Grok 4.1, with suggested B-roll scenes
 
-**Trigger:** Called by Workflow 2 (Execute Workflow node)
+**Trigger:** Continues from Section 2 (Has Content? → true branch)
 
-**Workflow File:** `workflows/03-script-gen.json`
+**Workflow File:** `workflows/COMPLETE_PIPELINE.json` (Script Gen nodes)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
@@ -552,13 +612,13 @@ const triggerPipeline = async (contentIdeaId) => {
 
 ---
 
-### Workflow 4: GET VIDEO (Background Video Acquisition)
+### Section 4: GET VIDEO (B-Roll Acquisition)
 
-**Purpose:** Download or find appropriate background video for the content
+**Purpose:** Search Pexels for portrait B-roll videos matching script scenes
 
-**Trigger:** Called by Workflow 3
+**Trigger:** Continues from Section 3 (Create Asset Record node)
 
-**Workflow File:** `workflows/04-get-video.json`
+**Workflow File:** `workflows/COMPLETE_PIPELINE.json` (Get Video nodes)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
@@ -718,13 +778,13 @@ const triggerPipeline = async (contentIdeaId) => {
 
 ---
 
-### Workflow 5: CREATE VOICE (ElevenLabs TTS + Whisper)
+### Section 5: CREATE VOICE (ElevenLabs TTS)
 
-**Purpose:** Generate voiceover audio and word-level timestamps for captions
+**Purpose:** Generate voiceover audio from script text
 
-**Trigger:** Called by Workflow 4
+**Trigger:** Continues from Section 4 (Save B-Roll node)
 
-**Workflow File:** `workflows/05-create-voice.json`
+**Workflow File:** `workflows/COMPLETE_PIPELINE.json` (Create Voice nodes)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
@@ -887,13 +947,13 @@ const triggerPipeline = async (contentIdeaId) => {
 
 ---
 
-### Workflow 6: CREATE AVATAR (HeyGen)
+### Section 6: CREATE AVATAR (HeyGen)
 
-**Purpose:** Generate AI avatar video with lip-synced speech
+**Purpose:** Generate AI avatar video with lip-synced speech (green screen background)
 
-**Trigger:** Called by Workflow 5
+**Trigger:** Continues from Section 5 (Get Duration node)
 
-**Workflow File:** `workflows/06-create-avatar.json`
+**Workflow File:** `workflows/COMPLETE_PIPELINE.json` (Create Avatar nodes)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
@@ -1085,7 +1145,7 @@ const triggerPipeline = async (contentIdeaId) => {
 
 ---
 
-### Workflow 7: COMBINE VIDS (FFmpeg Assembly)
+### Section 7: COMBINE VIDS (FFmpeg Assembly)
 
 **Purpose:** Composite avatar over background video using FFmpeg
 
@@ -1234,7 +1294,7 @@ ffmpeg -stream_loop -1 -i /home/node/assets/videos/123_background.mp4 \
 
 ---
 
-### Workflow 8: CAPTION (Subtitle Burn-in)
+### Section 8: CAPTION (Whisper + FFmpeg Subtitle Burn)
 
 **Purpose:** Burn styled captions into the video
 
@@ -1357,7 +1417,7 @@ ffmpeg -stream_loop -1 -i /home/node/assets/videos/123_background.mp4 \
 
 ---
 
-### Workflow 9: PUBLISH (Multi-Platform Distribution)
+### Section 9: PUBLISH (Blotato Multi-Platform)
 
 **Purpose:** Publish completed videos to all social media platforms via Blotato
 
@@ -1560,7 +1620,7 @@ ffmpeg -stream_loop -1 -i /home/node/assets/videos/123_background.mp4 \
 
 ---
 
-### Workflow 10: ANALYTICS (Performance Tracking)
+### Section 10: FILE SERVER (Asset Delivery)
 
 **Purpose:** Collect analytics from all platforms weekly
 
@@ -1965,7 +2025,7 @@ This section provides the exact connections for each node in every workflow to e
 | 16 | Update Asset | HTTP Request (PATCH) | 15 | 17 | `{ status: 'avatar_ready' }` |
 | 17 | Execute Workflow 07 | Execute Workflow | 16 | (end) | passes to WF7 |
 
-### Workflow 7: COMBINE VIDS - Node Connections
+### Section 7: COMBINE VIDS - Node Connections
 
 | Node # | Node Name | Node Type | Connects FROM | Connects TO | Output Data |
 |--------|-----------|-----------|---------------|-------------|-------------|
@@ -1980,7 +2040,7 @@ This section provides the exact connections for each node in every workflow to e
 | 9 | Update Asset | HTTP Request (PATCH) | 7 (true) | 10 | `{ status: 'captioning' }` |
 | 10 | Execute Workflow 08 | Execute Workflow | 9 | (end) | passes to WF8 |
 
-### Workflow 8: CAPTION - Node Connections
+### Section 8: CAPTION - Node Connections
 
 | Node # | Node Name | Node Type | Connects FROM | Connects TO | Output Data |
 |--------|-----------|-----------|---------------|-------------|-------------|
@@ -1994,7 +2054,7 @@ This section provides the exact connections for each node in every workflow to e
 | 8 | Error Handler | HTTP Request (PATCH) | 7 (false) | (end) | error |
 | 9 | Update Asset | HTTP Request (PATCH) | 7 (true) | (end) | `{ status: 'ready_to_publish' }` |
 
-### Workflow 9: PUBLISH - Node Connections
+### Section 9: PUBLISH - Node Connections
 
 | Node # | Node Name | Node Type | Connects FROM | Connects TO | Output Data |
 |--------|-----------|-----------|---------------|-------------|-------------|
@@ -2014,7 +2074,7 @@ This section provides the exact connections for each node in every workflow to e
 | 12 | Update Asset | HTTP Request (PATCH) | 11 | 13 | `{ status: 'published' }` |
 | 13 | Update Idea | HTTP Request (PATCH) | 12 | (end) | `{ status: 'published' }` |
 
-### Workflow 10: ANALYTICS - Node Connections
+### Section 10: FILE SERVER - Node Connections
 
 | Node # | Node Name | Node Type | Connects FROM | Connects TO | Output Data |
 |--------|-----------|-----------|---------------|-------------|-------------|

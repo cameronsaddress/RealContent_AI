@@ -282,3 +282,76 @@ class PipelineStats(BaseModel):
     errors: int
     by_pillar: dict
     by_platform: dict
+
+
+# Scrape Run Schemas
+class ScrapeRunStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class ScrapeRunBase(BaseModel):
+    niche: str
+    hashtags: Optional[List[str]] = None
+    platforms: Optional[List[str]] = ["tiktok", "instagram"]
+
+
+class ScrapeRunCreate(ScrapeRunBase):
+    pass
+
+
+class ScrapeRun(ScrapeRunBase):
+    id: int
+    status: ScrapeRunStatus
+    results_count: int
+    results_data: Optional[dict] = None
+    error_message: Optional[str] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TrendItem(BaseModel):
+    url: str
+    platform: str
+    title: str
+    views: int
+    likes: int
+    viral_score: int
+    pillar: str
+    suggested_hook: str
+    why_viral: Optional[str] = None
+    adaptable: bool = True
+
+
+class ScrapeResponse(BaseModel):
+    success: bool
+    niche: str
+    scrapedAt: str
+    totalScraped: int
+    analyzedCount: int
+    trends: List[TrendItem]
+    error: Optional[str] = None
+
+
+# Niche Preset Schemas
+class NichePresetBase(BaseModel):
+    name: str
+    keywords: List[str]
+    hashtags: List[str]
+
+
+class NichePresetCreate(NichePresetBase):
+    pass
+
+
+class NichePreset(NichePresetBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

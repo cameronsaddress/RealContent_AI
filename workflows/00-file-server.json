@@ -1,0 +1,135 @@
+{
+  "name": "00-FILE-SERVER",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "serve-audio/:script_id",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-audio",
+      "name": "Serve Audio Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 200],
+      "webhookId": "serve-audio"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "serve-video/:script_id",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-video",
+      "name": "Serve Video Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 400],
+      "webhookId": "serve-video"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "filePath": "=/home/node/assets/audio/{{ $json.params.script_id }}_voice.mp3",
+        "options": {}
+      },
+      "id": "read-audio",
+      "name": "Read Audio File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [250, 200]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "filePath": "=/home/node/assets/output/{{ $json.params.script_id }}_final.mp4",
+        "options": {}
+      },
+      "id": "read-video",
+      "name": "Read Video File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "audio/mpeg"
+              },
+              {
+                "name": "Content-Disposition",
+                "value": "=attachment; filename=\"{{ $json.params.script_id }}_voice.mp3\""
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-audio",
+      "name": "Respond Audio",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "video/mp4"
+              },
+              {
+                "name": "Content-Disposition",
+                "value": "=attachment; filename=\"{{ $json.params.script_id }}_video.mp4\""
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-video",
+      "name": "Respond Video",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [500, 400]
+    }
+  ],
+  "connections": {
+    "Serve Audio Webhook": {
+      "main": [
+        [{ "node": "Read Audio File", "type": "main", "index": 0 }]
+      ]
+    },
+    "Serve Video Webhook": {
+      "main": [
+        [{ "node": "Read Video File", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Audio File": {
+      "main": [
+        [{ "node": "Respond Audio", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Video File": {
+      "main": [
+        [{ "node": "Respond Video", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

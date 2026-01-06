@@ -1,0 +1,276 @@
+{
+  "name": "07-COMBINE-VIDS",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/scripts/{{ $json.script_id }}",
+        "options": {}
+      },
+      "id": "get-script",
+      "name": "Get Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/broll-clips?script_id={{ $json.id }}",
+        "options": {}
+      },
+      "id": "get-broll",
+      "name": "Get B-Roll Clips",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/voice-tracks?script_id={{ $('Get Script').first().json.id }}",
+        "options": {}
+      },
+      "id": "get-voice",
+      "name": "Get Voice Track",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare FFmpeg command for video compositing\nconst script = $('Get Script').first().json;\nconst brollClips = $('Get B-Roll Clips').first().json;\nconst voiceTrack = $('Get Voice Track').first().json;\nconst inputData = $('When Called by Another Workflow').first().json;\n\n// Get paths\nconst avatarPath = inputData.avatar_path || `/home/node/assets/avatar/${script.id}_avatar.mp4`;\nconst voicePath = Array.isArray(voiceTrack) ? voiceTrack[0]?.local_path : voiceTrack?.local_path;\nconst brollPaths = Array.isArray(brollClips) ? brollClips.map(b => b.local_path) : [];\n\nconst outputPath = `/home/node/assets/output/${script.id}_combined.mp4`;\n\n// Build FFmpeg filter complex for green screen removal and B-roll overlay\n// Avatar video has green (#00FF00) background that needs to be keyed out\nlet filterComplex = '';\nlet inputs = `-i ${avatarPath}`;\n\n// Add B-roll inputs\nbrollPaths.forEach((path, i) => {\n  inputs += ` -i ${path}`;\n});\n\n// If we have B-roll, create a composite\nif (brollPaths.length > 0) {\n  // Scale B-roll to 1080x1920 (portrait)\n  filterComplex = '[';\n  brollPaths.forEach((_, i) => {\n    filterComplex += `${i + 1}:v`;\n    if (i < brollPaths.length - 1) filterComplex += '][';\n  });\n  filterComplex += ']';\n  \n  // Concat B-roll clips\n  filterComplex += `concat=n=${brollPaths.length}:v=1:a=0[broll];`;\n  \n  // Scale B-roll to portrait\n  filterComplex += `[broll]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[broll_scaled];`;\n  \n  // Chromakey the avatar (remove green background)\n  filterComplex += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  \n  // Overlay avatar on B-roll\n  filterComplex += `[broll_scaled][avatar_keyed]overlay=(W-w)/2:(H-h)/2:shortest=1[outv]`;\n} else {\n  // No B-roll - just remove green screen and use solid background\n  filterComplex = `[0:v]chromakey=0x00FF00:0.1:0.2,scale=1080:1920[avatar_keyed];`;\n  filterComplex += `color=c=black:s=1080x1920:d=120[bg];`;\n  filterComplex += `[bg][avatar_keyed]overlay=(W-w)/2:(H-h)/2:shortest=1[outv]`;\n}\n\n// Build full command\nconst ffmpegCmd = `ffmpeg -y ${inputs} -filter_complex \"${filterComplex}\" -map \"[outv]\" -map 0:a? -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart ${outputPath}`;\n\nreturn [{\n  json: {\n    script_id: script.id,\n    content_idea_id: script.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath,\n    avatar_path: avatarPath,\n    broll_count: brollPaths.length\n  }\n}];"
+      },
+      "id": "build-ffmpeg",
+      "name": "Build FFmpeg Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 400]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.ffmpeg_command }}",
+        "timeout": 300
+      },
+      "id": "run-ffmpeg",
+      "name": "Run FFmpeg",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.exitCode }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-success",
+      "name": "FFmpeg Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "command": "=ffprobe -v quiet -show_entries format=duration -of csv=p=0 {{ $('Build FFmpeg Command').first().json.output_path }}"
+      },
+      "id": "get-duration",
+      "name": "Get Video Duration",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle FFmpeg failure\nconst result = $input.first().json;\nconst buildData = $('Build FFmpeg Command').first().json;\n\nthrow new Error(`FFmpeg failed with exit code ${result.exitCode}: ${result.stderr}\\nCommand: ${buildData.ffmpeg_command}`);"
+      },
+      "id": "handle-failure",
+      "name": "Handle Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse duration and prepare record\nconst probeResult = $input.first().json;\nconst buildData = $('Build FFmpeg Command').first().json;\n\nlet duration = 0;\ntry {\n  duration = parseFloat(probeResult.stdout.trim()) || 60;\n} catch (e) {\n  duration = 60;\n}\n\nreturn [{\n  json: {\n    script_id: buildData.script_id,\n    content_idea_id: buildData.content_idea_id,\n    output_path: buildData.output_path,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_count: buildData.broll_count\n  }\n}];"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/combined-videos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"script_id\": {{ $json.script_id }},\n  \"local_path\": \"{{ $json.output_path }}\",\n  \"duration_seconds\": {{ $json.duration_seconds }},\n  \"broll_clips_used\": {{ $json.broll_count }},\n  \"status\": \"combined\"\n}",
+        "options": {}
+      },
+      "id": "save-combined-record",
+      "name": "Save Combined Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $('Parse Result').first().json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"combined\"\n}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for next workflow (08-CAPTION)\nconst parseData = $('Parse Result').first().json;\nconst combinedRecord = $('Save Combined Record').first().json;\n\nreturn [{\n  json: {\n    script_id: parseData.script_id,\n    content_idea_id: parseData.content_idea_id,\n    combined_video_id: combinedRecord.id,\n    video_path: parseData.output_path,\n    duration_seconds: parseData.duration_seconds\n  }\n}];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare for Caption",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-caption",
+      "name": "Execute 08-CAPTION",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2750, 300]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Get Script", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Script": {
+      "main": [
+        [
+          { "node": "Get B-Roll Clips", "type": "main", "index": 0 },
+          { "node": "Get Voice Track", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get B-Roll Clips": {
+      "main": [
+        [{ "node": "Build FFmpeg Command", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Voice Track": {
+      "main": [
+        [{ "node": "Build FFmpeg Command", "type": "main", "index": 1 }]
+      ]
+    },
+    "Build FFmpeg Command": {
+      "main": [
+        [{ "node": "Run FFmpeg", "type": "main", "index": 0 }]
+      ]
+    },
+    "Run FFmpeg": {
+      "main": [
+        [{ "node": "FFmpeg Success?", "type": "main", "index": 0 }]
+      ]
+    },
+    "FFmpeg Success?": {
+      "main": [
+        [{ "node": "Get Video Duration", "type": "main", "index": 0 }],
+        [{ "node": "Handle Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Video Duration": {
+      "main": [
+        [{ "node": "Parse Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [{ "node": "Save Combined Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Combined Record": {
+      "main": [
+        [{ "node": "Update Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [{ "node": "Prepare for Caption", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Caption": {
+      "main": [
+        [{ "node": "Execute 08-CAPTION", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,248 @@
+{
+  "name": "09-PUBLISH",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-trigger",
+      "name": "When Called by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/scripts/{{ $json.script_id }}",
+        "options": {}
+      },
+      "id": "get-script",
+      "name": "Get Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/content-ideas/{{ $json.content_idea_id }}",
+        "options": {}
+      },
+      "id": "get-idea",
+      "name": "Get Content Idea",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare publishing data\nconst script = $('Get Script').first().json;\nconst idea = $input.first().json;\nconst inputData = $('When Called by Another Workflow').first().json;\n\n// Generate hashtags based on pillar\nconst pillarHashtags = {\n  market_intelligence: ['#realestate', '#housingmarket', '#marketupdate', '#homeprices', '#realestatenews'],\n  educational_tips: ['#realestatetips', '#homebuying101', '#firsttimehomebuyer', '#realtortips', '#homebuyingtips'],\n  lifestyle_local: ['#localrealestate', '#dreamhome', '#neighborhoodguide', '#communitylife', '#homesweethome'],\n  brand_humanization: ['#realtor', '#realtorlife', '#behindthescenes', '#realestateagent', '#dayinthelife']\n};\n\nconst hashtags = pillarHashtags[idea.pillar] || pillarHashtags.educational_tips;\n\n// Create caption from hook + CTA\nconst caption = `${script.hook}\\n\\n${script.cta}\\n\\n${hashtags.join(' ')}`;\n\nreturn [{\n  json: {\n    script_id: script.id,\n    content_idea_id: idea.id,\n    combined_video_id: inputData.combined_video_id,\n    video_path: inputData.final_video_path,\n    caption: caption,\n    hook: script.hook,\n    cta: script.cta,\n    hashtags: hashtags,\n    pillar: idea.pillar,\n    platforms: ['tiktok', 'instagram', 'youtube_shorts']\n  }\n}];"
+      },
+      "id": "prepare-publish-data",
+      "name": "Prepare Publish Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.blotato.com/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"platforms\": {{ JSON.stringify($json.platforms) }},\n  \"content\": {\n    \"caption\": \"{{ $json.caption.replace(/\"/g, '\\\\\"').replace(/\\n/g, '\\\\n') }}\",\n    \"video_url\": \"{{ $env.N8N_PUBLIC_URL || 'http://100.83.153.43:5678' }}/webhook/serve-video/{{ $json.script_id }}\"\n  },\n  \"schedule\": {\n    \"type\": \"now\"\n  },\n  \"options\": {\n    \"auto_hashtags\": false,\n    \"cross_post\": true\n  }\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "publish-blotato",
+      "name": "Publish via Blotato",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "blotato",
+          "name": "blotato"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Blotato response\nconst response = $input.first().json;\nconst prepData = $('Prepare Publish Data').first().json;\n\n// Extract post IDs from response\nconst posts = response.posts || response.data?.posts || [];\n\nconst platformPosts = posts.map(post => ({\n  platform: post.platform,\n  post_id: post.id || post.post_id,\n  url: post.url || post.permalink,\n  status: post.status || 'published'\n}));\n\nreturn [{\n  json: {\n    script_id: prepData.script_id,\n    content_idea_id: prepData.content_idea_id,\n    combined_video_id: prepData.combined_video_id,\n    blotato_batch_id: response.batch_id || response.id,\n    platform_posts: platformPosts,\n    caption: prepData.caption,\n    published_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "parse-response",
+      "name": "Parse Blotato Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/published",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content_idea_id\": {{ $json.content_idea_id }},\n  \"script_id\": {{ $json.script_id }},\n  \"combined_video_id\": {{ $json.combined_video_id }},\n  \"blotato_batch_id\": \"{{ $json.blotato_batch_id }}\",\n  \"platform_posts\": {{ JSON.stringify($json.platform_posts) }},\n  \"caption\": \"{{ $json.caption.replace(/\"/g, '\\\\\"').replace(/\\n/g, '\\\\n') }}\",\n  \"published_at\": \"{{ $json.published_at }}\",\n  \"status\": \"published\"\n}",
+        "options": {}
+      },
+      "id": "save-publish-record",
+      "name": "Save Publish Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $('Parse Blotato Response').first().json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"published\",\n  \"published_at\": \"{{ $('Parse Blotato Response').first().json.published_at }}\"\n}",
+        "options": {}
+      },
+      "id": "update-idea-status",
+      "name": "Update Idea Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/combined-videos/{{ $('Parse Blotato Response').first().json.combined_video_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"published\"\n}",
+        "options": {}
+      },
+      "id": "update-video-status",
+      "name": "Update Video Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for analytics workflow\nconst parseData = $('Parse Blotato Response').first().json;\nconst publishRecord = $('Save Publish Record').first().json;\n\nreturn [{\n  json: {\n    content_idea_id: parseData.content_idea_id,\n    script_id: parseData.script_id,\n    published_post_id: publishRecord.id,\n    platform_posts: parseData.platform_posts,\n    published_at: parseData.published_at\n  }\n}];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare for Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "execute-analytics",
+      "name": "Execute 10-ANALYTICS",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [2500, 300]
+    }
+  ],
+  "connections": {
+    "When Called by Another Workflow": {
+      "main": [
+        [{ "node": "Get Script", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Script": {
+      "main": [
+        [{ "node": "Get Content Idea", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Content Idea": {
+      "main": [
+        [{ "node": "Prepare Publish Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Publish Data": {
+      "main": [
+        [{ "node": "Publish via Blotato", "type": "main", "index": 0 }]
+      ]
+    },
+    "Publish via Blotato": {
+      "main": [
+        [{ "node": "Parse Blotato Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Blotato Response": {
+      "main": [
+        [{ "node": "Save Publish Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Publish Record": {
+      "main": [
+        [{ "node": "Update Idea Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Idea Status": {
+      "main": [
+        [{ "node": "Update Video Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Video Status": {
+      "main": [
+        [{ "node": "Prepare for Analytics", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare for Analytics": {
+      "main": [
+        [{ "node": "Execute 10-ANALYTICS", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "1"
+}
