@@ -1,9 +1,14 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from typing import List, Optional
 import os
+import base64
+import uuid
+from datetime import datetime
 
 import httpx
 from models import (
@@ -12,6 +17,7 @@ from models import (
     PipelineRun as PipelineRunModel, ContentStatus as DBContentStatus,
     PillarType as DBPillarType, PlatformType as DBPlatformType,
     ScrapeRun as ScrapeRunModel, NichePreset as NichePresetModel,
+    SystemSettings as SystemSettingsModel,
     ScrapeRunStatus as DBScrapeRunStatus, Base, engine
 )
 from schemas import (
@@ -22,7 +28,9 @@ from schemas import (
     Analytics, AnalyticsCreate, AnalyticsUpdate,
     PipelineOverview, PipelineStats, ContentStatus, PillarType, PlatformType,
     ScrapeRun, ScrapeRunCreate, ScrapeResponse, ScrapeRunStatus,
-    NichePreset, NichePresetCreate
+    NichePreset, NichePresetCreate,
+    SystemSettings, SystemSettingsCreate, CharacterConfig,
+    AvatarGenerationRequest, AvatarGenerationResponse
 )
 
 app = FastAPI(
@@ -44,6 +52,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def root():
@@ -91,17 +101,45 @@ def create_content_idea(idea: ContentIdeaCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/content-ideas/{idea_id}", response_model=ContentIdea)
-def update_content_idea(idea_id: int, idea: ContentIdeaUpdate, db: Session = Depends(get_db)):
+async def update_content_idea(idea_id: int, idea: ContentIdeaUpdate, db: Session = Depends(get_db)):
     db_idea = db.query(ContentIdeaModel).filter(ContentIdeaModel.id == idea_id).first()
     if not db_idea:
         raise HTTPException(status_code=404, detail="Content idea not found")
 
     update_data = idea.model_dump(exclude_unset=True)
+    print(f"DEBUG: PATCH received for idea {idea_id}. Data: {update_data}", flush=True)
+    status_changed_to_approved = False
+    
     for key, value in update_data.items():
         setattr(db_idea, key, value)
+        # Check for status change to approved (handle both string and Enum)
+        if key == "status" and str(value) == "approved":
+            status_changed_to_approved = True
+            print(f"DEBUG: Status change detected: {value}", flush=True)
 
     db.commit()
     db.refresh(db_idea)
+    
+    # If not detected in loop, check final state as fallback
+    if not status_changed_to_approved and db_idea.status == DBContentStatus.approved and "status" in update_data:
+        print(f"DEBUG: Fallback status check passed. Status is approved.", flush=True)
+        status_changed_to_approved = True
+
+    if status_changed_to_approved:
+        # Trigger n8n pipeline
+        N8N_PIPELINE_WEBHOOK_URL = os.getenv("N8N_PIPELINE_WEBHOOK_URL", "http://n8n:5678/webhook/trigger-pipeline")
+        print(f"DEBUG: Status changed to approved. Triggering webhook at {N8N_PIPELINE_WEBHOOK_URL}")
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    N8N_PIPELINE_WEBHOOK_URL,
+                    json={"content_idea_id": idea_id},
+                    timeout=5.0
+                )
+                print(f"DEBUG: Webhook response: {response.status_code} - {response.text}")
+            except Exception as e:
+                print(f"ERROR: Failed to trigger pipeline for idea {idea_id}: {e}")
+
     return db_idea
 
 
@@ -395,12 +433,28 @@ def get_pipeline_stats(db: Session = Depends(get_db)):
 # ==================== Bulk Operations ====================
 
 @app.post("/api/content-ideas/bulk-approve")
-def bulk_approve_ideas(idea_ids: List[int], db: Session = Depends(get_db)):
+async def bulk_approve_ideas(idea_ids: List[int], db: Session = Depends(get_db)):
     updated = db.query(ContentIdeaModel).filter(
         ContentIdeaModel.id.in_(idea_ids),
         ContentIdeaModel.status == "pending"
     ).update({"status": "approved"}, synchronize_session=False)
     db.commit()
+
+    # Trigger n8n pipeline for each approved idea
+    N8N_PIPELINE_WEBHOOK_URL = os.getenv("N8N_PIPELINE_WEBHOOK_URL", "http://n8n:5678/webhook/trigger-pipeline")
+    
+    async with httpx.AsyncClient() as client:
+        for idea_id in idea_ids:
+            try:
+                # We fire the webhook to start script generation
+                await client.post(
+                    N8N_PIPELINE_WEBHOOK_URL,
+                    json={"content_idea_id": idea_id},
+                    timeout=5.0
+                )
+            except Exception as e:
+                print(f"Failed to trigger pipeline for idea {idea_id}: {e}")
+
     return {"message": f"Approved {updated} ideas"}
 
 
@@ -557,3 +611,175 @@ def delete_niche_preset(preset_id: int, db: Session = Depends(get_db)):
     db.delete(preset)
     db.commit()
     return {"message": "Preset deleted"}
+
+
+# ==================== Character & Settings ====================
+
+@app.get("/api/settings/voices")
+async def get_elevenlabs_voices():
+    api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ELEVENLABS_API_KEY not configured")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": api_key}
+            )
+            response.raise_for_status()
+            data = response.json()
+            voices = []
+            for v in data.get("voices", []):
+                voices.append({
+                    "voice_id": v["voice_id"],
+                    "name": v["name"],
+                    "category": v.get("category"),
+                    "preview_url": v.get("preview_url"),
+                    "labels": v.get("labels", {})
+                })
+            return {"voices": voices}
+        except Exception as e:
+            # Fallback mock for development if API fails or quota exceeded
+            print(f"ElevenLabs API Error: {e}")
+            return {"voices": [
+                {"voice_id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "preview_url": "", "category": "premade"},
+                {"voice_id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi", "preview_url": "", "category": "premade"},
+                {"voice_id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella", "preview_url": "", "category": "premade"},
+            ]}
+
+
+@app.get("/api/settings/avatars")
+async def get_heygen_avatars():
+    api_key = os.getenv("HEYGEN_API_KEY")
+    if not api_key:
+        print("HEYGEN_API_KEY not found, returning mock data.")
+        return {"avatars": [
+                {"avatar_id": "Angela-in-T-shirt-20220819", "name": "Angela (Mock)", "preview_image_url": "https://files.heygen.ai/avatar/v3/Angela-in-T-shirt-20220819/full/preview_target.webp"},
+                {"avatar_id": "Anna_public_3_20240108", "name": "Anna (Mock)", "preview_image_url": "https://files.heygen.ai/avatar/v3/Anna_public_3_20240108/full/preview_target.webp"},
+        ]}
+        
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "https://api.heygen.com/v2/avatars",
+                headers={
+                    "X-Api-Key": api_key,
+                    "Content-Type": "application/json"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            return {"avatars": data.get("data", {}).get("avatars", [])}
+        except Exception as e:
+             # Fallback mock
+            print(f"HeyGen API Error: {e}")
+            return {"avatars": [
+                {"avatar_id": "Angela-in-T-shirt-20220819", "name": "Angela", "preview_image_url": "https://files.heygen.ai/avatar/v3/Angela-in-T-shirt-20220819/full/preview_target.webp"},
+                {"avatar_id": "Anna_public_3_20240108", "name": "Anna", "preview_image_url": "https://files.heygen.ai/avatar/v3/Anna_public_3_20240108/full/preview_target.webp"},
+            ]}
+
+
+@app.get("/api/config/character", response_model=CharacterConfig)
+def get_character_config(db: Session = Depends(get_db)):
+    setting = db.query(SystemSettingsModel).filter(SystemSettingsModel.key == "active_character").first()
+    if not setting or not setting.value:
+        return CharacterConfig(
+            voice_id="21m00Tcm4TlvDq8ikWAM",
+            avatar_id="Angela-in-T-shirt-20220819",
+            avatar_type="pretrained",
+            voice_name="Rachel",
+            avatar_name="Angela"
+        )
+    return CharacterConfig(**setting.value)
+
+
+@app.post("/api/config/character", response_model=CharacterConfig)
+def save_character_config(config: CharacterConfig, db: Session = Depends(get_db)):
+    setting = db.query(SystemSettingsModel).filter(SystemSettingsModel.key == "active_character").first()
+    if not setting:
+        setting = SystemSettingsModel(key="active_character", value=config.model_dump())
+        db.add(setting)
+    else:
+        setting.value = config.model_dump()
+    
+    db.commit()
+    db.refresh(setting)
+    return CharacterConfig(**setting.value)
+
+
+@app.post("/api/generate-avatar-image", response_model=AvatarGenerationResponse)
+async def generate_avatar_image(req: AvatarGenerationRequest, db: Session = Depends(get_db)):
+    # Using OpenAI DALL-E 3 as a reliable fallback for 'AI Image Generation'
+    # requesting b64_json to save locally as per requirement.
+    api_key = os.getenv("OPENAI_API_KEY") 
+    if not api_key:
+        return JSONResponse(status_code=500, content={"detail": "OPENAI_API_KEY not configured"})
+    
+    # "Nano Banana" style realism prompt as requested
+    # "Nano Banana" style realism prompt as requested
+    base_prompt = (
+        "Raw unedited photo of a real human woman, news anchor, looking at camera. "
+        "Shot on Sony A7R IV. Hyper-realistic, 8k, pore-level skin detail, slight imperfections. "
+        "Green screen background. Natural studio lighting. "
+        "NOT an illustration, NOT 3D render. 100% photograph."
+    )
+    final_prompt = req.prompt_enhancements if req.prompt_enhancements else base_prompt
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "https://api.openai.com/v1/images/generations",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "dall-e-3",
+                    "prompt": final_prompt,
+                    "n": 1,
+                    "size": "1024x1024",
+                    "response_format": "b64_json"
+                },
+                timeout=60.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Handle Base64
+            b64_data = data["data"][0]["b64_json"]
+            image_data = base64.b64decode(b64_data)
+            
+            # Save to static directory
+            filename = f"{uuid.uuid4()}.png"
+            AVATAR_DIR = os.path.join("static", "avatars")
+            os.makedirs(AVATAR_DIR, exist_ok=True)
+            
+            file_path = os.path.join(AVATAR_DIR, filename)
+            
+            with open(file_path, "wb") as f:
+                f.write(image_data)
+                
+            local_url = f"http://localhost:8000/static/avatars/{filename}"
+            
+            # Return relative path so frontend can construct the full URL
+            # The frontend should prepend the API host, or we can use a relative protocol if served from same origin.
+            # But here they are on different ports.
+            # Returning relative path starting with /static
+            relative_url = f"/static/avatars/{filename}"
+            
+            # Create Asset Record in DB for "Assets" page visibility
+            # We use script_id=None to indicate a global/library asset
+            new_asset = AssetModel(
+                script_id=None,
+                avatar_video_path=relative_url, # Store relative path or full? relative is safer for migrations.
+                status=DBContentStatus.avatar_ready,
+                created_at=datetime.utcnow()
+            )
+            db.add(new_asset)
+            db.commit()
+
+            return AvatarGenerationResponse(image_url=relative_url)
+        except Exception as e:
+            print(f"Image Gen Error: {e}")
+            raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")

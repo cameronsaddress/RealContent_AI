@@ -82,6 +82,23 @@ function Scraper() {
         setNiche(preset.keywords.join(' '));
     };
 
+    const [progressStep, setProgressStep] = useState('');
+
+    React.useEffect(() => {
+        let timeouts = [];
+        if (scrapeMutation.isPending) {
+            setProgressStep('Starting Scraper...');
+            timeouts.push(setTimeout(() => setProgressStep('Fetching Viral Videos (TikTok/IG)...'), 2500));
+            timeouts.push(setTimeout(() => setProgressStep('Analyzing Trends with Grok...'), 15000));
+            timeouts.push(setTimeout(() => setProgressStep('Extracting Hooks & Pillars...'), 35000));
+            timeouts.push(setTimeout(() => setProgressStep('Saving Ideas to Database...'), 55000));
+        } else {
+            setProgressStep('');
+            timeouts.forEach(clearTimeout);
+        }
+        return () => timeouts.forEach(clearTimeout);
+    }, [scrapeMutation.isPending]);
+
     return (
         <div className="scraper-page">
             <div className="page-header">
@@ -140,8 +157,11 @@ function Scraper() {
                                 className="btn btn-primary btn-block"
                                 disabled={scrapeMutation.isPending || !niche}
                             >
-                                {scrapeMutation.isPending ? 'Starting...' : 'Start Scrape'}
+                                {scrapeMutation.isPending ? (progressStep || 'Processing...') : 'Start Scrape (Top 50)'}
                             </button>
+                            <p style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                Fetches top 50 viral videos per platform to find the best ideas.
+                            </p>
 
                             {scrapeMutation.isError && (
                                 <div className="error-message">

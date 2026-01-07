@@ -48,6 +48,7 @@ class PlatformType(str, enum.Enum):
     twitter = "twitter"
     instagram = "instagram"
     linkedin = "linkedin"
+    unknown = "unknown"
     facebook = "facebook"
     threads = "threads"
     pinterest = "pinterest"
@@ -210,6 +211,14 @@ class NichePreset(Base):
     keywords = Column(JSONB)
     hashtags = Column(JSONB)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String(50), primary_key=True)
+    value = Column(JSONB)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def get_db():

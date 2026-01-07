@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -39,6 +39,7 @@ class PlatformType(str, Enum):
     facebook = "facebook"
     threads = "threads"
     pinterest = "pinterest"
+    unknown = "unknown"
 
 
 # Content Ideas Schemas
@@ -334,7 +335,7 @@ class ScrapeResponse(BaseModel):
     scrapedAt: str
     totalScraped: int
     analyzedCount: int
-    trends: List[TrendItem]
+    trends: Optional[List[TrendItem]] = None
     error: Optional[str] = None
 
 
@@ -355,3 +356,37 @@ class NichePreset(NichePresetBase):
 
     class Config:
         from_attributes = True
+
+
+# System Settings & Character Config
+class CharacterConfig(BaseModel):
+    voice_id: str
+    avatar_id: str
+    avatar_type: str = "pretrained"  # pretrained, static, generated
+    image_url: Optional[str] = None
+    voice_name: Optional[str] = None
+    avatar_name: Optional[str] = None
+
+
+class SystemSettingsBase(BaseModel):
+    key: str
+    value: Dict[str, Any]
+
+
+class SystemSettingsCreate(SystemSettingsBase):
+    pass
+
+
+class SystemSettings(SystemSettingsBase):
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AvatarGenerationRequest(BaseModel):
+    prompt_enhancements: Optional[str] = None
+
+
+class AvatarGenerationResponse(BaseModel):
+    image_url: str
