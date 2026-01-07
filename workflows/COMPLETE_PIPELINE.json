@@ -1,6 +1,7 @@
 {
   "name": "AI ContentGenerator",
-  "active": true,
+  "active": false,
+  "id": "rTAhapEWXNxRAElT",
   "versionId": "f0613422-b4be-4d3c-8cd7-62ff7782436f",
   "nodes": [
     {
@@ -944,7 +945,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate B-roll results and prepare for voice generation\nconst brollItems = $('Merge B-Roll').all();\nconst charConfig = $input.first().json || {};\n\nconst firstItem = $('Select Videos').first().json;\n\n// Get script and asset data\nconst scriptData = $('Save Script').first().json;\nconst assetData = $('Create Asset Record').first().json;\nconst parseData = $('Parse Script').first().json;\n\n// Clean script for TTS\nlet text = parseData.script || '';\ntext = text.replace(/\\[PAUSE\\]/gi, '...');\ntext = text.replace(/\\*(.*?)\\*/g, '$1');\ntext = text.replace(/\\s+/g, ' ').trim();\n\nif (parseData.cta) {\n  text = text + ' ... ' + parseData.cta;\n}\n\nreturn [{\n  json: {\n    asset_id: assetData.id,\n    script_id: scriptData.id,\n    content_idea_id: parseData.content_idea_id,\n    text_for_tts: text,\n    voice_id: charConfig.voice_id || '21m00Tcm4TlvDq8ikWAM',\n    avatar_id: charConfig.avatar_id || 'Kristin_pubblic_3_20240108',\n    avatar_type: charConfig.avatar_type || 'avatar',\n    config_image_url: charConfig.image_url,\n    broll_paths: brollItems.filter(i => i.json.fileName).map((i, idx) => \n      `/home/node/assets/videos/${scriptData.id}_scene${idx}.mp4`\n    )\n  }\n}];"
+        "jsCode": "// Aggregate B-roll results and prepare for voice generation\nconst brollItems = $('Merge B-Roll').all();\nconst charConfig = $input.first().json || {};\n\nconst firstItem = $('Select Videos').first().json;\n\n// Get script and asset data\nconst scriptData = $('Save Script').first().json;\nconst assetData = $('Create Asset Record').first().json;\nconst parseData = $('Parse Script').first().json;\n\n// Clean script for TTS\nlet text = parseData.script || '';\ntext = text.replace(/\\[PAUSE\\]/gi, '...');\ntext = text.replace(/\\*(.*?)\\*/g, '$1');\ntext = text.replace(/\\s+/g, ' ').trim();\n\nif (parseData.cta) {\n  text = text + ' ... ' + parseData.cta;\n}\n\n// Robust Voice ID Selection\nlet voiceId = charConfig.voice_id;\nif (!voiceId || typeof voiceId !== 'string' || voiceId.trim().length < 5) {\n    console.log(`Invalid or missing voice_id '${voiceId}', falling back to Rachel.`);\n    voiceId = '21m00Tcm4TlvDq8ikWAM'; // Rachel\n} else {\n    voiceId = voiceId.trim();\n}\n\nreturn [{\n  json: {\n    asset_id: assetData.id,\n    script_id: scriptData.id,\n    content_idea_id: parseData.content_idea_id,\n    text_for_tts: text,\n    voice_id: voiceId,\n    avatar_id: charConfig.avatar_id || 'Kristin_pubblic_3_20240108',\n    avatar_type: charConfig.avatar_type || 'avatar',\n    config_image_url: charConfig.image_url,\n    broll_paths: brollItems.filter(i => i.json.fileName).map((i, idx) => \n      `/home/node/assets/videos/${scriptData.id}_scene${idx}.mp4`\n    )\n  }\n}];"
       },
       "id": "prepare-tts-text",
       "name": "Prepare TTS Text",
@@ -978,7 +979,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.text_for_tts) }},\n  \"model_id\": \"eleven_multilingual_v2\",\n  \"voice_settings\": {\n    \"stability\": 0.5,\n    \"similarity_boost\": 0.75,\n    \"style\": 0.5,\n    \"use_speaker_boost\": true\n  }\n}",
+        "jsonBody": "={{ { \"text\": $json.text_for_tts, \"model_id\": \"eleven_multilingual_v2\", \"voice_settings\": { \"stability\": 0.5, \"similarity_boost\": 0.75, \"style\": 0.5, \"use_speaker_boost\": true } } }}",
         "options": {
           "response": {
             "response": {
@@ -999,7 +1000,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const fs = require('fs');\ntry {\n  const scriptId = $('Prepare TTS Text').first().json.script_id;\n  const filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n  const exists = fs.existsSync(filePath);\n  return [{ json: { exists, filePath, script_id: scriptId } }];\n} catch (e) {\n  return [{ json: { exists: false, error: e.message } }];\n}"
+        "jsCode": "const fs = require('fs');\ntry {\n  const sourceNode = $('Prepare TTS Text').first();\n  const sourceData = sourceNode.json;\n  const scriptId = sourceData.script_id;\n  const filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n  const exists = fs.existsSync(filePath);\n  \n  // MERGE source data so voice_id/text_for_tts persist to the Generator\n  return [{ \n      json: { \n          ...sourceData,\n          exists, \n          filePath, \n          script_id: scriptId,\n          // Explicitly ensure voice_id is passed if it exists in source\n          voice_id: sourceData.voice_id \n      } \n  }];\n} catch (e) {\n  return [{ json: { exists: false, error: e.message } }];\n}"
       },
       "id": "check-voice-exists",
       "name": "Check Voice Exists",
@@ -1098,51 +1099,16 @@
     },
     {
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst ttsData = $('Prepare TTS Text').first().json;\nconst scriptId = ttsData.script_id;\nconst filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'audio/mpeg',\n        fileName: `${scriptId}_voice.mp3`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read audio file: ${filePath}. Error: ${error.message}`);\n}"
-      },
-      "id": "read-audio-upload",
-      "name": "Read Audio for Upload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1160,
-        1400
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://upload.heygen.com/v1/asset",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "audio/mpeg"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "binaryData",
-        "binaryPropertyName": "data",
-        "options": {}
+        "jsCode": "const { execSync } = require('child_process');\nconst fs = require('fs');\n\nconst ttsData = $('Prepare TTS Text').first().json;\nconst scriptId = ttsData.script_id;\nconst filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\nconst apiKey = $env.HEYGEN_API_KEY;\n\nif (!apiKey) throw new Error('HEYGEN_API_KEY environment variable is missing');\n\nif (!fs.existsSync(filePath)) {\n    throw new Error(`File not found: ${filePath}`);\n}\n\ntry {\n    // Universal HTTP Fallback: Use WGET (Present in Alpine/BusyBox) \n    // to bypass Node/N8N header quirks and missing Curl.\n    // -O - : Output to stdout\n    // --post-file : Raw binary upload\n    // --header : Explicit headers\n    const command = `wget -O - \\\n      --header=\"X-Api-Key: ${apiKey}\" \\\n      --header=\"Content-Type: audio/mpeg\" \\\n      --post-file=\"${filePath}\" \\\n      \"https://upload.heygen.com/v1/asset\"`;\n\n    const stdout = execSync(command).toString();\n    \n    // Parse Response\n    try {\n        const responseJson = JSON.parse(stdout);\n        \n        if (responseJson.error) {\n             throw new Error(`API Error: ${JSON.stringify(responseJson.error)}`);\n        }\n        \n        if (!responseJson.data || !responseJson.data.id) {\n             throw new Error(`Invalid Response: ${stdout}`);\n        }\n\n        return [{\n            json: {\n                ...ttsData,\n                heygen_response: responseJson,\n                data: responseJson.data, \n                audio_asset_id: responseJson.data.id\n            }\n        }];\n\n    } catch (e) {\n        throw new Error(`Failed to parse WGET response: ${e.message} | Raw: ${stdout}`);\n    }\n\n} catch (error) {\n    throw new Error(`WGET Upload Failed: ${error.message}`);\n}"
       },
       "id": "upload-heygen-audio",
       "name": "Upload HeyGen Audio",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1380,
         1400
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "heygen",
-          "name": "heygen"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -2574,17 +2540,6 @@
       "main": [
         [
           {
-            "node": "Read Audio for Upload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Read Audio for Upload": {
-      "main": [
-        [
-          {
             "node": "Upload HeyGen Audio",
             "type": "main",
             "index": 0
@@ -3017,6 +2972,5 @@
   "staticData": null,
   "tags": [],
   "triggerCount": 6,
-  "updatedAt": "2026-01-06T00:00:00.000Z",
-  "active": false
+  "updatedAt": "2026-01-06T00:00:00.000Z"
 }
