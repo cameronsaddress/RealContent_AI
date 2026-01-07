@@ -2,7 +2,8 @@ from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+
 from sqlalchemy import func, text
 from typing import List, Optional
 import os
@@ -75,7 +76,9 @@ def list_content_ideas(
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
-    query = db.query(ContentIdeaModel)
+    query = db.query(ContentIdeaModel).options(
+        joinedload(ContentIdeaModel.scripts).joinedload(ScriptModel.assets)
+    )
     if status:
         query = query.filter(ContentIdeaModel.status == status.value)
     if pillar:
@@ -181,8 +184,33 @@ def get_script(script_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/scripts", response_model=Script)
 def create_script(script: ScriptCreate, db: Session = Depends(get_db)):
+    # Check for existing script to support idempotency/retries
+    existing_script = db.query(ScriptModel).filter(
+        ScriptModel.content_idea_id == script.content_idea_id
+    ).order_by(ScriptModel.created_at.desc()).first()
+    
+    if existing_script:
+        print(f"DEBUG: Returning existing script {existing_script.id} for idea {script.content_idea_id}", flush=True)
+        # Ensure parent status is updated even on retry
+        content_idea = db.query(ContentIdeaModel).filter(ContentIdeaModel.id == script.content_idea_id).first()
+        if content_idea and content_idea.status != DBContentStatus.script_ready:
+            print(f"DEBUG: Updating ContentIdea {script.content_idea_id} status to script_ready (retry)", flush=True)
+            content_idea.status = DBContentStatus.script_ready
+            db.add(content_idea)
+            db.commit()
+            
+        return existing_script
+
     db_script = ScriptModel(**script.model_dump())
     db.add(db_script)
+    
+    # Update parent status
+    content_idea = db.query(ContentIdeaModel).filter(ContentIdeaModel.id == script.content_idea_id).first()
+    if content_idea:
+        print(f"DEBUG: Updating ContentIdea {script.content_idea_id} status to script_ready", flush=True)
+        content_idea.status = DBContentStatus.script_ready
+        db.add(content_idea)
+        
     db.commit()
     db.refresh(db_script)
     return db_script
@@ -241,6 +269,15 @@ def get_asset(asset_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/assets", response_model=Asset)
 def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
+    # Check for existing asset to support idempotency/retries
+    existing_asset = db.query(AssetModel).filter(
+        AssetModel.script_id == asset.script_id
+    ).order_by(AssetModel.created_at.desc()).first()
+    
+    if existing_asset:
+        print(f"DEBUG: Returning existing asset {existing_asset.id} for script {asset.script_id}", flush=True)
+        return existing_asset
+
     db_asset = AssetModel(**asset.model_dump())
     db.add(db_asset)
     db.commit()

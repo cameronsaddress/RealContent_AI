@@ -1,6 +1,7 @@
 {
   "name": "AI ContentGenerator",
-  "versionId": "59c34cfb-472c-4db6-84b9-28129154e156",
+  "active": true,
+  "versionId": "f0613422-b4be-4d3c-8cd7-62ff7782436f",
   "nodes": [
     {
       "parameters": {
@@ -41,6 +42,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "scrape-trends",
+        "authentication": "none",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -426,12 +428,14 @@
       "position": [
         1000,
         200
-      ]
+      ],
+      "disabled": true
     },
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "trigger-pipeline",
+        "authentication": "none",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -443,7 +447,7 @@
         60,
         380
       ],
-      "webhookId": "trigger-pipeline"
+      "webhookId": "eb59ea2b-8f7b-4ac5-a593-5febc10fa1da"
     },
     {
       "parameters": {
@@ -989,7 +993,52 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
+        680,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\ntry {\n  const scriptId = $('Prepare TTS Text').first().json.script_id;\n  const filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n  const exists = fs.existsSync(filePath);\n  return [{ json: { exists, filePath, script_id: scriptId } }];\n} catch (e) {\n  return [{ json: { exists: false, error: e.message } }];\n}"
+      },
+      "id": "check-voice-exists",
+      "name": "Check Voice Exists",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
         280,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "file-exists",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-voice-exists",
+      "name": "Voice Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
         1400
       ]
     },
@@ -1022,6 +1071,81 @@
     },
     {
       "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/assets/{{ $('Prepare TTS Text').first().json.asset_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"voiceover_path\": \"/home/node/assets/audio/{{ $('Prepare TTS Text').first().json.script_id }}_voice.mp3\",\n  \"status\": \"voice_ready\"\n}",
+        "options": {}
+      },
+      "id": "update-asset-voice",
+      "name": "Update Asset Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst ttsData = $('Prepare TTS Text').first().json;\nconst scriptId = ttsData.script_id;\nconst filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'audio/mpeg',\n        fileName: `${scriptId}_voice.mp3`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read audio file: ${filePath}. Error: ${error.message}`);\n}"
+      },
+      "id": "read-audio-upload",
+      "name": "Read Audio for Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://upload.heygen.com/v1/asset",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "audio/mpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "upload-heygen-audio",
+      "name": "Upload HeyGen Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        1400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
         "content": "## Create Avatar\nHeyGen lip-sync video generation",
         "height": 140,
         "width": 180,
@@ -1038,7 +1162,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse duration and prepare for HeyGen\nconst durationResult = $input.first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\n// Avatar Fallback Logic\nlet avatarId = ttsData.avatar_id;\nlet avatarType = ttsData.avatar_type;\n\n// If configured for Talking Photo but no ID is provided, fallback to default Avatar\nif (avatarId === 'static_image' && (!$env.HEYGEN_TALKING_PHOTO_ID || $env.HEYGEN_TALKING_PHOTO_ID.trim() === '')) {\n  console.log('Missing HEYGEN_TALKING_PHOTO_ID, falling back to default avatar');\n  avatarId = 'Anna_public_3_20240108';\n  avatarType = 'avatar';\n}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths,\n    avatar_id: avatarId,\n    avatar_type: avatarType\n  }\n}];"
+        "jsCode": "// Parse duration and prepare for HeyGen\nconst uploadResult = $input.first().json;\nconst durationResult = $('Get Duration').first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\n// Avatar Fallback Logic\nlet avatarId = ttsData.avatar_id;\nlet avatarType = ttsData.avatar_type;\n\n// If configured for Talking Photo but no ID is provided, fallback to default Avatar\nif (avatarId === 'static_image' && (!$env.HEYGEN_TALKING_PHOTO_ID || $env.HEYGEN_TALKING_PHOTO_ID.trim() === '')) {\n  console.log('Missing HEYGEN_TALKING_PHOTO_ID, falling back to default avatar');\n  avatarId = 'Anna_public_3_20240108';\n  avatarType = 'avatar';\n}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths,\n    avatar_id: avatarId,\n    avatar_type: avatarType,\n    audio_asset_id: uploadResult.data.id\n  }\n}];"
       },
       "id": "prepare-heygen-data",
       "name": "Prepare HeyGen Data",
@@ -1066,7 +1190,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"video_inputs\": [\n    {\n      \"character\": {\n        \"type\": \"{{ $json.avatar_id === 'static_image' ? 'talking_photo' : 'avatar' }}\",\n        \"avatar_id\": \"{{ $json.avatar_id === 'static_image' ? ($env.HEYGEN_TALKING_PHOTO_ID || '12345') : $json.avatar_id }}\",\n        \"avatar_style\": \"normal\",\n        \"talking_photo_id\": \"{{ $json.avatar_id === 'static_image' ? ($env.HEYGEN_TALKING_PHOTO_ID || '') : '' }}\"\n      },\n      \"voice\": {\n        \"type\": \"audio\",\n        \"audio_url\": \"{{ $env.N8N_PUBLIC_URL || 'http://100.83.153.43:5678' }}/webhook/serve-audio/{{ $json.script_id }}\"\n      },\n      \"background\": {\n        \"type\": \"color\",\n        \"value\": \"#00FF00\"\n      }\n    }\n  ],\n  \"dimension\": {\n    \"width\": 1080,\n    \"height\": 1920\n  },\n  \"aspect_ratio\": \"9:16\"\n}",
+        "jsonBody": "={\n  \"video_inputs\": [\n    {\n      \"character\": {\n        \"type\": \"{{ $json.avatar_id === 'static_image' ? 'talking_photo' : 'avatar' }}\",\n        \"avatar_id\": \"{{ $json.avatar_id === 'static_image' ? ($env.HEYGEN_TALKING_PHOTO_ID || '12345') : $json.avatar_id }}\",\n        \"avatar_style\": \"normal\",\n        \"talking_photo_id\": \"{{ $json.avatar_id === 'static_image' ? ($env.HEYGEN_TALKING_PHOTO_ID || '') : '' }}\"\n      },\n      \"voice\": {\n        \"type\": \"audio\",\n        \"audio_asset_id\": \"{{ $json.audio_asset_id }}\"\n      },\n      \"background\": {\n        \"type\": \"color\",\n        \"value\": \"#00FF00\"\n      }\n    }\n  ],\n  \"dimension\": {\n    \"width\": 1080,\n    \"height\": 1920\n  },\n  \"aspect_ratio\": \"9:16\"\n}",
         "options": {
           "timeout": 60000
         }
@@ -1076,7 +1200,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        280,
+        680,
         1760
       ],
       "credentials": {
@@ -1085,6 +1209,51 @@
           "name": "heygen"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\ntry {\n  const scriptId = $('Prepare HeyGen Data').first().json.script_id;\n  const filePath = `/home/node/assets/avatar/${scriptId}_avatar.mp4`;\n  const exists = fs.existsSync(filePath);\n  return [{ json: { exists, filePath, script_id: scriptId } }];\n} catch (e) {\n  return [{ json: { exists: false, error: e.message } }];\n}"
+      },
+      "id": "check-video-exists",
+      "name": "Check Video Exists",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "file-exists",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-video-exists",
+      "name": "Video Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1760
+      ]
     },
     {
       "parameters": {
@@ -1251,7 +1420,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build FFmpeg command for video compositing\nconst prevData = $('Extract Video ID').first().json;\nconst scriptId = prevData.script_id;\n\nconst avatarPath = `/home/node/assets/avatar/${scriptId}_avatar.mp4`;\nconst brollPaths = prevData.broll_paths || [];\nconst outputPath = `/home/node/assets/output/${scriptId}_combined.mp4`;\n\n// Build FFmpeg filter complex\nlet inputs = `-i ${avatarPath}`;\nlet filterComplex = '';\n\nif (brollPaths.length > 0) {\n  // Add B-roll inputs\n  brollPaths.forEach(path => {\n    inputs += ` -i ${path}`;\n  });\n  \n  // Concat B-roll clips\n  const brollInputs = brollPaths.map((_, i) => `[${i + 1}:v]`).join('');\n  filterComplex = `${brollInputs}concat=n=${brollPaths.length}:v=1:a=0[broll];`;\n  filterComplex += `[broll]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[broll_scaled];`;\n  filterComplex += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  filterComplex += `[broll_scaled][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]`;\n} else {\n  // No B-roll - solid background\n  filterComplex = `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  filterComplex += `color=c=#1a1a2e:s=1080x1920:d=120[bg];`;\n  filterComplex += `[bg][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]`;\n}\n\nconst ffmpegCmd = `ffmpeg -y ${inputs} -filter_complex \"${filterComplex}\" -map \"[outv]\" -map 0:a? -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart ${outputPath}`;\n\nreturn [{\n  json: {\n    asset_id: prevData.asset_id,\n    script_id: scriptId,\n    content_idea_id: prevData.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath\n  }\n}];"
+        "jsCode": "// Build FFmpeg command for video compositing\nconst extractNode = $('Extract Video ID').first();\n// Fallback to Prepare HeyGen Data if skipped (Idempotency)\nconst sourceData = extractNode ? extractNode.json : $('Prepare HeyGen Data').first().json;\n\nconst scriptId = sourceData.script_id;\n\nconst avatarPath = `/home/node/assets/avatar/${scriptId}_avatar.mp4`;\nconst brollPaths = sourceData.broll_paths || [];\nconst outputPath = `/home/node/assets/output/${scriptId}_combined.mp4`;\n\n// Build FFmpeg filter complex\nlet inputs = `-i ${avatarPath}`;\nlet filterComplex = '';\n\nif (brollPaths.length > 0) {\n  // Add B-roll inputs\n  brollPaths.forEach(path => {\n    inputs += ` -i ${path}`;\n  });\n  \n  // Concat B-roll clips\n  const brollInputs = brollPaths.map((_, i) => `[${i + 1}:v]`).join('');\n  filterComplex = `${brollInputs}concat=n=${brollPaths.length}:v=1:a=0[broll];`;\n  filterComplex += `[broll]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[broll_scaled];`;\n  filterComplex += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  filterComplex += `[broll_scaled][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]`;\n} else {\n  // No B-roll - solid background\n  filterComplex = `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  filterComplex += `color=c=#1a1a2e:s=1080x1920:d=120[bg];`;\n  filterComplex += `[bg][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]`;\n}\n\nconst ffmpegCmd = `ffmpeg -y ${inputs} -filter_complex \"${filterComplex}\" -map \"[outv]\" -map 0:a? -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart ${outputPath}`;\n\nreturn [{\n  json: {\n    asset_id: sourceData.asset_id,\n    script_id: scriptId,\n    content_idea_id: sourceData.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath\n  }\n}];"
       },
       "id": "build-ffmpeg-cmd",
       "name": "Build FFmpeg Command",
@@ -1351,14 +1520,12 @@
     },
     {
       "parameters": {
-        "operation": "read",
-        "fileSelector": "={{ $json.audio_path }}",
-        "options": {}
+        "jsCode": "const fs = require('fs');\nconst filePath = $input.first().json.audio_path;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'audio/mpeg',\n        fileName: filePath.split('/').pop()\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read audio file: ${filePath}. Error: ${error.message}`);\n}"
       },
       "id": "read-audio-for-whisper",
       "name": "Read Audio for Whisper",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         280,
         2480
@@ -1541,6 +1708,75 @@
     },
     {
       "parameters": {
+        "jsCode": "const fs = require('fs');\nconst scriptId = $input.first().json.script_id;\nconst filePath = `/home/node/assets/output/${scriptId}_final.mp4`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'video/mp4',\n        fileName: `${scriptId}_final.mp4`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read video file: ${filePath}. Error: ${error.message}`);\n}"
+      },
+      "id": "read-final-video",
+      "name": "Read Final Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://storage.googleapis.com/upload/storage/v1/b/content-pipeline-assets/o",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleServiceAccount",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "uploadType",
+              "value": "media"
+            },
+            {
+              "name": "name",
+              "value": "={{ $('Prepare Publish Data').first().json.script_id }}_final.mp4"
+            },
+            {
+              "name": "predefinedAcl",
+              "value": "publicRead"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "gcs-upload-http",
+      "name": "GCS Upload HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        480,
+        2840
+      ],
+      "credentials": {
+        "googleServiceAccount": {
+          "id": "gcs-service-account",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileName = $input.first().json.name;\nconst publishData = $('Prepare Publish Data').first().json;\nconst videoUrl = `https://storage.googleapis.com/content-pipeline-assets/${fileName}`;\n\nreturn [{\n  json: {\n    ...publishData,\n    video_url: videoUrl\n  }\n}];"
+      },
+      "id": "format-gcs-url",
+      "name": "Format GCS URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        2840
+      ]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://api.blotato.com/v1/posts",
         "authentication": "genericCredentialType",
@@ -1556,7 +1792,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"platforms\": {{ JSON.stringify($json.platforms) }},\n  \"content\": {\n    \"caption\": {{ JSON.stringify($json.caption) }},\n    \"video_url\": \"{{ $env.N8N_PUBLIC_URL || 'http://100.83.153.43:5678' }}/webhook/serve-video/{{ $json.script_id }}\"\n  },\n  \"schedule\": { \"type\": \"now\" },\n  \"options\": { \"auto_hashtags\": false, \"cross_post\": true }\n}",
+        "jsonBody": "={\n  \"platforms\": {{ JSON.stringify($json.platforms) }},\n  \"content\": {\n    \"caption\": {{ JSON.stringify($json.caption) }},\n    \"video_url\": \"{{ $json.video_url }}\"\n  },\n  \"schedule\": { \"type\": \"now\" },\n  \"options\": { \"auto_hashtags\": false, \"cross_post\": true }\n}",
         "options": {
           "timeout": 120000
         }
@@ -1566,7 +1802,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        280,
+        1080,
         2840
       ],
       "credentials": {
@@ -1645,21 +1881,6 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ { \"success\": true, \"message\": \"Pipeline complete\", \"content_idea_id\": $('Parse Response').first().json.content_idea_id, \"published_at\": $('Parse Response').first().json.published_at } }}",
-        "options": {}
-      },
-      "id": "respond-success",
-      "name": "Respond Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1160,
-        2840
-      ]
-    },
-    {
-      "parameters": {
         "content": "## File Server\nServe audio/video files to external APIs",
         "height": 140,
         "width": 180,
@@ -1678,6 +1899,7 @@
       "parameters": {
         "httpMethod": "GET",
         "path": "serve-audio/:script_id",
+        "authentication": "none",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -1689,18 +1911,16 @@
         1560,
         200
       ],
-      "webhookId": "serve-audio"
+      "webhookId": "2fc52be9-47ee-43eb-a327-3454606b35fa"
     },
     {
       "parameters": {
-        "operation": "read",
-        "fileSelector": "=/home/node/assets/audio/{{ $json.params.script_id }}_voice.mp3",
-        "options": {}
+        "jsCode": "const fs = require('fs');\nconst scriptId = $input.first().json.params.script_id;\nconst filePath = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'audio/mpeg',\n        fileName: `${scriptId}_voice.mp3`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read audio file: ${filePath}. Error: ${error.message}`);\n}"
       },
       "id": "read-audio-file",
       "name": "Read Audio",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1780,
         200
@@ -1733,6 +1953,7 @@
       "parameters": {
         "httpMethod": "GET",
         "path": "serve-video/:script_id",
+        "authentication": "none",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -1744,18 +1965,16 @@
         1560,
         380
       ],
-      "webhookId": "serve-video"
+      "webhookId": "33394c8b-a4f9-4606-b522-2856840a5297"
     },
     {
       "parameters": {
-        "operation": "read",
-        "fileSelector": "=/home/node/assets/output/{{ $json.params.script_id }}_final.mp4",
-        "options": {}
+        "jsCode": "const fs = require('fs');\nconst scriptId = $input.first().json.params.script_id;\nconst filePath = `/home/node/assets/output/${scriptId}_final.mp4`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'video/mp4',\n        fileName: `${scriptId}_final.mp4`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read video file: ${filePath}. Error: ${error.message}`);\n}"
       },
       "id": "read-video-file",
       "name": "Read Video",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1780,
         380
@@ -2282,6 +2501,35 @@
       "main": [
         [
           {
+            "node": "Check Voice Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Voice Exists": {
+      "main": [
+        [
+          {
+            "node": "Voice Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voice Exists?": {
+      "main": [
+        [
+          {
+            "node": "Get Duration",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Generate Voice (ElevenLabs)",
             "type": "main",
             "index": 0
@@ -2315,6 +2563,39 @@
       "main": [
         [
           {
+            "node": "Update Asset Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Asset Voice": {
+      "main": [
+        [
+          {
+            "node": "Read Audio for Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Audio for Upload": {
+      "main": [
+        [
+          {
+            "node": "Upload HeyGen Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload HeyGen Audio": {
+      "main": [
+        [
+          {
             "node": "Prepare HeyGen Data",
             "type": "main",
             "index": 0
@@ -2324,6 +2605,35 @@
     },
     "Prepare HeyGen Data": {
       "main": [
+        [
+          {
+            "node": "Check Video Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Video Exists": {
+      "main": [
+        [
+          {
+            "node": "Video Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video Exists?": {
+      "main": [
+        [
+          {
+            "node": "Build FFmpeg Command",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Create HeyGen Video",
@@ -2578,6 +2888,39 @@
       "main": [
         [
           {
+            "node": "Read Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Final Video": {
+      "main": [
+        [
+          {
+            "node": "GCS Upload HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GCS Upload HTTP": {
+      "main": [
+        [
+          {
+            "node": "Format GCS URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format GCS URL": {
+      "main": [
+        [
+          {
             "node": "Publish (Blotato)",
             "type": "main",
             "index": 0
@@ -2620,13 +2963,7 @@
     },
     "Update Status Published": {
       "main": [
-        [
-          {
-            "node": "Respond Success",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Serve Audio": {

@@ -394,3 +394,90 @@ docker exec -it n8n_postgres psql -U n8n -d content_pipeline -f /docker-entrypoi
 ## License
 
 Private/Internal Use
+
+## Workflow Management & Recovery SOP
+
+**Critical:** Due to internal architecture changes in n8n 2.x ("Headless" mode), standard import/export can sometimes fail to link version history, leading to "Phantom Workflows" (Active but 404) or "Version Not Found" errors. Follow these procedures to prevent downtime.
+
+### 1. Safe Workflow Modification Cycle
+
+When making changes to `COMPLETE_PIPELINE.json` (or any workflow):
+
+1.  **Edit the JSON:**
+    - Ensure `webhooks` have `"authentication": "none"` (unless intentional).
+    - **Do NOT** manually change `id` or `versionId` unless you are doing a "Nuclear Reset".
+    
+2.  **Import:**
+    ```bash
+    docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
+    ```
+
+3.  **Publish (Activate):**
+    - The `import` command interprets `active: true` in JSON, but sometimes fails to register the webhooks in the load balancer.
+    - **Always** run this immediately after import:
+    ```bash
+    # Find the ID first
+    docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity;"
+    
+    # Publish by ID (This forces 'History' creation if it exists, or just activates)
+    docker exec n8n n8n publish:workflow --id=<WORKFLOW_ID>
+    ```
+
+### 2. "Nuclear" Reset (When things are broken)
+
+If you get `Version not found` or `Unknown Webhook` (404) errors despite the workflow looking active:
+
+**Step A: Purge Old State**
+```bash
+docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "DELETE FROM workflow_entity WHERE name = 'AI ContentGenerator';"
+```
+
+**Step B: Prepare Fresh JSON**
+1.  Open `workflows/COMPLETE_PIPELINE.json`.
+2.  Remove `"id": "..."` field (Let n8n generate a new Worklfow ID).
+3.  Remove `"versionId": "..."` field (Let n8n generate a new Version ID).
+4.  Ensure `"active": true`.
+
+**Step C: Import & Verify History (The Critical Step)**
+In n8n 2.x, CLI import sometimes creates the *Entity* but skips the *History* record.
+1.  Import: `docker exec n8n n8n import:workflow ...`
+2.  Restart: `docker compose restart n8n`
+3.  **Check History:**
+    ```bash
+    docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "SELECT * FROM workflow_history;"
+    ```
+4.  **If History is EMPTY, you MUST run the Repair Script.**
+
+### 3. Database Repair Script (The "Missing History" Fix)
+
+We have created a tool to manually inject the missing history record, which is required for Activation/Toggle to work.
+
+**Location:** `workflows/generate_history_sql.py`
+
+**Usage:**
+1.  Get the new Workflow ID from DB.
+2.  Get the Version ID (or generate one) from your JSON or DB.
+3.  Edit `workflows/generate_history_sql.py` with these IDs.
+4.  Run:
+    ```bash
+    python3 workflows/generate_history_sql.py > workflows/inject_history.sql
+    docker exec -T n8n_postgres psql -U n8n -d content_pipeline < workflows/inject_history.sql
+    docker compose restart n8n
+    ```
+
+### 4. Ownership Fix
+
+If the Toggle is missing in the UI, the workflow is likely "Orphaned" (No Owner).
+Link it to the user:
+
+```bash
+docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "
+INSERT INTO shared_workflow (\"workflowId\", \"projectId\", \"role\", \"createdAt\", \"updatedAt\") 
+VALUES (
+  (SELECT id FROM workflow_entity WHERE name = 'AI ContentGenerator' LIMIT 1), 
+  (SELECT id FROM project LIMIT 1), 
+  'workflow:owner', 
+  NOW(), 
+  NOW()
+);"
+```

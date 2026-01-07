@@ -42,34 +42,39 @@ class PlatformType(str, Enum):
     unknown = "unknown"
 
 
-# Content Ideas Schemas
-class ContentIdeaBase(BaseModel):
-    source_url: Optional[str] = None
-    source_platform: Optional[PlatformType] = None
-    original_text: Optional[str] = None
-    pillar: Optional[PillarType] = None
-    viral_score: Optional[int] = Field(None, ge=1, le=10)
-    suggested_hook: Optional[str] = None
+# ==================== ASSET SCHEMAS ====================
+class AssetBase(BaseModel):
+    script_id: int
+    voiceover_path: Optional[str] = None
+    voiceover_duration: Optional[float] = None
+    srt_path: Optional[str] = None
+    ass_path: Optional[str] = None
+    avatar_video_path: Optional[str] = None
+    background_video_path: Optional[str] = None
+    combined_video_path: Optional[str] = None
+    final_video_path: Optional[str] = None
     status: ContentStatus = ContentStatus.pending
     error_message: Optional[str] = None
 
 
-class ContentIdeaCreate(ContentIdeaBase):
+class AssetCreate(AssetBase):
     pass
 
 
-class ContentIdeaUpdate(BaseModel):
-    source_url: Optional[str] = None
-    source_platform: Optional[PlatformType] = None
-    original_text: Optional[str] = None
-    pillar: Optional[PillarType] = None
-    viral_score: Optional[int] = Field(None, ge=1, le=10)
-    suggested_hook: Optional[str] = None
+class AssetUpdate(BaseModel):
+    voiceover_path: Optional[str] = None
+    voiceover_duration: Optional[float] = None
+    srt_path: Optional[str] = None
+    ass_path: Optional[str] = None
+    avatar_video_path: Optional[str] = None
+    background_video_path: Optional[str] = None
+    combined_video_path: Optional[str] = None
+    final_video_path: Optional[str] = None
     status: Optional[ContentStatus] = None
     error_message: Optional[str] = None
 
 
-class ContentIdea(ContentIdeaBase):
+class Asset(AssetBase):
     id: int
     created_at: datetime
     updated_at: datetime
@@ -78,7 +83,7 @@ class ContentIdea(ContentIdeaBase):
         from_attributes = True
 
 
-# Script Schemas
+# ==================== SCRIPT SCHEMAS ====================
 class ScriptBase(BaseModel):
     content_idea_id: int
     hook: Optional[str] = None
@@ -122,53 +127,50 @@ class Script(ScriptBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    assets: List[Asset] = []
 
     class Config:
         from_attributes = True
 
 
-# Asset Schemas
-class AssetBase(BaseModel):
-    script_id: int
-    voiceover_path: Optional[str] = None
-    voiceover_duration: Optional[float] = None
-    srt_path: Optional[str] = None
-    ass_path: Optional[str] = None
-    avatar_video_path: Optional[str] = None
-    background_video_path: Optional[str] = None
-    combined_video_path: Optional[str] = None
-    final_video_path: Optional[str] = None
+# ==================== CONTENT IDEA SCHEMAS ====================
+class ContentIdeaBase(BaseModel):
+    source_url: Optional[str] = None
+    source_platform: Optional[PlatformType] = None
+    original_text: Optional[str] = None
+    pillar: Optional[PillarType] = None
+    viral_score: Optional[int] = Field(None, ge=1, le=10)
+    suggested_hook: Optional[str] = None
     status: ContentStatus = ContentStatus.pending
     error_message: Optional[str] = None
 
 
-class AssetCreate(AssetBase):
+class ContentIdeaCreate(ContentIdeaBase):
     pass
 
 
-class AssetUpdate(BaseModel):
-    voiceover_path: Optional[str] = None
-    voiceover_duration: Optional[float] = None
-    srt_path: Optional[str] = None
-    ass_path: Optional[str] = None
-    avatar_video_path: Optional[str] = None
-    background_video_path: Optional[str] = None
-    combined_video_path: Optional[str] = None
-    final_video_path: Optional[str] = None
+class ContentIdeaUpdate(BaseModel):
+    source_url: Optional[str] = None
+    source_platform: Optional[PlatformType] = None
+    original_text: Optional[str] = None
+    pillar: Optional[PillarType] = None
+    viral_score: Optional[int] = Field(None, ge=1, le=10)
+    suggested_hook: Optional[str] = None
     status: Optional[ContentStatus] = None
     error_message: Optional[str] = None
 
 
-class Asset(AssetBase):
+class ContentIdea(ContentIdeaBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    scripts: List[Script] = []
 
     class Config:
         from_attributes = True
 
 
-# Published Schemas
+# ==================== PUBLISHED SCHEMAS ====================
 class PublishedBase(BaseModel):
     asset_id: int
     tiktok_url: Optional[str] = None
@@ -221,7 +223,7 @@ class Published(PublishedBase):
         from_attributes = True
 
 
-# Analytics Schemas
+# ==================== ANALYTICS SCHEMAS ====================
 class AnalyticsBase(BaseModel):
     published_id: int
     platform: PlatformType
@@ -252,7 +254,7 @@ class Analytics(AnalyticsBase):
         from_attributes = True
 
 
-# Pipeline Overview Schema (for the view)
+# ==================== PIPELINE OVERVIEW ====================
 class PipelineOverview(BaseModel):
     content_id: int
     source_platform: Optional[PlatformType]
@@ -272,7 +274,7 @@ class PipelineOverview(BaseModel):
         from_attributes = True
 
 
-# Stats Schema
+# ==================== STATS ====================
 class PipelineStats(BaseModel):
     total_ideas: int
     pending_ideas: int
@@ -285,7 +287,7 @@ class PipelineStats(BaseModel):
     by_platform: dict
 
 
-# Scrape Run Schemas
+# ==================== SCRAPE RUN SCHEMAS ====================
 class ScrapeRunStatus(str, Enum):
     pending = "pending"
     running = "running"
@@ -339,7 +341,7 @@ class ScrapeResponse(BaseModel):
     error: Optional[str] = None
 
 
-# Niche Preset Schemas
+# ==================== NICHE PRESET SCHEMAS ====================
 class NichePresetBase(BaseModel):
     name: str
     keywords: List[str]
@@ -358,7 +360,7 @@ class NichePreset(NichePresetBase):
         from_attributes = True
 
 
-# System Settings & Character Config
+# ==================== SYSTEM SETTINGS ====================
 class CharacterConfig(BaseModel):
     voice_id: str
     avatar_id: str

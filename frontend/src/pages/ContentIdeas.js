@@ -10,7 +10,7 @@ function ContentIdeas() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [viewingIdea, setViewingIdea] = useState(null);
 
-  const { data: ideas, isLoading } = useQuery({
+  const { data: ideas, isLoading, error } = useQuery({
     queryKey: ['contentIdeas', statusFilter, pillarFilter],
     queryFn: () => getContentIdeas({
       status: statusFilter || undefined,
@@ -66,35 +66,77 @@ function ContentIdeas() {
     updateMutation.mutate({ id, data: { status: 'rejected' } });
   };
 
-  return (
-    <div className="content-ideas">
-      <div className="page-header">
-        <h1 className="page-title">Content Ideas</h1>
-      </div>
+  const getDetailedStatus = (idea) => {
+    // If completed or explicit error, just show status
+    if (['published', 'ready_to_publish', 'publishing'].includes(idea.status)) return idea.status;
 
-      <div className="filters">
-        <select
-          className="filter-select"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">All Status</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-          <option value="error">Error</option>
-        </select>
-        <select
-          className="filter-select"
-          value={pillarFilter}
-          onChange={(e) => setPillarFilter(e.target.value)}
-        >
-          <option value="">All Pillars</option>
-          <option value="market_intelligence">Market Intelligence</option>
-          <option value="educational_tips">Educational Tips</option>
-          <option value="lifestyle_local">Lifestyle & Local</option>
-          <option value="brand_humanization">Brand Humanization</option>
-        </select>
+    // If pending/approved, waiting for pipeline
+    if (['pending', 'approved'].includes(idea.status)) return idea.status;
+
+    // Check depth
+    if (!idea.scripts || idea.scripts.length === 0) {
+      if (idea.status === 'script_generating') return 'Generating Script...';
+      return idea.status;
+    }
+
+    // Has script, check assets
+    const latestScript = idea.scripts[idea.scripts.length - 1]; // items from query are ordered desc but let's be safe. wait, query was desc. so [0] is latest?
+    // Actually backend returns .unique().all() but ordered by created_at desc.
+    // We should assume data integrity for now or sort client side. 
+    // Let's assume the backend serializer preserves order if we did eager loading correctly?
+    // Actually, SQL order_by might not strictly apply to the nested collection unless specified in relationship or joinedload strategy.
+    // Let's safe check client side.
+    const scripts = [...idea.scripts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const script = scripts[0];
+
+    if (!script.assets || script.assets.length === 0) return 'Script Ready (No Assets)';
+
+    // Check assets
+    // Find asset with most progress
+    const assets = [...script.assets].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const asset = assets[0];
+
+    if (!asset.voiceover_path) return 'Missing Voice';
+    if (!asset.avatar_video_path) return 'Missing Avatar';
+    if (!asset.final_video_path) return 'Assembling...';
+
+    return idea.status;
+  };
+
+  if (isLoading) return <div className="loading">Loading ideas...</div>;
+  if (error) return <div className="error">Error: {error.message}</div>;
+
+  return (
+    <div className="content-ideas-page">
+      <div className="page-header">
+        <h1>Content Ideas</h1>
+        <div className="filters">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="filter-select"
+          >
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="script_ready">Script Ready</option>
+            <option value="voice_ready">Voice Ready</option>
+            <option value="avatar_ready">Avatar Ready</option>
+            <option value="published">Published</option>
+            <option value="failed">Failed</option>
+          </select>
+          <select
+            value={pillarFilter}
+            onChange={(e) => setPillarFilter(e.target.value)}
+            className="filter-select"
+          >
+            <option value="">All Pillars</option>
+            <option value="market_intelligence">Market Intel</option>
+            <option value="educational_tips">Educational</option>
+            <option value="lifestyle_local">Lifestyle</option>
+            <option value="brand_humanization">Brand</option>
+          </select>
+        </div>
       </div>
 
       {selectedIds.length > 0 && (
@@ -121,39 +163,37 @@ function ContentIdeas() {
         </div>
       )}
 
-      {isLoading ? (
-        <div className="loading">Loading content ideas...</div>
-      ) : ideas?.length === 0 ? (
+      {!ideas?.length ? (
         <div className="empty-state">
-          <h3>No content ideas found</h3>
-          <p>Run the content discovery workflow to scrape new ideas</p>
+          <p>No content ideas found. Check back later!</p>
         </div>
       ) : (
         <div className="table-container">
-          <table>
+          <table className="ideas-table">
             <thead>
               <tr>
-                <th className="checkbox-cell">
+                <th style={{ width: '40px' }}>
                   <input
                     type="checkbox"
                     onChange={handleSelectAll}
-                    checked={selectedIds.length === ideas?.length}
+                    checked={selectedIds.length === ideas?.length && ideas.length > 0}
                   />
                 </th>
-                <th>ID</th>
-                <th>Platform</th>
-                <th>Pillar</th>
-                <th>Hook</th>
-                <th>Score</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
+                <th style={{ width: '60px' }}>ID</th>
+                <th style={{ width: '100px' }}>PLATFORM</th>
+                <th style={{ width: '140px' }}>PILLAR</th>
+                <th>HOOK</th>
+                <th style={{ width: '80px' }}>SCORE</th>
+                <th style={{ width: '140px' }}>STATUS</th>
+                <th style={{ width: '200px' }}>PIPELINE</th>
+                <th style={{ width: '120px' }}>CREATED</th>
+                <th style={{ width: '120px' }}>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
-              {ideas?.map((idea) => (
-                <tr key={idea.id}>
-                  <td className="checkbox-cell">
+              {ideas.map((idea) => (
+                <tr key={idea.id} className={`row-${idea.status}`}>
+                  <td>
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(idea.id)}
@@ -185,7 +225,12 @@ function ContentIdeas() {
                       {idea.status.replace('_', ' ')}
                     </span>
                   </td>
-                  <td>{format(new Date(idea.created_at), 'MMM d, HH:mm')}</td>
+                  <td>
+                    <span style={{ fontSize: '0.85em', color: '#666' }}>
+                      {getDetailedStatus(idea)}
+                    </span>
+                  </td>
+                  <td>{new Date(idea.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                   <td>
                     <div className="actions">
                       <button
@@ -194,6 +239,24 @@ function ContentIdeas() {
                       >
                         View
                       </button>
+                      {['error', 'failed'].includes(idea.status) && (
+                        <button
+                          className="action-btn retry"
+                          onClick={() => handleApprove(idea.id)}
+                        >
+                          Retry
+                        </button>
+                      )}
+                      {['script_ready', 'voice_ready', 'avatar_ready'].includes(idea.status) && (
+                        <button
+                          className="action-btn retry"
+                          style={{ backgroundColor: '#2196F3' }}
+                          onClick={() => handleApprove(idea.id)}
+                          title="Resume Pipeline (Skip generated steps)"
+                        >
+                          Resume
+                        </button>
+                      )}
                       {idea.status === 'pending' && (
                         <>
                           <button
@@ -212,97 +275,140 @@ function ContentIdeas() {
                       )}
                     </div>
                   </td>
+
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        </div >
+      )
+      }
 
-      {viewingIdea && (
-        <div className="modal-overlay" onClick={() => setViewingIdea(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">Content Idea #{viewingIdea.id}</h2>
-              <button className="modal-close" onClick={() => setViewingIdea(null)}>
-                &times;
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group">
-                <label className="form-label">Source Platform</label>
-                <span className={`platform-badge platform-${viewingIdea.source_platform}`}>
-                  {viewingIdea.source_platform}
-                </span>
+      {
+        viewingIdea && (
+          <div className="modal-overlay" onClick={() => setViewingIdea(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="modal-title">Content Idea #{viewingIdea.id}</h2>
+                <button className="modal-close" onClick={() => setViewingIdea(null)}>
+                  &times;
+                </button>
               </div>
-              <div className="form-group">
-                <label className="form-label">Source URL</label>
-                <a href={viewingIdea.source_url} target="_blank" rel="noopener noreferrer">
-                  {viewingIdea.source_url}
-                </a>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Content Pillar</label>
-                <span className={`pillar-badge pillar-${viewingIdea.pillar}`}>
-                  {viewingIdea.pillar?.replace('_', ' ')}
-                </span>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Viral Score</label>
-                <strong>{viewingIdea.viral_score}/10</strong>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Suggested Hook</label>
-                <p>{viewingIdea.suggested_hook}</p>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Original Text</label>
-                <p style={{ whiteSpace: 'pre-wrap' }}>{viewingIdea.original_text}</p>
-              </div>
-              {viewingIdea.error_message && (
+              <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label" style={{ color: 'var(--error)' }}>Error</label>
-                  <p style={{ color: 'var(--error)' }}>{viewingIdea.error_message}</p>
+                  <label className="form-label">Source Platform</label>
+                  <span className={`platform-badge platform-${viewingIdea.source_platform}`}>
+                    {viewingIdea.source_platform}
+                  </span>
                 </div>
-              )}
-            </div>
-            <div className="modal-footer">
-              {viewingIdea.status === 'pending' && (
-                <>
+                <div className="form-group">
+                  <label className="form-label">Source URL</label>
+                  <a href={viewingIdea.source_url} target="_blank" rel="noopener noreferrer">
+                    {viewingIdea.source_url}
+                  </a>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Content Pillar</label>
+                  <span className={`pillar-badge pillar-${viewingIdea.pillar}`}>
+                    {viewingIdea.pillar?.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Viral Score</label>
+                  <strong>{viewingIdea.viral_score}/10</strong>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Suggested Hook</label>
+                  <p>{viewingIdea.suggested_hook}</p>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Original Text</label>
+                  <p style={{ whiteSpace: 'pre-wrap' }}>{viewingIdea.original_text}</p>
+                </div>
+                {viewingIdea.error_message && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: 'var(--error)' }}>Error</label>
+                    <p style={{ color: 'var(--error)' }}>{viewingIdea.error_message}</p>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                {viewingIdea.status === 'pending' && (
+                  <>
+                    <button
+                      className="btn btn-success"
+                      onClick={() => {
+                        handleApprove(viewingIdea.id);
+                        setViewingIdea(null);
+                      }}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => {
+                        handleReject(viewingIdea.id);
+                        setViewingIdea(null);
+                      }}
+                    >
+                      Reject
+                    </button>
+                  </>
+                )}
+                {['error', 'failed'].includes(viewingIdea.status) && (
                   <button
-                    className="btn btn-success"
+                    className="btn btn-warning"
                     onClick={() => {
                       handleApprove(viewingIdea.id);
                       setViewingIdea(null);
                     }}
                   >
-                    Approve
+                    Retry Pipeline
                   </button>
+                )}
+                {['script_ready', 'voice_ready', 'avatar_ready'].includes(viewingIdea.status) && (
                   <button
-                    className="btn btn-danger"
+                    className="btn btn-primary"
+                    style={{ backgroundColor: '#2196F3', borderColor: '#2196F3' }}
                     onClick={() => {
-                      handleReject(viewingIdea.id);
+                      handleApprove(viewingIdea.id);
                       setViewingIdea(null);
                     }}
                   >
-                    Reject
+                    Resume Pipeline
                   </button>
-                </>
-              )}
-              <button className="btn btn-secondary" onClick={() => setViewingIdea(null)}>
-                Close
-              </button>
+                )}
+                <button className="btn btn-secondary" onClick={() => setViewingIdea(null)}>
+                  Close
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       <style>{`
         .hook-cell {
           max-width: 200px;
         }
+        .action-btn.retry {
+          background: #f59e0b;
+          color: white;
+          border: none;
+        }
+        .action-btn.retry:hover {
+          background: #d97706;
+        }
+        .btn-warning {
+          background: #f59e0b;
+          color: white;
+          border: none;
+        }
+        .btn-warning:hover {
+          background: #d97706;
+        }
       `}</style>
-    </div>
+    </div >
   );
 }
 
