@@ -403,33 +403,39 @@ Private/Internal Use
 
 When making changes to `COMPLETE_PIPELINE.json` (or any workflow):
 
-1.  **Edit the JSON:**
-    - Ensure `webhooks` have `"authentication": "none"` (unless intentional).
-    - **Do NOT** manually change `id` or `versionId` unless you are doing a "Nuclear Reset".
-    
-2.  **Import:**
-    ```bash
-    docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
-    ```
+### 1. Safe Workflow Modification Cycle (Use this for all changes)
 
-3.  **Publish (Activate):**
-    - The `import` command interprets `active: true` in JSON, but sometimes fails to register the webhooks in the load balancer.
-    - **Always** run this immediately after import:
-    ```bash
-    # Find the ID first
-    docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity;"
-    
-    # Publish by ID (This forces 'History' creation if it exists, or just activates)
-    docker exec n8n n8n publish:workflow --id=<WORKFLOW_ID>
-    ```
+When making changes to `COMPLETE_PIPELINE.json` (or any workflow), follow this EXACT sequence to prevent corruption or duplicates:
 
-### 2. "Nuclear" Reset (When things are broken)
+**Step 1: Verify JSON ID Preservation**
+-   Before importing, check `workflows/COMPLETE_PIPELINE.json`.
+-   **CRITICAL:** Ensure the file contains ` "id": "rTAhapEWXNxRAElT", ` (or whatever the known stable ID is).
+-   **Never** delete the `id` field during an edit. If missing, n8n will switch to "Create Mode" and make a duplicate.
 
-If you get `Version not found` or `Unknown Webhook` (404) errors despite the workflow looking active:
-
-**Step A: Purge Old State**
+**Step 2: Import**
 ```bash
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "DELETE FROM workflow_entity WHERE name = 'AI ContentGenerator';"
+docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
+```
+
+**Step 3: Verify Single Instance & Active State**
+Run this to ensure you haven't created a duplicate or reset activation:
+```bash
+docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity;"
+```
+-   **Success:** You should see exactly **ONE** row for "AI ContentGenerator" with `active | t`.
+-   **Fail:** If you see two rows, STOP. You created a duplicate. Find the new ID, delete it, fix your JSON ID, and retry.
+-   **Fail:** If `active | f`, proceed to Step 4.
+
+**Step 4: Publish (Force Activation)**
+The CLI import often updates the DB but fails to register webhooks in the running process. "Publishing" fixes this.
+```bash
+docker exec n8n n8n publish:workflow --id=rTAhapEWXNxRAElT
+```
+
+**Step 5: Restart (The Final Synchronization)**
+To ensure webhooks (like standard, wait nodes, trigger nodes) are bound to the exposed port:
+```bash
+docker compose restart n8n
 ```
 
 **Step B: Prepare Fresh JSON**
