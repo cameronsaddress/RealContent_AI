@@ -147,4 +147,30 @@ export const deleteNichePreset = async (id) => {
   return data;
 };
 
+// Character & Settings
+export const getVoices = async () => {
+  const { data } = await api.get('/api/settings/voices');
+  return data;
+};
+
+export const getAvatars = async () => {
+  const { data } = await api.get('/api/settings/avatars');
+  return data;
+};
+
+export const getCharacterConfig = async () => {
+  const { data } = await api.get('/api/config/character');
+  return data;
+};
+
+export const saveCharacterConfig = async (config) => {
+  const { data } = await api.post('/api/config/character', config);
+  return data;
+};
+
+export const generateAvatarImage = async (promptEnhancements) => {
+  const { data } = await api.post('/api/generate-avatar-image', { prompt_enhancements: promptEnhancements });
+  return data;
+};
+
 export default api;

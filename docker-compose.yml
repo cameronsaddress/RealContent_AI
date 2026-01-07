@@ -32,9 +32,13 @@ services:
       - APIFY_API_KEY=${APIFY_API_KEY}
       - HEYGEN_API_KEY=${HEYGEN_API_KEY}
       - HEYGEN_AVATAR_ID=${HEYGEN_AVATAR_ID}
+      - HEYGEN_TALKING_PHOTO_ID=${HEYGEN_TALKING_PHOTO_ID}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
       - BLOTATO_API_KEY=${BLOTATO_API_KEY}
       - N8N_PUBLIC_URL=${N8N_PUBLIC_URL}
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
+      - NODE_FUNCTION_ALLOW_EXTERNAL=*
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - n8n_data:/home/node/.n8n
       - ./workflows:/home/node/workflows

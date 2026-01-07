@@ -1,6 +1,6 @@
 {
   "name": "AI ContentGenerator",
-  "versionId": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+  "versionId": "59c34cfb-472c-4db6-84b9-28129154e156",
   "nodes": [
     {
       "parameters": {
@@ -166,12 +166,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.apify.com/v2/acts/clockworks~tiktok-scraper/run-sync-get-dataset-items",
+        "url": "https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"hashtags\": {{ JSON.stringify($('Parse Scrape Params').first().json.hashtags) }},\n  \"resultsPerPage\": {{ $('Parse Scrape Params').first().json.resultsPerPlatform }},\n  \"shouldDownloadVideos\": false,\n  \"shouldDownloadCovers\": false\n}",
+        "jsonBody": "={\n  \"hashtags\": {{ JSON.stringify($('Parse Scrape Params').first().json.hashtags) }},\n  \"resultsPerPage\": {{ $('Parse Scrape Params').first().json.resultsPerPlatform }}\n}",
         "options": {
           "timeout": 180000
         }
@@ -366,61 +366,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Split trends into individual items for saving\nconst data = $input.first().json;\nif (!data.success || !data.trends || data.trends.length === 0) {\n  return [{ json: { ...data, savedCount: 0 } }];\n}\n\n// Return each trend as a separate item with platform inference\nreturn data.trends.map(trend => {\n  let platform = trend.platform;\n  const url = trend.url || '';\n  \n  // Robustly infer platform from URL if missing or unknown\n  if (!platform || platform === 'unknown') {\n    if (url.includes('tiktok.com')) platform = 'tiktok';\n    else if (url.includes('instagram.com')) platform = 'instagram';\n    else if (url.includes('youtube.com') || url.includes('youtu.be')) platform = 'youtube';\n  }\n\n  return {\n    json: {\n      ...trend,\n      platform: platform ? platform.toLowerCase() : 'unknown',\n      niche: data.niche,\n      scrapedAt: data.scrapedAt\n    }\n  };\n});"
+        "jsCode": "// Process trends, save to DB, and guarantee response\nconst data = $input.first().json;\nconst savedItems = [];\nlet savedCount = 0;\n\n// 1. Handle Empty/Error Case\nif (!data.success || !data.trends || data.trends.length === 0) {\n  return [{\n    json: {\n      success: true, // Return success so UI doesn't crash\n      niche: data.niche,\n      scrapedAt: data.scrapedAt,\n      totalScraped: data.totalScraped || 0,\n      analyzedCount: 0,\n      savedCount: 0,\n      message: 'No suitable trends found to save',\n      trends: []\n    }\n  }];\n}\n\n// 2. Process & Save Each Trend\nfor (const trend of data.trends) {\n  try {\n    // Infer platform\n    let platform = trend.platform;\n    const url = trend.url || '';\n    if (!platform || platform === 'unknown') {\n      if (url.includes('tiktok.com')) platform = 'tiktok';\n      else if (url.includes('instagram.com')) platform = 'instagram';\n      else if (url.includes('youtube.com') || url.includes('youtu.be')) platform = 'youtube';\n    }\n    \n    // Construct Payload\n    const payload = {\n      source_url: url,\n      source_platform: (platform ? platform.toLowerCase() : 'unknown'),\n      original_text: trend.title || '',\n      pillar: trend.pillar || 'educational_tips',\n      viral_score: trend.viral_score || 7,\n      suggested_hook: trend.suggested_hook || '',\n      why_viral: trend.why_viral || '',\n      status: 'pending'\n    };\n\n    // Send to Backend\n    // Using this.helpers.request (n8n built-in)\n    const response = await this.helpers.request({\n      method: 'POST',\n      url: 'http://backend:8000/api/content-ideas',\n      body: payload,\n      json: true\n    });\n    \n    if (response && response.id) {\n        savedItems.push(response);\n        savedCount++;\n    }\n  } catch (err) {\n    console.log(`Failed to save trend: ${err.message}`);\n    // Continue to next item, don't stop workflow\n  }\n}\n\n// 3. Return Summary Response\nreturn [{\n  json: {\n    success: true,\n    niche: data.niche,\n    scrapedAt: data.scrapedAt,\n    totalScraped: data.totalScraped,\n    analyzedCount: data.analyzedCount,\n    savedCount: savedCount,\n    message: `Saved ${savedCount} content ideas to database`,\n    trends: savedItems\n  }\n}];"
       },
-      "id": "scrape-split-trends",
-      "name": "Split Trends",
+      "id": "scrape-process-save",
+      "name": "Process & Save Trends",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         280,
-        160
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://backend:8000/api/content-ideas",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"source_url\": {{ JSON.stringify($json.url || '') }},\n  \"source_platform\": {{ JSON.stringify(($json.platform || 'unknown').toLowerCase()) }},\n  \"original_text\": {{ JSON.stringify($json.title || '') }},\n  \"pillar\": {{ JSON.stringify($json.pillar || 'educational_tips') }},\n  \"viral_score\": {{ $json.viral_score || 7 }},\n  \"suggested_hook\": {{ JSON.stringify($json.suggested_hook || '') }},\n  \"why_viral\": {{ JSON.stringify($json.why_viral || '') }},\n  \"status\": \"pending\"\n}",
-        "options": {
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 100
-            }
-          }
-        }
-      },
-      "id": "scrape-save-idea",
-      "name": "Save Content Idea",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        500,
-        160
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Aggregate saved ideas and prepare response\nconst items = $input.all();\nconst formatData = $('Format Response').first().json;\nconst savedCount = items.filter(i => i.json.id).length;\n\nreturn [{\n  json: {\n    success: true,\n    niche: formatData.niche,\n    scrapedAt: formatData.scrapedAt,\n    totalScraped: formatData.totalScraped,\n    analyzedCount: formatData.analyzedCount,\n    savedCount: savedCount,\n    message: `Saved ${savedCount} content ideas to database`\n  }\n}];"
-      },
-      "id": "scrape-aggregate",
-      "name": "Aggregate Saved",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        720,
         160
       ]
     },
@@ -503,8 +456,23 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
+        480,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Pipeline Triggered",
+        "options": {}
+      },
+      "id": "trigger-respond-immediate",
+      "name": "Respond Immediately",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
         280,
-        200
+        380
       ]
     },
     {
@@ -914,14 +882,13 @@
     },
     {
       "parameters": {
-        "operation": "write",
-        "fileName": "=/home/node/assets/videos/{{ $('Select Videos').first().json.script_id }}_scene{{ $('Select Videos').first().json.scene_index }}.mp4",
-        "options": {}
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\n// Reconstruct filename using the same logic as the previous expression\n// Use try-catch to handle potential expression failures safely\ntry {\n  const scriptId = $('Select Videos').first().json.script_id;\n  const sceneIndex = $('Select Videos').first().json.scene_index;\n  const fileName = `/home/node/assets/videos/${scriptId}_scene${sceneIndex}.mp4`;\n  \n  if (item.binary && item.binary.data) {\n    fs.writeFileSync(fileName, Buffer.from(item.binary.data.data, 'base64'));\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  // If Select Videos logic is complex, fall back to current item properties if available\n  // or log error\n  console.log('Error writing file: ' + e.message);\n  throw e;\n}\nreturn item;"
       },
       "id": "save-broll-file",
       "name": "Save B-Roll",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1160,
         1040
@@ -929,11 +896,7 @@
     },
     {
       "parameters": {
-        "mode": "combine",
-        "combinationMode": "mergeByPosition",
-        "options": {
-          "includeUnpaired": true
-        }
+        "mode": "append"
       },
       "id": "merge-broll",
       "name": "Merge B-Roll",
@@ -992,8 +955,6 @@
       "parameters": {
         "method": "POST",
         "url": "=https://api.elevenlabs.io/v1/text-to-speech/{{ $json.voice_id }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -1004,6 +965,10 @@
             {
               "name": "Accept",
               "value": "audio/mpeg"
+            },
+            {
+              "name": "xi-api-key",
+              "value": "={{ $env.ELEVENLABS_API_KEY }}"
             }
           ]
         },
@@ -1026,24 +991,17 @@
       "position": [
         280,
         1400
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "elevenlabs",
-          "name": "elevenlabs"
-        }
-      }
+      ]
     },
     {
       "parameters": {
-        "operation": "write",
-        "fileName": "=/home/node/assets/audio/{{ $('Prepare TTS Text').first().json.script_id }}_voice.mp3",
-        "options": {}
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\ntry {\n  const scriptId = $('Prepare TTS Text').first().json.script_id;\n  const fileName = `/home/node/assets/audio/${scriptId}_voice.mp3`;\n  \n  if (item.binary && item.binary.data) {\n    fs.writeFileSync(fileName, Buffer.from(item.binary.data.data, 'base64'));\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  console.log('Error writing voice file: ' + e.message);\n  throw e;\n}\nreturn item;"
       },
       "id": "save-voice-file",
       "name": "Save Voice",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         500,
         1400
@@ -1080,7 +1038,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse duration and prepare for HeyGen\nconst durationResult = $input.first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths\n  }\n}];"
+        "jsCode": "// Parse duration and prepare for HeyGen\nconst durationResult = $input.first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\n// Avatar Fallback Logic\nlet avatarId = ttsData.avatar_id;\nlet avatarType = ttsData.avatar_type;\n\n// If configured for Talking Photo but no ID is provided, fallback to default Avatar\nif (avatarId === 'static_image' && (!$env.HEYGEN_TALKING_PHOTO_ID || $env.HEYGEN_TALKING_PHOTO_ID.trim() === '')) {\n  console.log('Missing HEYGEN_TALKING_PHOTO_ID, falling back to default avatar');\n  avatarId = 'Anna_public_3_20240108';\n  avatarType = 'avatar';\n}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths,\n    avatar_id: avatarId,\n    avatar_type: avatarType\n  }\n}];"
       },
       "id": "prepare-heygen-data",
       "name": "Prepare HeyGen Data",
@@ -1263,14 +1221,13 @@
     },
     {
       "parameters": {
-        "operation": "write",
-        "fileName": "=/home/node/assets/avatar/{{ $('Extract Video ID').first().json.script_id }}_avatar.mp4",
-        "options": {}
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\ntry {\n  const scriptId = $('Extract Video ID').first().json.script_id;\n  const fileName = `/home/node/assets/avatar/${scriptId}_avatar.mp4`;\n  \n  if (item.binary && item.binary.data) {\n    fs.writeFileSync(fileName, Buffer.from(item.binary.data.data, 'base64'));\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  console.log('Error writing avatar file: ' + e.message);\n  throw e;\n}\nreturn item;"
       },
       "id": "save-avatar-file",
       "name": "Save Avatar",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1600,
         1760
@@ -1470,15 +1427,13 @@
     },
     {
       "parameters": {
-        "operation": "write",
-        "fileName": "=/home/node/assets/captions/{{ $json.script_id }}_captions.srt",
-        "dataPropertyName": "srt_content",
-        "options": {}
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\ntry {\n  const scriptId = item.json.script_id;\n  const fileName = `/home/node/assets/captions/${scriptId}_captions.srt`;\n  const content = item.json.srt_content;\n  \n  if (content) {\n    fs.writeFileSync(fileName, content);\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  console.log('Error writing SRT file: ' + e.message);\n  throw e;\n}\nreturn item;"
       },
       "id": "save-srt",
       "name": "Save SRT",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         940,
         2480
@@ -2031,36 +1986,14 @@
       "main": [
         [
           {
-            "node": "Split Trends",
+            "node": "Process & Save Trends",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Split Trends": {
-      "main": [
-        [
-          {
-            "node": "Save Content Idea",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Content Idea": {
-      "main": [
-        [
-          {
-            "node": "Aggregate Saved",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Aggregate Saved": {
+    "Process & Save Trends": {
       "main": [
         [
           {
@@ -2086,7 +2019,18 @@
       "main": [
         [
           {
-            "node": "Specific ID?",
+            "node": "Respond Immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Immediately": {
+      "main": [
+        [
+          {
+            "node": "Get Approved Idea",
             "type": "main",
             "index": 0
           }

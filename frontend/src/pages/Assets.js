@@ -65,7 +65,7 @@ function Assets() {
               {assets?.map((asset) => (
                 <tr key={asset.id}>
                   <td>#{asset.id}</td>
-                  <td>#{asset.script_id}</td>
+                  <td>{asset.script_id ? `#${asset.script_id}` : <span className="status-badge status-ready_to_publish" style={{ background: 'var(--accent-primary)', color: 'white' }}>Global Identity</span>}</td>
                   <td>
                     {asset.voiceover_path ? (
                       <span style={{ color: 'var(--success)' }}>Ready</span>
@@ -130,7 +130,7 @@ function Assets() {
                 </div>
                 <div className="asset-status-item">
                   <h4>Script ID</h4>
-                  <p>#{viewingAsset.script_id}</p>
+                  <p>{viewingAsset.script_id ? `#${viewingAsset.script_id}` : 'Global Identity'}</p>
                 </div>
               </div>
 

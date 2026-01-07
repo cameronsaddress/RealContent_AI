@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
+import Character from './pages/Character';
 import Scraper from './pages/Scraper';
 import ContentIdeas from './pages/ContentIdeas';
 import Scripts from './pages/Scripts';
@@ -18,6 +19,9 @@ function App() {
         <ul className="nav-links">
           <li>
             <NavLink to="/" end>Dashboard</NavLink>
+          </li>
+          <li>
+            <NavLink to="/character">AI Character</NavLink> {/* Added NavLink for AI Character */}
           </li>
           <li>
             <NavLink to="/scraper">Scraper</NavLink>
@@ -44,6 +48,7 @@ function App() {
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/character" element={<Character />} /> {/* Added Route for Character */}
           <Route path="/scraper" element={<Scraper />} />
           <Route path="/ideas" element={<ContentIdeas />} />
           <Route path="/scripts" element={<Scripts />} />
