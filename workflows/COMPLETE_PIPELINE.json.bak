@@ -1,6 +1,6 @@
 {
+  "id": "FPmtwiLpvcWFdrP0",
   "name": "AI ContentGenerator",
-  "versionId": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
   "nodes": [
     {
       "parameters": {
@@ -13,10 +13,7 @@
       "name": "Scrape Section",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        -1600,
-        -100
-      ]
+      "position": [-1600, -100]
     },
     {
       "parameters": {
@@ -32,10 +29,7 @@
       "name": "Daily 6am Scrape",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        -1560,
-        60
-      ]
+      "position": [-1560, 60]
     },
     {
       "parameters": {
@@ -48,10 +42,7 @@
       "name": "Scrape Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        -1560,
-        240
-      ],
+      "position": [-1560, 240],
       "webhookId": "scrape-trends"
     },
     {
@@ -62,10 +53,7 @@
       "name": "Parse Scrape Params",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -1340,
-        160
-      ]
+      "position": [-1340, 160]
     },
     {
       "parameters": {
@@ -94,10 +82,7 @@
       "name": "TikTok?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        -1120,
-        -40
-      ]
+      "position": [-1120, -40]
     },
     {
       "parameters": {
@@ -126,10 +111,7 @@
       "name": "Instagram?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        -1120,
-        160
-      ]
+      "position": [-1120, 160]
     },
     {
       "parameters": {
@@ -158,10 +140,7 @@
       "name": "YouTube?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        -1120,
-        360
-      ]
+      "position": [-1120, 360]
     },
     {
       "parameters": {
@@ -180,10 +159,7 @@
       "name": "Apify TikTok",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -860,
-        -40
-      ],
+      "position": [-860, -40],
       "credentials": {
         "httpHeaderAuth": {
           "id": "apify",
@@ -208,10 +184,7 @@
       "name": "Apify Instagram Reels",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -860,
-        160
-      ],
+      "position": [-860, 160],
       "credentials": {
         "httpHeaderAuth": {
           "id": "apify",
@@ -236,10 +209,7 @@
       "name": "Apify YouTube",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -860,
-        360
-      ],
+      "position": [-860, 360],
       "credentials": {
         "httpHeaderAuth": {
           "id": "apify",
@@ -253,10 +223,7 @@
       "name": "Skip TikTok",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        -860,
-        -140
-      ]
+      "position": [-860, -140]
     },
     {
       "parameters": {},
@@ -264,10 +231,7 @@
       "name": "Skip Instagram",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        -860,
-        60
-      ]
+      "position": [-860, 60]
     },
     {
       "parameters": {},
@@ -275,10 +239,7 @@
       "name": "Skip YouTube",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        -860,
-        260
-      ]
+      "position": [-860, 260]
     },
     {
       "parameters": {
@@ -292,10 +253,7 @@
       "name": "Merge Results",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [
-        -600,
-        160
-      ]
+      "position": [-600, 160]
     },
     {
       "parameters": {
@@ -305,10 +263,7 @@
       "name": "Normalize Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        -380,
-        160
-      ]
+      "position": [-380, 160]
     },
     {
       "parameters": {
@@ -344,10 +299,7 @@
       "name": "Analyze with Grok",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        -160,
-        160
-      ],
+      "position": [-160, 160],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openrouter",
@@ -363,10 +315,7 @@
       "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        160
-      ]
+      "position": [60, 160]
     },
     {
       "parameters": {
@@ -376,10 +325,7 @@
       "name": "Split Trends",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        280,
-        160
-      ]
+      "position": [280, 160]
     },
     {
       "parameters": {
@@ -410,10 +356,7 @@
       "name": "Save Content Idea",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        500,
-        160
-      ]
+      "position": [500, 160]
     },
     {
       "parameters": {
@@ -423,10 +366,7 @@
       "name": "Aggregate Saved",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        720,
-        160
-      ]
+      "position": [720, 160]
     },
     {
       "parameters": {
@@ -438,10 +378,7 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        940,
-        160
-      ]
+      "position": [940, 160]
     },
     {
       "parameters": {
@@ -454,10 +391,7 @@
       "name": "Auto Trigger",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        940,
-        40
-      ]
+      "position": [940, 40]
     },
     {
       "parameters": {
@@ -474,10 +408,7 @@
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        1000,
-        200
-      ]
+      "position": [1000, 200]
     },
     {
       "parameters": {
@@ -490,10 +421,7 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        60,
-        380
-      ],
+      "position": [60, 380],
       "webhookId": "trigger-pipeline"
     },
     {
@@ -506,10 +434,7 @@
       "name": "Get Approved Idea",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        280,
-        200
-      ]
+      "position": [280, 200]
     },
     {
       "parameters": {
@@ -539,10 +464,7 @@
       "name": "Specific ID?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        280,
-        380
-      ]
+      "position": [280, 380]
     },
     {
       "parameters": {
@@ -554,10 +476,7 @@
       "name": "Get Specific Idea",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        500,
-        380
-      ]
+      "position": [500, 380]
     },
     {
       "parameters": {
@@ -571,10 +490,7 @@
       "name": "Merge",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [
-        720,
-        200
-      ]
+      "position": [720, 200]
     },
     {
       "parameters": {
@@ -584,10 +500,7 @@
       "name": "Normalize Idea",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        940,
-        200
-      ]
+      "position": [940, 200]
     },
     {
       "parameters": {
@@ -616,10 +529,7 @@
       "name": "Has Content?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        1160,
-        200
-      ]
+      "position": [1160, 200]
     },
     {
       "parameters": {},
@@ -627,10 +537,7 @@
       "name": "No Content",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        1380,
-        380
-      ]
+      "position": [1380, 380]
     },
     {
       "parameters": {
@@ -643,10 +550,7 @@
       "name": "Script Gen",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        520
-      ]
+      "position": [0, 520]
     },
     {
       "parameters": {
@@ -670,10 +574,7 @@
       "name": "Update Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        60,
-        680
-      ]
+      "position": [60, 680]
     },
     {
       "parameters": {
@@ -709,10 +610,7 @@
       "name": "Generate Script (Grok)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        280,
-        680
-      ],
+      "position": [280, 680],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openrouter",
@@ -728,10 +626,7 @@
       "name": "Parse Script",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        500,
-        680
-      ]
+      "position": [500, 680]
     },
     {
       "parameters": {
@@ -755,10 +650,7 @@
       "name": "Save Script",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        720,
-        680
-      ]
+      "position": [720, 680]
     },
     {
       "parameters": {
@@ -782,10 +674,7 @@
       "name": "Create Asset Record",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        680
-      ]
+      "position": [940, 680]
     },
     {
       "parameters": {
@@ -798,10 +687,7 @@
       "name": "Get Video",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        880
-      ]
+      "position": [0, 880]
     },
     {
       "parameters": {
@@ -811,10 +697,7 @@
       "name": "Prepare B-Roll Searches",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        1040
-      ]
+      "position": [60, 1040]
     },
     {
       "parameters": {
@@ -830,10 +713,7 @@
       "name": "Search Pexels",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        280,
-        1040
-      ],
+      "position": [280, 1040],
       "credentials": {
         "httpHeaderAuth": {
           "id": "pexels",
@@ -849,10 +729,7 @@
       "name": "Select Videos",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        500,
-        1040
-      ]
+      "position": [500, 1040]
     },
     {
       "parameters": {
@@ -881,10 +758,7 @@
       "name": "Video Found?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        720,
-        1040
-      ]
+      "position": [720, 1040]
     },
     {
       "parameters": {
@@ -903,10 +777,7 @@
       "name": "Download B-Roll",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        1040
-      ]
+      "position": [940, 1040]
     },
     {
       "parameters": {},
@@ -914,10 +785,7 @@
       "name": "Skip B-Roll",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [
-        940,
-        1140
-      ]
+      "position": [940, 1140]
     },
     {
       "parameters": {
@@ -929,10 +797,7 @@
       "name": "Save B-Roll",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        1160,
-        1040
-      ]
+      "position": [1160, 1040]
     },
     {
       "parameters": {
@@ -946,10 +811,7 @@
       "name": "Merge B-Roll",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [
-        1380,
-        1080
-      ]
+      "position": [1380, 1080]
     },
     {
       "parameters": {
@@ -962,10 +824,7 @@
       "name": "Create Voice",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        1240
-      ]
+      "position": [0, 1240]
     },
     {
       "parameters": {
@@ -975,10 +834,7 @@
       "name": "Prepare TTS Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        1400
-      ]
+      "position": [60, 1400]
     },
     {
       "parameters": {
@@ -1015,10 +871,7 @@
       "name": "Generate Voice (ElevenLabs)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        280,
-        1400
-      ],
+      "position": [280, 1400],
       "credentials": {
         "httpHeaderAuth": {
           "id": "elevenlabs",
@@ -1036,10 +889,7 @@
       "name": "Save Voice",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        500,
-        1400
-      ]
+      "position": [500, 1400]
     },
     {
       "parameters": {
@@ -1049,10 +899,7 @@
       "name": "Get Duration",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        720,
-        1400
-      ]
+      "position": [720, 1400]
     },
     {
       "parameters": {
@@ -1065,10 +912,7 @@
       "name": "Create Avatar",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        1600
-      ]
+      "position": [0, 1600]
     },
     {
       "parameters": {
@@ -1078,10 +922,7 @@
       "name": "Prepare HeyGen Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        1760
-      ]
+      "position": [60, 1760]
     },
     {
       "parameters": {
@@ -1109,10 +950,7 @@
       "name": "Create HeyGen Video",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        280,
-        1760
-      ],
+      "position": [280, 1760],
       "credentials": {
         "httpHeaderAuth": {
           "id": "heygen",
@@ -1128,10 +966,7 @@
       "name": "Extract Video ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        500,
-        1760
-      ]
+      "position": [500, 1760]
     },
     {
       "parameters": {
@@ -1142,10 +977,7 @@
       "name": "Wait 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [
-        720,
-        1760
-      ],
+      "position": [720, 1760],
       "webhookId": "heygen-wait"
     },
     {
@@ -1160,10 +992,7 @@
       "name": "Check Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        1760
-      ],
+      "position": [940, 1760],
       "credentials": {
         "httpHeaderAuth": {
           "id": "heygen",
@@ -1198,10 +1027,7 @@
       "name": "Completed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        1160,
-        1760
-      ]
+      "position": [1160, 1760]
     },
     {
       "parameters": {
@@ -1211,10 +1037,7 @@
       "name": "Increment Retry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1160,
-        1940
-      ]
+      "position": [1160, 1940]
     },
     {
       "parameters": {
@@ -1225,10 +1048,7 @@
       "name": "Wait & Retry",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [
-        1380,
-        1940
-      ],
+      "position": [1380, 1940],
       "webhookId": "heygen-retry"
     },
     {
@@ -1248,10 +1068,7 @@
       "name": "Download Avatar",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1380,
-        1760
-      ]
+      "position": [1380, 1760]
     },
     {
       "parameters": {
@@ -1263,10 +1080,7 @@
       "name": "Save Avatar",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        1600,
-        1760
-      ]
+      "position": [1600, 1760]
     },
     {
       "parameters": {
@@ -1279,10 +1093,7 @@
       "name": "Combine Vids",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        1960
-      ]
+      "position": [0, 1960]
     },
     {
       "parameters": {
@@ -1292,10 +1103,7 @@
       "name": "Build FFmpeg Command",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        2120
-      ]
+      "position": [60, 2120]
     },
     {
       "parameters": {
@@ -1305,10 +1113,7 @@
       "name": "Run FFmpeg",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        280,
-        2120
-      ]
+      "position": [280, 2120]
     },
     {
       "parameters": {
@@ -1337,10 +1142,7 @@
       "name": "Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        500,
-        2120
-      ]
+      "position": [500, 2120]
     },
     {
       "parameters": {
@@ -1350,10 +1152,7 @@
       "name": "Handle Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        500,
-        2300
-      ]
+      "position": [500, 2300]
     },
     {
       "parameters": {
@@ -1366,10 +1165,7 @@
       "name": "Caption",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        2320
-      ]
+      "position": [0, 2320]
     },
     {
       "parameters": {
@@ -1379,10 +1175,7 @@
       "name": "Prepare Whisper",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        2480
-      ]
+      "position": [60, 2480]
     },
     {
       "parameters": {
@@ -1394,10 +1187,7 @@
       "name": "Read Audio for Whisper",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        280,
-        2480
-      ]
+      "position": [280, 2480]
     },
     {
       "parameters": {
@@ -1436,10 +1226,7 @@
       "name": "Whisper Transcribe",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        500,
-        2480
-      ],
+      "position": [500, 2480],
       "credentials": {
         "httpHeaderAuth": {
           "id": "openai",
@@ -1455,10 +1242,7 @@
       "name": "Parse Whisper Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        720,
-        2480
-      ]
+      "position": [720, 2480]
     },
     {
       "parameters": {
@@ -1471,10 +1255,7 @@
       "name": "Save SRT",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        940,
-        2480
-      ]
+      "position": [940, 2480]
     },
     {
       "parameters": {
@@ -1484,10 +1265,7 @@
       "name": "Build Caption Cmd",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1160,
-        2480
-      ]
+      "position": [1160, 2480]
     },
     {
       "parameters": {
@@ -1497,10 +1275,7 @@
       "name": "Burn Captions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1380,
-        2480
-      ]
+      "position": [1380, 2480]
     },
     {
       "parameters": {
@@ -1529,10 +1304,7 @@
       "name": "Caption Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [
-        1600,
-        2480
-      ]
+      "position": [1600, 2480]
     },
     {
       "parameters": {
@@ -1542,10 +1314,7 @@
       "name": "Handle Caption Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1600,
-        2660
-      ]
+      "position": [1600, 2660]
     },
     {
       "parameters": {
@@ -1558,10 +1327,7 @@
       "name": "Publish",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        0,
-        2680
-      ]
+      "position": [0, 2680]
     },
     {
       "parameters": {
@@ -1571,10 +1337,7 @@
       "name": "Prepare Publish Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        60,
-        2840
-      ]
+      "position": [60, 2840]
     },
     {
       "parameters": {
@@ -1602,10 +1365,7 @@
       "name": "Publish (Blotato)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        280,
-        2840
-      ],
+      "position": [280, 2840],
       "credentials": {
         "httpHeaderAuth": {
           "id": "blotato",
@@ -1621,10 +1381,7 @@
       "name": "Parse Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        500,
-        2840
-      ]
+      "position": [500, 2840]
     },
     {
       "parameters": {
@@ -1648,10 +1405,7 @@
       "name": "Save Publish Record",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        720,
-        2840
-      ]
+      "position": [720, 2840]
     },
     {
       "parameters": {
@@ -1675,10 +1429,7 @@
       "name": "Update Status Published",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        940,
-        2840
-      ]
+      "position": [940, 2840]
     },
     {
       "parameters": {
@@ -1690,10 +1441,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1160,
-        2840
-      ]
+      "position": [1160, 2840]
     },
     {
       "parameters": {
@@ -1706,10 +1454,7 @@
       "name": "File Server",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        1500,
-        40
-      ]
+      "position": [1500, 40]
     },
     {
       "parameters": {
@@ -1722,10 +1467,7 @@
       "name": "Serve Audio",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        1560,
-        200
-      ],
+      "position": [1560, 200],
       "webhookId": "serve-audio"
     },
     {
@@ -1738,10 +1480,7 @@
       "name": "Read Audio",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        1780,
-        200
-      ]
+      "position": [1780, 200]
     },
     {
       "parameters": {
@@ -1761,10 +1500,7 @@
       "name": "Return Audio",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        2000,
-        200
-      ]
+      "position": [2000, 200]
     },
     {
       "parameters": {
@@ -1777,10 +1513,7 @@
       "name": "Serve Video",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        1560,
-        380
-      ],
+      "position": [1560, 380],
       "webhookId": "serve-video"
     },
     {
@@ -1793,10 +1526,7 @@
       "name": "Read Video",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [
-        1780,
-        380
-      ]
+      "position": [1780, 380]
     },
     {
       "parameters": {
@@ -1816,898 +1546,391 @@
       "name": "Return Video",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        2000,
-        380
-      ]
+      "position": [2000, 380]
     }
   ],
   "connections": {
     "Daily 6am Scrape": {
       "main": [
-        [
-          {
-            "node": "Parse Scrape Params",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Parse Scrape Params", "type": "main", "index": 0 }]
       ]
     },
     "Scrape Webhook": {
       "main": [
-        [
-          {
-            "node": "Parse Scrape Params",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Parse Scrape Params", "type": "main", "index": 0 }]
       ]
     },
     "Parse Scrape Params": {
       "main": [
         [
-          {
-            "node": "TikTok?",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Instagram?",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "YouTube?",
-            "type": "main",
-            "index": 0
-          }
+          { "node": "TikTok?", "type": "main", "index": 0 },
+          { "node": "Instagram?", "type": "main", "index": 0 },
+          { "node": "YouTube?", "type": "main", "index": 0 }
         ]
       ]
     },
     "TikTok?": {
       "main": [
-        [
-          {
-            "node": "Apify TikTok",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip TikTok",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Apify TikTok", "type": "main", "index": 0 }],
+        [{ "node": "Skip TikTok", "type": "main", "index": 0 }]
       ]
     },
     "Instagram?": {
       "main": [
-        [
-          {
-            "node": "Apify Instagram Reels",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip Instagram",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Apify Instagram Reels", "type": "main", "index": 0 }],
+        [{ "node": "Skip Instagram", "type": "main", "index": 0 }]
       ]
     },
     "YouTube?": {
       "main": [
-        [
-          {
-            "node": "Apify YouTube",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip YouTube",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Apify YouTube", "type": "main", "index": 0 }],
+        [{ "node": "Skip YouTube", "type": "main", "index": 0 }]
       ]
     },
     "Apify TikTok": {
       "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
     "Apify Instagram Reels": {
       "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
     "Apify YouTube": {
       "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
     "Skip TikTok": {
       "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
     "Skip Instagram": {
       "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
     "Skip YouTube": {
       "main": [
-        [
-          {
-            "node": "Merge Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge Results", "type": "main", "index": 0 }]
       ]
     },
     "Merge Results": {
       "main": [
-        [
-          {
-            "node": "Normalize Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Normalize Data", "type": "main", "index": 0 }]
       ]
     },
     "Normalize Data": {
       "main": [
-        [
-          {
-            "node": "Analyze with Grok",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Analyze with Grok", "type": "main", "index": 0 }]
       ]
     },
     "Analyze with Grok": {
       "main": [
-        [
-          {
-            "node": "Format Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Format Response", "type": "main", "index": 0 }]
       ]
     },
     "Format Response": {
       "main": [
-        [
-          {
-            "node": "Split Trends",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Split Trends", "type": "main", "index": 0 }]
       ]
     },
     "Split Trends": {
       "main": [
-        [
-          {
-            "node": "Save Content Idea",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save Content Idea", "type": "main", "index": 0 }]
       ]
     },
     "Save Content Idea": {
       "main": [
-        [
-          {
-            "node": "Aggregate Saved",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Aggregate Saved", "type": "main", "index": 0 }]
       ]
     },
     "Aggregate Saved": {
       "main": [
-        [
-          {
-            "node": "Respond to Webhook",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
       ]
     },
     "Schedule Trigger": {
       "main": [
-        [
-          {
-            "node": "Get Approved Idea",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Get Approved Idea", "type": "main", "index": 0 }]
       ]
     },
     "Webhook": {
       "main": [
-        [
-          {
-            "node": "Specific ID?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Specific ID?", "type": "main", "index": 0 }]
       ]
     },
     "Get Approved Idea": {
       "main": [
-        [
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge", "type": "main", "index": 0 }]
       ]
     },
     "Specific ID?": {
       "main": [
-        [
-          {
-            "node": "Get Specific Idea",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 1
-          }
-        ]
+        [{ "node": "Get Specific Idea", "type": "main", "index": 0 }],
+        [{ "node": "Merge", "type": "main", "index": 1 }]
       ]
     },
     "Get Specific Idea": {
       "main": [
-        [
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge", "type": "main", "index": 0 }]
       ]
     },
     "Merge": {
       "main": [
-        [
-          {
-            "node": "Normalize Idea",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Normalize Idea", "type": "main", "index": 0 }]
       ]
     },
     "Normalize Idea": {
       "main": [
-        [
-          {
-            "node": "Has Content?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Has Content?", "type": "main", "index": 0 }]
       ]
     },
     "Has Content?": {
       "main": [
-        [
-          {
-            "node": "Update Status",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "No Content",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Update Status", "type": "main", "index": 0 }],
+        [{ "node": "No Content", "type": "main", "index": 0 }]
       ]
     },
     "Update Status": {
       "main": [
-        [
-          {
-            "node": "Generate Script (Grok)",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Generate Script (Grok)", "type": "main", "index": 0 }]
       ]
     },
     "Generate Script (Grok)": {
       "main": [
-        [
-          {
-            "node": "Parse Script",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Parse Script", "type": "main", "index": 0 }]
       ]
     },
     "Parse Script": {
       "main": [
-        [
-          {
-            "node": "Save Script",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save Script", "type": "main", "index": 0 }]
       ]
     },
     "Save Script": {
       "main": [
-        [
-          {
-            "node": "Create Asset Record",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Create Asset Record", "type": "main", "index": 0 }]
       ]
     },
     "Create Asset Record": {
       "main": [
-        [
-          {
-            "node": "Prepare B-Roll Searches",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Prepare B-Roll Searches", "type": "main", "index": 0 }]
       ]
     },
     "Prepare B-Roll Searches": {
       "main": [
-        [
-          {
-            "node": "Search Pexels",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Search Pexels", "type": "main", "index": 0 }]
       ]
     },
     "Search Pexels": {
       "main": [
-        [
-          {
-            "node": "Select Videos",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Select Videos", "type": "main", "index": 0 }]
       ]
     },
     "Select Videos": {
       "main": [
-        [
-          {
-            "node": "Video Found?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Video Found?", "type": "main", "index": 0 }]
       ]
     },
     "Video Found?": {
       "main": [
-        [
-          {
-            "node": "Download B-Roll",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Skip B-Roll",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Download B-Roll", "type": "main", "index": 0 }],
+        [{ "node": "Skip B-Roll", "type": "main", "index": 0 }]
       ]
     },
     "Download B-Roll": {
       "main": [
-        [
-          {
-            "node": "Save B-Roll",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save B-Roll", "type": "main", "index": 0 }]
       ]
     },
     "Save B-Roll": {
       "main": [
-        [
-          {
-            "node": "Merge B-Roll",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Merge B-Roll", "type": "main", "index": 0 }]
       ]
     },
     "Skip B-Roll": {
       "main": [
-        [
-          {
-            "node": "Merge B-Roll",
-            "type": "main",
-            "index": 1
-          }
-        ]
+        [{ "node": "Merge B-Roll", "type": "main", "index": 1 }]
       ]
     },
     "Merge B-Roll": {
       "main": [
-        [
-          {
-            "node": "Prepare TTS Text",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Prepare TTS Text", "type": "main", "index": 0 }]
       ]
     },
     "Prepare TTS Text": {
       "main": [
-        [
-          {
-            "node": "Generate Voice (ElevenLabs)",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Generate Voice (ElevenLabs)", "type": "main", "index": 0 }]
       ]
     },
     "Generate Voice (ElevenLabs)": {
       "main": [
-        [
-          {
-            "node": "Save Voice",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save Voice", "type": "main", "index": 0 }]
       ]
     },
     "Save Voice": {
       "main": [
-        [
-          {
-            "node": "Get Duration",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Get Duration", "type": "main", "index": 0 }]
       ]
     },
     "Get Duration": {
       "main": [
-        [
-          {
-            "node": "Prepare HeyGen Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Prepare HeyGen Data", "type": "main", "index": 0 }]
       ]
     },
     "Prepare HeyGen Data": {
       "main": [
-        [
-          {
-            "node": "Create HeyGen Video",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Create HeyGen Video", "type": "main", "index": 0 }]
       ]
     },
     "Create HeyGen Video": {
       "main": [
-        [
-          {
-            "node": "Extract Video ID",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Extract Video ID", "type": "main", "index": 0 }]
       ]
     },
     "Extract Video ID": {
       "main": [
-        [
-          {
-            "node": "Wait 30s",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Wait 30s", "type": "main", "index": 0 }]
       ]
     },
     "Wait 30s": {
       "main": [
-        [
-          {
-            "node": "Check Status",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Check Status", "type": "main", "index": 0 }]
       ]
     },
     "Check Status": {
       "main": [
-        [
-          {
-            "node": "Completed?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Completed?", "type": "main", "index": 0 }]
       ]
     },
     "Completed?": {
       "main": [
-        [
-          {
-            "node": "Download Avatar",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Increment Retry",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Download Avatar", "type": "main", "index": 0 }],
+        [{ "node": "Increment Retry", "type": "main", "index": 0 }]
       ]
     },
     "Increment Retry": {
       "main": [
-        [
-          {
-            "node": "Wait & Retry",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Wait & Retry", "type": "main", "index": 0 }]
       ]
     },
     "Wait & Retry": {
       "main": [
-        [
-          {
-            "node": "Check Status",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Check Status", "type": "main", "index": 0 }]
       ]
     },
     "Download Avatar": {
       "main": [
-        [
-          {
-            "node": "Save Avatar",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save Avatar", "type": "main", "index": 0 }]
       ]
     },
     "Save Avatar": {
       "main": [
-        [
-          {
-            "node": "Build FFmpeg Command",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Build FFmpeg Command", "type": "main", "index": 0 }]
       ]
     },
     "Build FFmpeg Command": {
       "main": [
-        [
-          {
-            "node": "Run FFmpeg",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Run FFmpeg", "type": "main", "index": 0 }]
       ]
     },
     "Run FFmpeg": {
       "main": [
-        [
-          {
-            "node": "Success?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Success?", "type": "main", "index": 0 }]
       ]
     },
     "Success?": {
       "main": [
-        [
-          {
-            "node": "Prepare Whisper",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Handle Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Prepare Whisper", "type": "main", "index": 0 }],
+        [{ "node": "Handle Error", "type": "main", "index": 0 }]
       ]
     },
     "Prepare Whisper": {
       "main": [
-        [
-          {
-            "node": "Read Audio for Whisper",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Read Audio for Whisper", "type": "main", "index": 0 }]
       ]
     },
     "Read Audio for Whisper": {
       "main": [
-        [
-          {
-            "node": "Whisper Transcribe",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Whisper Transcribe", "type": "main", "index": 0 }]
       ]
     },
     "Whisper Transcribe": {
       "main": [
-        [
-          {
-            "node": "Parse Whisper Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Parse Whisper Response", "type": "main", "index": 0 }]
       ]
     },
     "Parse Whisper Response": {
       "main": [
-        [
-          {
-            "node": "Save SRT",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save SRT", "type": "main", "index": 0 }]
       ]
     },
     "Save SRT": {
       "main": [
-        [
-          {
-            "node": "Build Caption Cmd",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Build Caption Cmd", "type": "main", "index": 0 }]
       ]
     },
     "Build Caption Cmd": {
       "main": [
-        [
-          {
-            "node": "Burn Captions",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Burn Captions", "type": "main", "index": 0 }]
       ]
     },
     "Burn Captions": {
       "main": [
-        [
-          {
-            "node": "Caption Success?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Caption Success?", "type": "main", "index": 0 }]
       ]
     },
     "Caption Success?": {
       "main": [
-        [
-          {
-            "node": "Prepare Publish Data",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Handle Caption Error",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Prepare Publish Data", "type": "main", "index": 0 }],
+        [{ "node": "Handle Caption Error", "type": "main", "index": 0 }]
       ]
     },
     "Prepare Publish Data": {
       "main": [
-        [
-          {
-            "node": "Publish (Blotato)",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Publish (Blotato)", "type": "main", "index": 0 }]
       ]
     },
     "Publish (Blotato)": {
       "main": [
-        [
-          {
-            "node": "Parse Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Parse Response", "type": "main", "index": 0 }]
       ]
     },
     "Parse Response": {
       "main": [
-        [
-          {
-            "node": "Save Publish Record",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Save Publish Record", "type": "main", "index": 0 }]
       ]
     },
     "Save Publish Record": {
       "main": [
-        [
-          {
-            "node": "Update Status Published",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Update Status Published", "type": "main", "index": 0 }]
       ]
     },
     "Update Status Published": {
       "main": [
-        [
-          {
-            "node": "Respond Success",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Respond Success", "type": "main", "index": 0 }]
       ]
     },
     "Serve Audio": {
       "main": [
-        [
-          {
-            "node": "Read Audio",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Read Audio", "type": "main", "index": 0 }]
       ]
     },
     "Read Audio": {
       "main": [
-        [
-          {
-            "node": "Return Audio",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Return Audio", "type": "main", "index": 0 }]
       ]
     },
     "Serve Video": {
       "main": [
-        [
-          {
-            "node": "Read Video",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Read Video", "type": "main", "index": 0 }]
       ]
     },
     "Read Video": {
       "main": [
-        [
-          {
-            "node": "Return Video",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{ "node": "Return Video", "type": "main", "index": 0 }]
       ]
     }
   },
@@ -2718,5 +1941,6 @@
   "tags": [],
   "triggerCount": 6,
   "updatedAt": "2026-01-06T00:00:00.000Z",
+  "versionId": "2",
   "active": false
 }

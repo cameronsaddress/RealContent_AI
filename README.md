@@ -72,7 +72,15 @@ docker compose up -d
 docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
 ```
 
-### 5. Configure Credentials in n8n
+### 5. Import Credentials
+
+```bash
+docker exec n8n n8n import:credentials --input=/home/node/workflows/credentials.json
+```
+
+### 6. Configure Credentials in n8n (Manual Method)
+
+If import fails, navigate to Settings → Credentials and create:
 
 Navigate to Settings → Credentials and create:
 
@@ -329,6 +337,14 @@ BLOTATO_API_KEY=...
 - Check Apify API key is valid
 - Verify hashtags exist and have content
 
+**Scrape Error: "Expecting value: line 1 column 1"**
+- **Cause**: Workflow crashing immediately due to missing credentials.
+- **Fix**: Run `docker exec n8n n8n import:credentials --input=/home/node/workflows/credentials.json`
+
+**n8n Webhook 404**
+- **Cause**: Workflow not active or webhook not registered in DB.
+- **Fix**: Ensure workflow is active in n8n UI. If CLI activation fails, use manual DB update (see internal docs).
+
 ### Logs
 
 ```bash
@@ -354,8 +370,14 @@ docker exec -it n8n_postgres psql -U n8n -d content_pipeline
 
 ```bash
 docker compose build --no-cache
+docker compose build --no-cache
 docker compose up -d
 ```
+
+### Hot Reloading
+
+- **Frontend**: Local `frontend/src` is mounted to `/app/src`. Changes reflect immediately.
+- **Backend**: Local `backend` is mounted to `/app`. `uvicorn` runs with `--reload` to auto-restart on changes.
 
 ### Re-import workflow
 

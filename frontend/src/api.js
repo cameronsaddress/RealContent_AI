@@ -110,4 +110,41 @@ export const getPipelineStats = async () => {
   return data;
 };
 
+// Scraper
+export const runScrape = async (scrapeConfig) => {
+  const { data } = await api.post('/api/scrape/run', scrapeConfig);
+  return data;
+};
+
+export const getScrapeRuns = async (params = {}) => {
+  const { data } = await api.get('/api/scrape/runs', { params });
+  return data;
+};
+
+export const getScrapeRun = async (id) => {
+  const { data } = await api.get(`/api/scrape/runs/${id}`);
+  return data;
+};
+
+export const useTrendAsIdea = async (trend) => {
+  const { data } = await api.post('/api/scrape/use-trend', trend);
+  return data;
+};
+
+// Niche Presets
+export const getNichePresets = async () => {
+  const { data } = await api.get('/api/niche-presets');
+  return data;
+};
+
+export const createNichePreset = async (preset) => {
+  const { data } = await api.post('/api/niche-presets', preset);
+  return data;
+};
+
+export const deleteNichePreset = async (id) => {
+  const { data } = await api.delete(`/api/niche-presets/${id}`);
+  return data;
+};
+
 export default api;

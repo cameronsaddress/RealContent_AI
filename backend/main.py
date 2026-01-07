@@ -12,7 +12,7 @@ from models import (
     PipelineRun as PipelineRunModel, ContentStatus as DBContentStatus,
     PillarType as DBPillarType, PlatformType as DBPlatformType,
     ScrapeRun as ScrapeRunModel, NichePreset as NichePresetModel,
-    ScrapeRunStatus as DBScrapeRunStatus
+    ScrapeRunStatus as DBScrapeRunStatus, Base, engine
 )
 from schemas import (
     ContentIdea, ContentIdeaCreate, ContentIdeaUpdate,
@@ -30,6 +30,9 @@ app = FastAPI(
     description="API for managing automated AI video content pipeline",
     version="1.0.0"
 )
+
+# Create tables
+Base.metadata.create_all(bind=engine)
 
 # CORS configuration
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
