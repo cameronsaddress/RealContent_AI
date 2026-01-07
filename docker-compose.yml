@@ -42,7 +42,7 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
       - ./workflows:/home/node/workflows
-      - ./assets:/home/node/assets
+      - ./assets:/home/node/.n8n-files/assets
     depends_on:
       - postgres
 
