@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getContentIdeas, updateContentIdea, bulkApproveIdeas, bulkRejectIdeas } from '../api';
+import { getContentIdeas, updateContentIdea, bulkApproveIdeas, bulkRejectIdeas, triggerTestPipeline } from '../api';
 import { format } from 'date-fns';
 
 function ContentIdeas() {
@@ -264,6 +264,24 @@ function ContentIdeas() {
                             onClick={() => handleApprove(idea.id)}
                           >
                             Approve
+                          </button>
+                          <button
+                            className="action-btn test-approve"
+                            style={{ backgroundColor: '#9333ea', color: 'white', marginLeft: '4px' }}
+                            onClick={async (e) => {
+                              e.stopPropagation(); // Prevent row click
+                              if (confirm('Trigger TEST pipeline for this idea?')) {
+                                try {
+                                  await triggerTestPipeline({ content_idea_id: idea.id });
+                                  alert('Test pipeline triggered!');
+                                } catch (err) {
+                                  alert('Failed to trigger test pipeline: ' + err.message);
+                                }
+                              }
+                            }}
+                            title="Trigger Test Pipeline (Immediate)"
+                          >
+                            Test
                           </button>
                           <button
                             className="action-btn reject"

@@ -1,0 +1,52 @@
+{
+    "name": "Test Workflow",
+    "active": true,
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "test-trigger",
+                "authentication": "none",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "e6a1d48c-1234-5678-9abc-def012345678",
+            "name": "Test Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                100,
+                100
+            ],
+            "webhookId": "e6a1d48c-1234-5678-9abc-def012345678"
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "{\"message\": \"success\"}",
+                "options": {}
+            },
+            "id": "7890abcd-1234-5678-9abc-def012345678",
+            "name": "Respond",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1,
+            "position": [
+                300,
+                100
+            ]
+        }
+    ],
+    "connections": {
+        "Test Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

@@ -1,0 +1,3161 @@
+{
+  "name": "AI ContentGenerator",
+  "active": false,
+  "id": "rTAhapEWXNxRAElT",
+  "versionId": "f0613422-b4be-4d3c-8cd7-62ff7782436f",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1. SCRAPE\nDiscover trending content from TikTok, Instagram, YouTube",
+        "height": 160,
+        "width": 280,
+        "color": 7
+      },
+      "id": "note-scrape",
+      "name": "Scrape Section",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "scrape-schedule",
+      "name": "Daily 6am Scrape",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1560,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scrape-trends",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "scrape-webhook",
+      "name": "Scrape Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1560,
+        240
+      ],
+      "webhookId": "scrape-trends"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming niche/platform parameters\nconst body = $input.first().json.body || $input.first().json;\n\n// Defaults\nconst niche = body.niche || 'real estate';\nconst hashtags = body.hashtags || ['realestate', 'realtor', 'homebuying', 'firsttimehomebuyer'];\nconst platforms = body.platforms || ['tiktok', 'instagram'];\nconst timeRange = body.time_range || '24h';\nconst resultsPerPlatform = body.results_per_platform || 50;\n\n// Build search terms from niche\nconst nicheTerms = niche.split(/[,;]+/).map(t => t.trim()).filter(t => t);\n\nreturn [{\n  json: {\n    niche,\n    nicheTerms,\n    hashtags,\n    platforms,\n    timeRange,\n    resultsPerPlatform,\n    scrapeStartedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "scrape-parse-params",
+      "name": "Parse Scrape Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1340,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tiktok-check",
+              "leftValue": "={{ $json.platforms.includes('tiktok') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-tiktok",
+      "name": "TikTok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "instagram-check",
+              "leftValue": "={{ $json.platforms.includes('instagram') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-instagram",
+      "name": "Instagram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "youtube-check",
+              "leftValue": "={{ $json.platforms.includes('youtube') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-youtube",
+      "name": "YouTube?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/clockworks~free-tiktok-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"hashtags\": {{ JSON.stringify($('Parse Scrape Params').first().json.hashtags) }},\n  \"resultsPerPage\": {{ $('Parse Scrape Params').first().json.resultsPerPlatform }}\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "apify-tiktok",
+      "name": "Apify TikTok",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -860,
+        -40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "apify",
+          "name": "apify"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-hashtag-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"hashtags\": {{ JSON.stringify($('Parse Scrape Params').first().json.hashtags) }},\n  \"resultsType\": \"reels\",\n  \"resultsLimit\": {{ $('Parse Scrape Params').first().json.resultsPerPlatform }}\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "apify-instagram",
+      "name": "Apify Instagram Reels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -860,
+        160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "apify",
+          "name": "apify"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~youtube-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"searchKeywords\": {{ JSON.stringify($('Parse Scrape Params').first().json.nicheTerms) }},\n  \"sort\": \"relevance\",\n  \"maxResults\": {{ $('Parse Scrape Params').first().json.resultsPerPlatform }}\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "apify-youtube",
+      "name": "Apify YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -860,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "apify",
+          "name": "apify"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "skip-tiktok",
+      "name": "Skip TikTok",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -860,
+        -140
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "skip-instagram",
+      "name": "Skip Instagram",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -860,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "skip-youtube",
+      "name": "Skip YouTube",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -860,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "scrape-merge",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -600,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize scraped items from different platforms\nconst items = $input.all();\nconst params = $('Parse Scrape Params').first().json;\nconst normalized = [];\n\nfor (const item of items) {\n  const data = item.json;\n  if (!data || typeof data !== 'object') continue;\n  \n  // Skip empty arrays or merge placeholders\n  if (Array.isArray(data) && data.length === 0) continue;\n  \n  // TikTok format\n  if (data.webVideoUrl || data.videoUrl) {\n    normalized.push({\n      platform: 'tiktok',\n      url: data.webVideoUrl || data.videoUrl,\n      title: data.text || data.desc || '',\n      views: data.playCount || 0,\n      likes: data.diggCount || 0,\n      comments: data.commentCount || 0,\n      shares: data.shareCount || 0,\n      engagement: (data.diggCount || 0) + (data.commentCount || 0) + (data.shareCount || 0),\n      author: data.authorMeta?.name || data.author || '',\n      created: data.createTime || null,\n      thumbnail: data.covers?.default || data.videoMeta?.coverUrl || ''\n    });\n  }\n  // Instagram Reels format\n  else if (data.url && (data.url.includes('instagram') || data.type === 'Reel')) {\n    normalized.push({\n      platform: 'instagram',\n      url: data.url || data.inputUrl,\n      title: data.caption || data.text || '',\n      views: data.playCount || data.videoPlayCount || 0,\n      likes: data.likesCount || data.likes || 0,\n      comments: data.commentsCount || data.comments || 0,\n      shares: 0,\n      engagement: (data.likesCount || data.likes || 0) + (data.commentsCount || data.comments || 0),\n      author: data.ownerUsername || data.author || '',\n      created: data.timestamp || null,\n      thumbnail: data.displayUrl || data.thumbnail || ''\n    });\n  }\n  // YouTube format\n  else if (data.url && data.url.includes('youtube')) {\n    normalized.push({\n      platform: 'youtube',\n      url: data.url,\n      title: data.title || '',\n      views: data.viewCount || 0,\n      likes: data.likes || 0,\n      comments: data.comments || 0,\n      shares: 0,\n      engagement: (data.likes || 0) + (data.comments || 0),\n      author: data.channelName || data.author || '',\n      created: data.uploadDate || null,\n      thumbnail: data.thumbnailUrl || ''\n    });\n  }\n}\n\n// Sort by engagement (highest first)\nnormalized.sort((a, b) => b.engagement - a.engagement);\n\n// Add metadata\nconst output = {\n  niche: params.niche,\n  platforms: params.platforms,\n  scrapedAt: params.scrapeStartedAt,\n  totalResults: normalized.length,\n  results: normalized\n};\n\nreturn [{ json: output }];"
+      },
+      "id": "scrape-normalize",
+      "name": "Normalize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "http://100.83.153.43:5678"
+            },
+            {
+              "name": "X-Title",
+              "value": "n8n-trend-analyzer"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: 'x-ai/grok-4.1-fast',\n  messages: [\n    {\n      role: 'system',\n      content: `You analyze trending social media content to find viral video ideas for a content creator.\\n\\nTarget niche: ${$json.niche}\\n\\nFor each piece of content, determine:\\n1. viral_score (1-10): How viral/engaging is this content?\\n2. pillar: One of: market_intelligence, educational_tips, lifestyle_local, brand_humanization\\n3. suggested_hook: A compelling hook to recreate this content\\n4. why_viral: Brief explanation of what makes it work\\n5. adaptable: true/false - Can this be adapted for the target niche?\\n\\nPILLAR DEFINITIONS:\\n- market_intelligence: Data, trends, market analysis, pricing, investment\\n- educational_tips: How-tos, tutorials, tips, process explanations\\n- lifestyle_local: Community, local events, lifestyle content\\n- brand_humanization: Personal stories, behind-the-scenes, relatable moments\\n\\nReturn JSON: { \"analyzed\": [{ \"url\", \"platform\", \"title\", \"views\", \"likes\", \"viral_score\", \"pillar\", \"suggested_hook\", \"why_viral\", \"adaptable\" }] }\\n\\nOnly include items with viral_score >= 6. Sort by viral_score descending.`\n    },\n    {\n      role: 'user',\n      content: `Analyze these ${$json.totalResults} trending items and identify the best content ideas:\\n\\n${JSON.stringify($json.results.slice(0, 30))}`\n    }\n  ],\n  temperature: 0.3,\n  max_tokens: 4000,\n  response_format: { type: 'json_object' }\n} }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "scrape-analyze-grok",
+      "name": "Analyze with Grok",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter",
+          "name": "openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM response and format for API/UI\nconst response = $input.first().json;\nconst normalizedData = $('Normalize Data').first().json;\n\ntry {\n  const content = response.choices[0].message.content;\n  const parsed = JSON.parse(content);\n  const items = parsed.analyzed || parsed.items || [];\n  \n  // Filter for viral_score >= 6 and adaptable = true\n  const filtered = items.filter(item => \n    item.viral_score >= 6 && item.adaptable !== false\n  );\n  \n  return [{\n    json: {\n      success: true,\n      niche: normalizedData.niche,\n      scrapedAt: normalizedData.scrapedAt,\n      totalScraped: normalizedData.totalResults,\n      analyzedCount: filtered.length,\n      trends: filtered\n    }\n  }];\n} catch (error) {\n  return [{\n    json: {\n      success: false,\n      error: error.message,\n      niche: normalizedData.niche,\n      scrapedAt: normalizedData.scrapedAt,\n      totalScraped: normalizedData.totalResults,\n      analyzedCount: 0,\n      trends: []\n    }\n  }];\n}"
+      },
+      "id": "scrape-format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process trends, save to DB, and guarantee response\nconst data = $input.first().json;\nconst savedItems = [];\nlet savedCount = 0;\n\n// 1. Handle Empty/Error Case\nif (!data.success || !data.trends || data.trends.length === 0) {\n  return [{\n    json: {\n      success: true, // Return success so UI doesn't crash\n      niche: data.niche,\n      scrapedAt: data.scrapedAt,\n      totalScraped: data.totalScraped || 0,\n      analyzedCount: 0,\n      savedCount: 0,\n      message: 'No suitable trends found to save',\n      trends: []\n    }\n  }];\n}\n\n// 2. Process & Save Each Trend\nfor (const trend of data.trends) {\n  try {\n    // Infer platform\n    let platform = trend.platform;\n    const url = trend.url || '';\n    if (!platform || platform === 'unknown') {\n      if (url.includes('tiktok.com')) platform = 'tiktok';\n      else if (url.includes('instagram.com')) platform = 'instagram';\n      else if (url.includes('youtube.com') || url.includes('youtu.be')) platform = 'youtube';\n    }\n    \n    // Construct Payload\n    const payload = {\n      source_url: url,\n      source_platform: (platform ? platform.toLowerCase() : 'unknown'),\n      original_text: trend.title || '',\n      pillar: trend.pillar || 'educational_tips',\n      viral_score: trend.viral_score || 7,\n      suggested_hook: trend.suggested_hook || '',\n      why_viral: trend.why_viral || '',\n      status: 'pending'\n    };\n\n    // Send to Backend\n    // Using this.helpers.request (n8n built-in)\n    const response = await this.helpers.request({\n      method: 'POST',\n      url: 'http://backend:8000/api/content-ideas',\n      body: payload,\n      json: true\n    });\n    \n    if (response && response.id) {\n        savedItems.push(response);\n        savedCount++;\n    }\n  } catch (err) {\n    console.log(`Failed to save trend: ${err.message}`);\n    // Continue to next item, don't stop workflow\n  }\n}\n\n// 3. Return Summary Response\nreturn [{\n  json: {\n    success: true,\n    niche: data.niche,\n    scrapedAt: data.scrapedAt,\n    totalScraped: data.totalScraped,\n    analyzedCount: data.analyzedCount,\n    savedCount: savedCount,\n    message: `Saved ${savedCount} content ideas to database`,\n    trends: savedItems\n  }\n}];"
+      },
+      "id": "scrape-process-save",
+      "name": "Process & Save Trends",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "scrape-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        940,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Auto Trigger\nSchedule (15min) + Webhook to start pipeline",
+        "height": 140,
+        "width": 180,
+        "color": 4
+      },
+      "id": "note-auto-trigger",
+      "name": "Auto Trigger",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        940,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        200
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-pipeline",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        60,
+        380
+      ],
+      "webhookId": "eb59ea2b-8f7b-4ac5-a593-5febc10fa1da"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://backend:8000/api/content-ideas?status=approved&limit=1",
+        "options": {}
+      },
+      "id": "get-approved-idea",
+      "name": "Get Approved Idea",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Pipeline Triggered",
+        "options": {}
+      },
+      "id": "trigger-respond-immediate",
+      "name": "Respond Immediately",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-specific-id",
+              "leftValue": "={{ $json.body?.content_idea_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-specific-id",
+      "name": "Specific ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        280,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://backend:8000/api/content-ideas/{{ $json.body.content_idea_id }}",
+        "options": {}
+      },
+      "id": "get-specific-idea",
+      "name": "Get Specific Idea",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      },
+      "id": "merge-idea-sources",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        720,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize and validate content idea\nconst items = $input.all();\nlet idea = null;\n\nfor (const item of items) {\n  const data = item.json;\n  if (Array.isArray(data) && data.length > 0) {\n    idea = data[0];\n    break;\n  } else if (data && data.id) {\n    idea = data;\n    break;\n  }\n}\n\nif (!idea || !idea.id) {\n  return [{ json: { hasContent: false, message: 'No approved content found' } }];\n}\n\nreturn [{\n  json: {\n    hasContent: true,\n    content_idea_id: idea.id,\n    original_text: idea.original_text,\n    pillar: idea.pillar,\n    suggested_hook: idea.suggested_hook,\n    source_platform: idea.source_platform,\n    source_url: idea.source_url\n  }\n}];"
+      },
+      "id": "normalize-idea",
+      "name": "Normalize Idea",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-content",
+              "leftValue": "={{ $json.hasContent }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-content",
+      "name": "Has Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "no-content-end",
+      "name": "No Content",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Script Generation\nGrok 4.1 creates viral script",
+        "height": 140,
+        "width": 180,
+        "color": 5
+      },
+      "id": "note-script-gen",
+      "name": "Script Gen",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"script_generating\"\n}",
+        "options": {}
+      },
+      "id": "update-status-processing",
+      "name": "Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        60,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "http://100.83.153.43:5678"
+            },
+            {
+              "name": "X-Title",
+              "value": "n8n-video-pipeline"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: \"x-ai/grok-4.1-fast\",\n  messages: [\n    {\n      role: \"system\",\n      content: `You are Beth Anderson, an amazing realtor in Coeur d'Alene, Idaho and Liberty Lake, Washington. You are reviewing a viral video to provide value to your clients.\n\nUsing the provided content idea, write a script where you (Beth) critique or praise the video, showing what is right or wrong, and demonstrating your expertise.\nThe video will be playing behind you. You are the expert.\n\nStructure:\n1. Hook: Catchy opening related to the topic.\n2. Body: Your expert analysis, referencing Coeur d'Alene/Liberty Lake if relevant, or general real estate wisdom.\n3. Call to Action: How you can help them.\n\nGUIDELINES:\n- Start with a hook that stops scrollers in the first 3 seconds\n- Use conversational, energetic tone\n- Include ONE clear call-to-action\n- Add natural pauses marked with [PAUSE]\n- Mark emphasis with *asterisks*\n- Keep sentences short and punchy\n- Total length: 150-250 words\n\nPILLAR TONES:\n- market_intelligence: Data-driven, authoritative, slightly urgent\n- educational_tips: Helpful, encouraging, clear steps\n- lifestyle_local: Warm, community-focused, storytelling\n- brand_humanization: Personal, relatable, authentic\n\nRETURN JSON:\n{\n  \"hook\": \"First 3 seconds text\",\n  \"script\": \"Full script with [PAUSE] and *emphasis* markers\",\n  \"cta\": \"Call to action text\",\n  \"estimated_duration_seconds\": 45,\n  \"suggested_broll\": [\"scene description 1\", \"scene description 2\", \"scene description 3\"]\n}`\n    },\n    {\n      role: \"user\",\n      content: `Create a script based on this content idea:\n\nPillar: ${$json.pillar}\nSuggested Hook: ${$json.suggested_hook}\nOriginal Content: ${$json.original_text ? $json.original_text.substring(0, 1500) : ''}\nSource: ${$json.source_platform}`\n    }\n  ],\n  temperature: 0.7,\n  max_tokens: 2000,\n  response_format: { type: \"json_object\" }\n} }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "generate-script-llm",
+      "name": "Generate Script (Grok)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        680
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter",
+          "name": "openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse script from LLM response\nconst response = $input.first().json;\nconst prevData = $('Update Status').first().json;\n\ntry {\n  const content = response.choices[0].message.content;\n  const scriptData = JSON.parse(content);\n  \n  return [{\n    json: {\n      content_idea_id: prevData.id || $('Normalize Idea').first().json.content_idea_id,\n      hook: scriptData.hook,\n      script: scriptData.script,\n      cta: scriptData.cta,\n      estimated_duration: scriptData.estimated_duration_seconds || 45,\n      suggested_broll: scriptData.suggested_broll || [],\n      pillar: $('Normalize Idea').first().json.pillar\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to parse script: ${error.message}`);\n}"
+      },
+      "id": "parse-script",
+      "name": "Parse Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/scripts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content_idea_id\": {{ $json.content_idea_id }},\n  \"hook\": {{ JSON.stringify($json.hook) }},\n  \"body\": {{ JSON.stringify($json.script || '') }},\n  \"cta\": {{ JSON.stringify($json.cta) }},\n  \"full_script\": {{ JSON.stringify($json.hook + ' ' + $json.script + ' ' + $json.cta) }},\n  \"duration_estimate\": {{ $json.estimated_duration || 45 }},\n  \"status\": \"script_ready\"\n}",
+        "options": {}
+      },
+      "id": "save-script",
+      "name": "Save Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/assets",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"script_id\": {{ $json.id }},\n  \"status\": \"pending\"\n}",
+        "options": {}
+      },
+      "id": "create-asset-record",
+      "name": "Create Asset Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Get Video\nPexels B-roll search & download",
+        "height": 140,
+        "width": 180,
+        "color": 6
+      },
+      "id": "note-get-video",
+      "name": "Get Video",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare B-roll search queries\nconst asset = $input.first().json;\nconst parseData = $('Parse Script').first().json;\nconst script = $('Save Script').first().json;\nconst suggestedBroll = parseData.suggested_broll || [];\n\n// Default searches if none provided\nconst defaultSearches = {\n  market_intelligence: ['real estate market', 'house exterior', 'city skyline aerial'],\n  educational_tips: ['home inspection', 'signing contract documents', 'house tour interior'],\n  lifestyle_local: ['neighborhood street', 'local coffee shop', 'park families'],\n  brand_humanization: ['business professional', 'handshake meeting', 'modern office']\n};\n\nconst pillar = parseData.pillar || 'educational_tips';\nconst searches = suggestedBroll.length > 0 ? suggestedBroll : defaultSearches[pillar];\n\nreturn searches.slice(0, 3).map((query, index) => ({\n  json: {\n    asset_id: asset.id,\n    script_id: script.id,\n    content_idea_id: parseData.content_idea_id,\n    scene_index: index,\n    search_query: query\n  }\n}));"
+      },
+      "id": "prepare-broll-searches",
+      "name": "Prepare B-Roll Searches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.pexels.com/videos/search?query={{ encodeURIComponent($json.search_query) }}&per_page=3&orientation=portrait",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "search-pexels",
+      "name": "Search Pexels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        1040
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pexels",
+          "name": "pexels"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Select best video from Pexels results\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const videos = item.json.videos || [];\n  const prevItem = $('Prepare B-Roll Searches').all().find(\n    p => p.json.scene_index === item.json.scene_index\n  ) || $('Prepare B-Roll Searches').first();\n  \n  if (videos.length === 0) {\n    results.push({\n      json: {\n        asset_id: prevItem.json.asset_id,\n        script_id: prevItem.json.script_id,\n        content_idea_id: prevItem.json.content_idea_id,\n        scene_index: prevItem.json.scene_index,\n        video_found: false\n      }\n    });\n    continue;\n  }\n  \n  const video = videos[0];\n  const videoFiles = video.video_files || [];\n  const selectedFile = videoFiles.find(f => f.quality === 'hd') || videoFiles[0];\n  \n  results.push({\n    json: {\n      asset_id: prevItem.json.asset_id,\n      script_id: prevItem.json.script_id,\n      content_idea_id: prevItem.json.content_idea_id,\n      scene_index: prevItem.json.scene_index,\n      video_found: true,\n      pexels_id: video.id,\n      video_url: selectedFile?.link,\n      duration: video.duration\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "select-videos",
+      "name": "Select Videos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "video-found-check",
+              "leftValue": "={{ $json.video_found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-video-found",
+      "name": "Video Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "download-broll",
+      "name": "Download B-Roll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        1040
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "skip-broll",
+      "name": "Skip B-Roll",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        940,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\n// Reconstruct filename using the same logic as the previous expression\n// Use try-catch to handle potential expression failures safely\ntry {\n  const scriptId = $('Select Videos').first().json.script_id;\n  const sceneIndex = $('Select Videos').first().json.scene_index;\n  const fileName = `/home/node/.n8n-files/assets/videos/${scriptId}_scene${sceneIndex}.mp4`;\n  \n  if (item.binary && item.binary.data) {\n    fs.writeFileSync(fileName, Buffer.from(item.binary.data.data, 'base64'));\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  // If Select Videos logic is complex, fall back to current item properties if available\n  // or log error\n  console.log('Error writing file: ' + e.message);\n  throw e;\n}\nreturn item;"
+      },
+      "id": "save-broll-file",
+      "name": "Save B-Roll",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-broll",
+      "name": "Merge B-Roll",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1380,
+        1080
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Create Voice\nElevenLabs TTS + duration check",
+        "height": 140,
+        "width": 180,
+        "color": 7
+      },
+      "id": "note-create-voice",
+      "name": "Create Voice",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://backend:8000/api/config/character",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "get-character-config",
+      "name": "Get Character Config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate B-roll results and prepare for voice generation\nconst brollItems = $('Merge B-Roll').all();\nconst charConfig = $input.first().json || {};\n\nconst firstItem = $('Select Videos').first().json;\n\n// Get script and asset data\nconst scriptData = $('Save Script').first().json;\nconst assetData = $('Create Asset Record').first().json;\nconst parseData = $('Parse Script').first().json;\n\n// Clean script for TTS\nlet text = parseData.script || '';\ntext = text.replace(/\\[PAUSE\\]/gi, '...');\ntext = text.replace(/\\*(.*?)\\*/g, '$1');\ntext = text.replace(/\\s+/g, ' ').trim();\n\nif (parseData.cta) {\n  text = text + ' ... ' + parseData.cta;\n}\n\n// Robust Voice ID Selection\nlet voiceId = charConfig.voice_id;\nif (!voiceId || typeof voiceId !== 'string' || voiceId.trim().length < 5) {\n    console.log(`Invalid or missing voice_id '${voiceId}', falling back to Rachel.`);\n    voiceId = '21m00Tcm4TlvDq8ikWAM'; // Rachel\n} else {\n    voiceId = voiceId.trim();\n}\n\nreturn [{\n  json: {\n    asset_id: assetData.id,\n    script_id: scriptData.id,\n    content_idea_id: parseData.content_idea_id,\n    text_for_tts: text,\n    voice_id: voiceId,\n    avatar_id: charConfig.avatar_id || 'Kristin_pubblic_3_20240108',\n    avatar_type: charConfig.avatar_type || 'avatar',\n    config_image_url: charConfig.image_url,\n    broll_paths: brollItems.filter(i => i.json.fileName).map((i, idx) => \n      `/home/node/.n8n-files/assets/videos/${scriptData.id}_scene${idx}.mp4`\n    )\n  }\n}];"
+      },
+      "id": "prepare-tts-text",
+      "name": "Prepare TTS Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.elevenlabs.io/v1/text-to-speech/{{ $json.voice_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "audio/mpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"text\": $json.text_for_tts, \"model_id\": \"eleven_multilingual_v2\", \"voice_settings\": { \"stability\": 0.5, \"similarity_boost\": 0.75, \"style\": 0.5, \"use_speaker_boost\": true } } }}",
+        "options": {
+          "response": {
+            "format": "file"
+          },
+          "timeout": 120000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "generate-voice",
+      "name": "Generate Voice (ElevenLabs)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        1400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "elevenlabs",
+          "name": "elevenlabs"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\ntry {\n  const sourceNode = $('Prepare TTS Text').first();\n  const sourceData = sourceNode.json;\n  const scriptId = sourceData.script_id;\n  const filePath = `/home/node/.n8n-files/assets/audio/${scriptId}_voice.mp3`;\n  const exists = fs.existsSync(filePath);\n  \n  // MERGE source data so voice_id/text_for_tts persist to the Generator\n  return [{ \n      json: { \n          ...sourceData,\n          exists, \n          filePath, \n          script_id: scriptId,\n          // Explicitly ensure voice_id is passed if it exists in source\n          voice_id: sourceData.voice_id \n      } \n  }];\n} catch (e) {\n  return [{ json: { exists: false, error: e.message } }];\n}"
+      },
+      "id": "check-voice-exists",
+      "name": "Check Voice Exists",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "file-exists",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-voice-exists",
+      "name": "Voice Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/.n8n-files/assets/audio/{{ $('Prepare TTS Text').first().json.script_id }}_voice.mp3",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "save-voice-file",
+      "name": "Save Voice",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        500,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { execSync } = require('child_process');\nconst ttsData = $('Prepare TTS Text').first().json;\nconst audioPath = `/home/node/.n8n-files/assets/audio/${ttsData.script_id}_voice.mp3`;\n\ntry {\n  const result = execSync(`ffprobe -v quiet -show_entries format=duration -of csv=p=0 \"${audioPath}\"`, { encoding: 'utf-8' });\n  return [{ json: { stdout: result.trim(), success: true } }];\n} catch (error) {\n  return [{ json: { stdout: '45', success: false, error: error.message } }];\n}"
+      },
+      "id": "get-voice-duration",
+      "name": "Get Duration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/assets/{{ $('Prepare TTS Text').first().json.asset_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"voiceover_path\": \"/home/node/.n8n-files/assets/audio/{{ $('Prepare TTS Text').first().json.script_id }}_voice.mp3\",\n  \"status\": \"voice_ready\"\n}",
+        "options": {}
+      },
+      "id": "update-asset-voice",
+      "name": "Update Asset Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "filePath",
+        "filePath": "=/home/node/.n8n-files/assets/audio/{{ $json.script_id }}_voice.mp3",
+        "dataPropertyName": "data"
+      },
+      "id": "read-audio-file",
+      "name": "Read Audio File",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Create Avatar\nHeyGen lip-sync video generation",
+        "height": 140,
+        "width": 180,
+        "color": 3
+      },
+      "id": "note-create-avatar",
+      "name": "Create Avatar",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse inputs\nconst uploadResult = $('Upload HeyGen Audio').first().json;\nconst durationResult = $('Get Duration').first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\n// Check for Dynamic Photo Upload\nlet dynamicPhotoId = null;\ntry {\n  const photoUpload = $('Upload Talking Photo').first();\n  if (photoUpload && photoUpload.json && photoUpload.json.data) {\n      // v1/talking_photo returns 'talking_photo_id'. v1/asset returns 'id'.\n      // We prioritize talking_photo_id.\n      dynamicPhotoId = photoUpload.json.data.talking_photo_id || photoUpload.json.data.id;\n  }\n} catch(e) {}\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\n// Avatar Logic\nlet avatarId = ttsData.avatar_id;\nlet avatarType = ttsData.avatar_type;\n\n// If static_image, we MUST have a dynamic ID now\nif (avatarId === 'static_image') {\n    if (dynamicPhotoId) {\n        avatarType = 'talking_photo';\n        avatarId = dynamicPhotoId;\n    } else {\n        // Fallback\n        console.log('Missing dynamic photo upload, falling back to default avatar');\n        avatarId = 'Anna_public_3_20240108';\n        avatarType = 'avatar';\n    }\n}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/.n8n-files/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths,\n    avatar_id: avatarId,\n    avatar_type: avatarType,\n    audio_asset_id: uploadResult.data.id\n  }\n}];"
+      },
+      "id": "prepare-heygen-data",
+      "name": "Prepare HeyGen Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.heygen.com/v2/video/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  \"video_inputs\": [\n    {\n      \"character\": $json.avatar_type === 'talking_photo'\n        ? {\n            \"type\": \"talking_photo\",\n            \"talking_photo_id\": $json.avatar_id\n          }\n        : {\n            \"type\": \"avatar\",\n            \"avatar_id\": $json.avatar_id,\n            \"avatar_style\": \"normal\"\n          },\n      \"voice\": {\n        \"type\": \"audio\",\n        \"audio_asset_id\": $json.audio_asset_id\n      },\n      \"background\": {\n        \"type\": \"color\",\n        \"value\": \"#00FF00\"\n      }\n    }\n  ],\n  \"dimension\": {\n    \"width\": 720,\n    \"height\": 1280\n  },\n  \"aspect_ratio\": \"9:16\"\n}\n}}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "create-heygen-video",
+      "name": "Create HeyGen Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        1760
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\ntry {\n  const sourceNode = $('Prepare HeyGen Data').first();\n  const sourceData = sourceNode.json;\n  const scriptId = sourceData.script_id;\n  const filePath = `/home/node/.n8n-files/assets/avatar/${scriptId}_avatar.mp4`;\n  const exists = fs.existsSync(filePath);\n  \n  // MERGE source data so audio_asset_id / avatar_id persist to the Generator\n  return [{ \n      json: { \n          ...sourceData,\n          exists, \n          filePath, \n          script_id: scriptId\n      } \n  }];\n} catch (e) {\n  return [{ json: { exists: false, error: e.message } }];\n}"
+      },
+      "id": "check-video-exists",
+      "name": "Check Video Exists",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "file-exists",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-video-exists",
+      "name": "Video Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract HeyGen video ID and initialize retry counter\nconst response = $input.first().json;\nconst prevData = $('Prepare HeyGen Data').first().json;\n\nif (!response.data?.video_id) {\n  throw new Error(`HeyGen error: ${JSON.stringify(response)}`);\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    heygen_video_id: response.data.video_id,\n    retry_count: 0,\n    max_retries: 20\n  }\n}];"
+      },
+      "id": "extract-heygen-id",
+      "name": "Extract Video ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait-heygen",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        1760
+      ],
+      "webhookId": "heygen-wait"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.heygen.com/v1/video_status.get?video_id={{ $json.heygen_video_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "check-heygen-status",
+      "name": "Check Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        1760
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Increment retry counter and check max\nconst prevData = $('Extract Video ID').first().json;\nconst checkData = $input.first().json;\nconst retryCount = (prevData.retry_count || 0) + 1;\nconst maxRetries = prevData.max_retries || 20;\n\nif (retryCount > maxRetries) {\n  throw new Error(`HeyGen timeout: Video ${prevData.heygen_video_id} did not complete after ${maxRetries} retries (${maxRetries * 15 / 60} minutes). Last status: ${checkData.data?.status}`);\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    retry_count: retryCount,\n    last_status: checkData.data?.status\n  }\n}];"
+      },
+      "id": "increment-retry",
+      "name": "Increment Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        1940
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "wait-retry",
+      "name": "Wait & Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1380,
+        1940
+      ],
+      "webhookId": "heygen-retry"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Check Status').first().json.data.video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "download-avatar",
+      "name": "Download Avatar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\ntry {\n  const scriptId = $('Extract Video ID').first().json.script_id;\n  const fileName = `/home/node/.n8n-files/assets/avatar/${scriptId}_avatar.mp4`;\n  \n  if (item.binary && item.binary.data) {\n    fs.writeFileSync(fileName, Buffer.from(item.binary.data.data, 'base64'));\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  console.log('Error writing avatar file: ' + e.message);\n  throw e;\n}\nreturn item;"
+      },
+      "id": "save-avatar-file",
+      "name": "Save Avatar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Combine Videos + Music\nFFmpeg chromakey compositing",
+        "height": 140,
+        "width": 180,
+        "color": 2
+      },
+      "id": "note-combine",
+      "name": "Combine Vids",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1960
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst extractNode = $('Extract Video ID').first();\n// Robust fallback if extraction hasn't happened yet (idempotency)\nconst sourceData = extractNode ? extractNode.json : $('Prepare HeyGen Data').first().json;\nconst scriptId = sourceData.script_id;\n\n// --- FILE PATHS ---\n// Ensure these match your Docker volume mapping\nconst avatarPath = `/home/node/.n8n-files/assets/avatar/${scriptId}_avatar.mp4`;\nconst outputPath = `/home/node/.n8n-files/assets/output/${scriptId}_combined.mp4`;\nconst musicPath = `/home/node/.n8n-files/assets/music/background_music.mp3`; \nconst brollPaths = sourceData.broll_paths || [];\n\n// --- BUILD INPUTS ---\nlet inputs = `-i ${avatarPath}`; // Input 0: The Avatar Video\nlet inputCount = 1;\n\n// SAFETY CHECK: Does the music file actually exist?\nlet musicExists = false;\ntry {\n    if (fs.existsSync(musicPath)) {\n        musicExists = true;\n    }\n} catch (e) {\n    console.log(\"Music check failed, proceeding without music.\");\n}\n\nlet musicIndex = -1;\n\nif (musicExists) {\n  // -stream_loop -1 makes the music repeat if the video is longer than the song\n  inputs += ` -stream_loop -1 -i ${musicPath}`;\n  musicIndex = inputCount;\n  inputCount++;\n}\n\n// Add B-Roll Inputs\nbrollPaths.forEach(path => {\n  inputs += ` -i ${path}`;\n});\nconst brollStartIndex = inputCount;\n\n// --- BUILD FILTER COMPLEX ---\nlet fc = '';\n\n// 1. VIDEO COMPOSITING\nif (brollPaths.length > 0) {\n  // Create a chain of B-Roll clips\n  const brollInputs = brollPaths.map((_, i) => `[${brollStartIndex + i}:v]`).join('');\n  \n  // Concatenate B-Roll\n  fc += `${brollInputs}concat=n=${brollPaths.length}:v=1:a=0[broll_raw];`;\n  \n  // Scale and Crop B-Roll to 9:16 (1080x1920) to match Avatar\n  fc += `[broll_raw]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[broll];`;\n  \n  // Chroma Key the Avatar (Green Screen Removal)\n  fc += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  \n  // Overlay Avatar on top of B-Roll\n  fc += `[broll][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv];`;\n} else {\n  // Fallback: If no B-Roll, put Avatar over a solid background\n  fc += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  fc += `color=c=#1a1a2e:s=1080x1920:d=120[bg];`;\n  fc += `[bg][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv];`;\n}\n\n// 2. AUDIO MIXING\nif (musicExists) {\n  // [0:a] is the Voice (Avatar)\n  // [musicIndex:a] is the Background Music\n  // volume=0.1 drops music to 10% so voice is clear\n  // amix mixes them. duration=first cuts audio when video ends.\n  fc += `[${musicIndex}:a]volume=0.1[music_low];[0:a][music_low]amix=inputs=2:duration=first[outa]`;\n} else {\n  // If no music, just pass the voice through as stereo\n  fc += `[0:a]aformat=channel_layouts=stereo[outa]`;\n}\n\n// --- FINAL COMMAND ---\nconst ffmpegCmd = `ffmpeg -y ${inputs} -filter_complex \"${fc}\" -map \"[outv]\" -map \"[outa]\" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart ${outputPath}`;\n\nreturn [{\n  json: {\n    asset_id: sourceData.asset_id,\n    script_id: scriptId,\n    content_idea_id: sourceData.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath\n  }\n}];"
+      },
+      "id": "build-ffmpeg-cmd",
+      "name": "Build FFmpeg Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        2120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { execSync } = require('child_process');\nconst ffmpegCmd = $input.first().json.ffmpeg_command;\n\ntry {\n  const result = execSync(ffmpegCmd, { encoding: 'utf-8', timeout: 300000 });\n  return [{ json: { stdout: result, exitCode: 0, success: true } }];\n} catch (error) {\n  if (error.status !== undefined) {\n    return [{ json: { stdout: error.stdout || '', stderr: error.stderr || '', exitCode: error.status, success: error.status === 0 } }];\n  }\n  return [{ json: { stdout: '', stderr: error.message, exitCode: 1, success: false } }];\n}"
+      },
+      "id": "run-ffmpeg-combine",
+      "name": "Run FFmpeg",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        2120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ffmpeg-success",
+              "leftValue": "={{ $json.exitCode }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ffmpeg-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        500,
+        2120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "throw new Error(`FFmpeg failed: ${$input.first().json.stderr}`);"
+      },
+      "id": "handle-ffmpeg-error",
+      "name": "Handle Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        2300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Caption\nGenerate SRT + burn captions with FFmpeg",
+        "height": 140,
+        "width": 180,
+        "color": 1
+      },
+      "id": "note-caption",
+      "name": "Caption",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        2320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for Whisper transcription\nconst ffmpegData = $('Build FFmpeg Command').first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\nreturn [{\n  json: {\n    asset_id: ffmpegData.asset_id,\n    script_id: ffmpegData.script_id,\n    content_idea_id: ffmpegData.content_idea_id,\n    combined_video_path: ffmpegData.output_path,\n    audio_path: `/home/node/.n8n-files/assets/audio/${ffmpegData.script_id}_voice.mp3`\n  }\n}];"
+      },
+      "id": "prepare-whisper",
+      "name": "Prepare Whisper",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst filePath = $input.first().json.audio_path;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'audio/mpeg',\n        fileName: filePath.split('/').pop()\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read audio file: ${filePath}. Error: ${error.message}`);\n}"
+      },
+      "id": "read-audio-for-whisper",
+      "name": "Read Audio for Whisper",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": []
+        },
+        "contentType": "multipart-form-data",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "response_format",
+              "value": "srt"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "whisper-transcribe",
+      "name": "Whisper Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        2480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai",
+          "name": "openai"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract SRT content from Whisper response\nconst response = $input.first().json;\nconst prevData = $('Prepare Whisper').first().json;\n\n// Whisper returns SRT as plain text\nconst srtContent = typeof response === 'string' ? response : (response.text || response.data || JSON.stringify(response));\n\nreturn [{\n  json: {\n    asset_id: prevData.asset_id,\n    script_id: prevData.script_id,\n    content_idea_id: prevData.content_idea_id,\n    combined_video_path: prevData.combined_video_path,\n    srt_content: srtContent\n  }\n}];"
+      },
+      "id": "parse-whisper-response",
+      "name": "Parse Whisper Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fs = require('fs');\nconst item = $input.item;\ntry {\n  const scriptId = item.json.script_id;\n  const fileName = `/home/node/.n8n-files/assets/captions/${scriptId}_captions.srt`;\n  const content = item.json.srt_content;\n  \n  if (content) {\n    fs.writeFileSync(fileName, content);\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  console.log('Error writing SRT file: ' + e.message);\n  throw e;\n}\nreturn item;"
+      },
+      "id": "save-srt",
+      "name": "Save SRT",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build FFmpeg caption burn command\nconst prevData = $('Parse Whisper Response').first().json;\nconst scriptId = prevData.script_id;\n\nconst inputPath = prevData.combined_video_path;\nconst srtPath = `/home/node/.n8n-files/assets/captions/${scriptId}_captions.srt`;\nconst outputPath = `/home/node/.n8n-files/assets/output/${scriptId}_final.mp4`;\n\n// Styled subtitles for social media\nconst subtitleFilter = `subtitles=${srtPath}:force_style='FontName=Arial,FontSize=28,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=3,Shadow=1,Alignment=2,MarginV=80'`;\n\nconst ffmpegCmd = `ffmpeg -y -i ${inputPath} -vf \"${subtitleFilter}\" -c:v libx264 -preset fast -crf 23 -c:a copy ${outputPath}`;\n\nreturn [{\n  json: {\n    asset_id: prevData.asset_id,\n    script_id: scriptId,\n    content_idea_id: prevData.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    final_video_path: outputPath\n  }\n}];"
+      },
+      "id": "build-caption-cmd",
+      "name": "Build Caption Cmd",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { execSync } = require('child_process');\nconst ffmpegCmd = $input.first().json.ffmpeg_command;\n\ntry {\n  const result = execSync(ffmpegCmd, { encoding: 'utf-8', timeout: 300000 });\n  return [{ json: { stdout: result, exitCode: 0, success: true } }];\n} catch (error) {\n  if (error.status !== undefined) {\n    return [{ json: { stdout: error.stdout || '', stderr: error.stderr || '', exitCode: error.status, success: error.status === 0 } }];\n  }\n  return [{ json: { stdout: '', stderr: error.message, exitCode: 1, success: false } }];\n}"
+      },
+      "id": "run-ffmpeg-caption",
+      "name": "Burn Captions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "caption-success",
+              "leftValue": "={{ $json.exitCode }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-caption-success",
+      "name": "Caption Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        2480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle caption failure - update asset status and throw error\nconst captionData = $('Build Caption Cmd').first().json;\nconst errorMsg = $input.first().json.stderr || 'Caption burn failed';\n\nthrow new Error(`Caption failed for asset ${captionData.asset_id}: ${errorMsg}`);"
+      },
+      "id": "handle-caption-error",
+      "name": "Handle Caption Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        2660
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Publish\nBlotato multi-platform publishing",
+        "height": 140,
+        "width": 180,
+        "color": 4
+      },
+      "id": "note-publish",
+      "name": "Publish",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        2680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare publishing data with platform-specific captions\nconst captionData = $('Build Caption Cmd').first().json;\nconst parseData = $('Parse Script').first().json;\n\nconst pillarHashtags = {\n  market_intelligence: ['#realestate', '#housingmarket', '#marketupdate', '#homeprices'],\n  educational_tips: ['#realestatetips', '#homebuying101', '#firsttimehomebuyer', '#realtortips'],\n  lifestyle_local: ['#localrealestate', '#dreamhome', '#neighborhoodguide', '#homesweethome'],\n  brand_humanization: ['#realtor', '#realtorlife', '#behindthescenes', '#realestateagent']\n};\n\nconst hashtags = pillarHashtags[parseData.pillar] || pillarHashtags.educational_tips;\nconst caption = `${parseData.hook}\\n\\n${parseData.cta}\\n\\n${hashtags.join(' ')}`;\n\nreturn [{\n  json: {\n    asset_id: captionData.asset_id,\n    script_id: captionData.script_id,\n    content_idea_id: captionData.content_idea_id,\n    final_video_path: captionData.final_video_path,\n    caption: caption,\n    platforms: ['tiktok', 'instagram', 'youtube_shorts']\n  }\n}];"
+      },
+      "id": "prepare-publish",
+      "name": "Prepare Publish Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst scriptId = $input.first().json.script_id;\nconst filePath = `/home/node/.n8n-files/assets/output/${scriptId}_final.mp4`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'video/mp4',\n        fileName: `${scriptId}_final.mp4`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read video file: ${filePath}. Error: ${error.message}`);\n}"
+      },
+      "id": "read-final-video",
+      "name": "Read Final Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://storage.googleapis.com/upload/storage/v1/b/content-pipeline-assets/o",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleServiceAccount",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "uploadType",
+              "value": "media"
+            },
+            {
+              "name": "name",
+              "value": "={{ $('Prepare Publish Data').first().json.script_id }}_final.mp4"
+            },
+            {
+              "name": "predefinedAcl",
+              "value": "publicRead"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "gcs-upload-http",
+      "name": "GCS Upload HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        480,
+        2840
+      ],
+      "credentials": {
+        "googleServiceAccount": {
+          "id": "gcs-service-account",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileName = $input.first().json.name;\nconst publishData = $('Prepare Publish Data').first().json;\nconst videoUrl = `https://storage.googleapis.com/content-pipeline-assets/${fileName}`;\n\nreturn [{\n  json: {\n    ...publishData,\n    video_url: videoUrl\n  }\n}];"
+      },
+      "id": "format-gcs-url",
+      "name": "Format GCS URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.blotato.com/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"platforms\": {{ JSON.stringify($json.platforms) }},\n  \"content\": {\n    \"caption\": {{ JSON.stringify($json.caption) }},\n    \"video_url\": \"{{ $json.video_url }}\"\n  },\n  \"schedule\": { \"type\": \"now\" },\n  \"options\": { \"auto_hashtags\": false, \"cross_post\": true }\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "publish-blotato",
+      "name": "Publish (Blotato)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        2840
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "blotato",
+          "name": "blotato"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process publish response and map to individual platform columns\nconst response = $input.first().json;\nconst publishData = $('Prepare Publish Data').first().json;\n\nconst posts = response.posts || response.data?.posts || [];\n\n// Map platform posts to individual columns matching backend schema\nconst platformData = {\n  tiktok_url: null, tiktok_id: null,\n  ig_url: null, ig_id: null,\n  yt_url: null, yt_id: null,\n  linkedin_url: null, linkedin_id: null,\n  x_url: null, x_id: null,\n  facebook_url: null, facebook_id: null,\n  threads_url: null, threads_id: null,\n  pinterest_url: null, pinterest_id: null\n};\n\nposts.forEach(post => {\n  const platform = post.platform?.toLowerCase();\n  if (platform === 'tiktok') {\n    platformData.tiktok_url = post.url;\n    platformData.tiktok_id = post.id;\n  } else if (platform === 'instagram') {\n    platformData.ig_url = post.url;\n    platformData.ig_id = post.id;\n  } else if (platform === 'youtube' || platform === 'youtube_shorts') {\n    platformData.yt_url = post.url;\n    platformData.yt_id = post.id;\n  } else if (platform === 'linkedin') {\n    platformData.linkedin_url = post.url;\n    platformData.linkedin_id = post.id;\n  } else if (platform === 'twitter' || platform === 'x') {\n    platformData.x_url = post.url;\n    platformData.x_id = post.id;\n  } else if (platform === 'facebook') {\n    platformData.facebook_url = post.url;\n    platformData.facebook_id = post.id;\n  } else if (platform === 'threads') {\n    platformData.threads_url = post.url;\n    platformData.threads_id = post.id;\n  } else if (platform === 'pinterest') {\n    platformData.pinterest_url = post.url;\n    platformData.pinterest_id = post.id;\n  }\n});\n\nreturn [{\n  json: {\n    asset_id: publishData.asset_id,\n    content_idea_id: publishData.content_idea_id,\n    ...platformData,\n    published_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "parse-publish-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/published",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"asset_id\": {{ $json.asset_id }},\n  \"tiktok_url\": {{ JSON.stringify($json.tiktok_url) }},\n  \"tiktok_id\": {{ JSON.stringify($json.tiktok_id) }},\n  \"ig_url\": {{ JSON.stringify($json.ig_url) }},\n  \"ig_id\": {{ JSON.stringify($json.ig_id) }},\n  \"yt_url\": {{ JSON.stringify($json.yt_url) }},\n  \"yt_id\": {{ JSON.stringify($json.yt_id) }},\n  \"linkedin_url\": {{ JSON.stringify($json.linkedin_url) }},\n  \"linkedin_id\": {{ JSON.stringify($json.linkedin_id) }},\n  \"x_url\": {{ JSON.stringify($json.x_url) }},\n  \"x_id\": {{ JSON.stringify($json.x_id) }},\n  \"facebook_url\": {{ JSON.stringify($json.facebook_url) }},\n  \"facebook_id\": {{ JSON.stringify($json.facebook_id) }},\n  \"threads_url\": {{ JSON.stringify($json.threads_url) }},\n  \"threads_id\": {{ JSON.stringify($json.threads_id) }},\n  \"pinterest_url\": {{ JSON.stringify($json.pinterest_url) }},\n  \"pinterest_id\": {{ JSON.stringify($json.pinterest_id) }}\n}",
+        "options": {}
+      },
+      "id": "save-publish-record",
+      "name": "Save Publish Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://backend:8000/api/content-ideas/{{ $('Parse Response').first().json.content_idea_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"published\",\n  \"published_at\": {{ JSON.stringify($('Parse Response').first().json.published_at) }}\n}",
+        "options": {}
+      },
+      "id": "update-final-status",
+      "name": "Update Status Published",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        2840
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## File Server\nServe audio/video files to external APIs",
+        "height": 140,
+        "width": 180,
+        "color": 0
+      },
+      "id": "note-file-server",
+      "name": "File Server",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "serve-audio/:script_id",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-serve-audio",
+      "name": "Serve Audio",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        200
+      ],
+      "webhookId": "2fc52be9-47ee-43eb-a327-3454606b35fa"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst scriptId = $input.first().json.params.script_id;\nconst filePath = `/home/node/.n8n-files/assets/audio/${scriptId}_voice.mp3`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'audio/mpeg',\n        fileName: `${scriptId}_voice.mp3`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read audio file: ${filePath}. Error: ${error.message}`);\n}"
+      },
+      "id": "read-audio-file",
+      "name": "Read Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "audio/mpeg"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-audio",
+      "name": "Return Audio",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "serve-video/:script_id",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-serve-video",
+      "name": "Serve Video",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        380
+      ],
+      "webhookId": "33394c8b-a4f9-4606-b522-2856840a5297"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst scriptId = $input.first().json.params.script_id;\nconst filePath = `/home/node/.n8n-files/assets/output/${scriptId}_final.mp4`;\n\ntry {\n  const buffer = fs.readFileSync(filePath);\n  return [{\n    json: $input.first().json,\n    binary: {\n      data: {\n        data: buffer.toString('base64'),\n        mimeType: 'video/mp4',\n        fileName: `${scriptId}_final.mp4`\n      }\n    }\n  }];\n} catch (error) {\n  throw new Error(`Failed to read video file: ${filePath}. Error: ${error.message}`);\n}"
+      },
+      "id": "read-video-file",
+      "name": "Read Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "video/mp4"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-video",
+      "name": "Return Video",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        380
+      ]
+    },
+    {
+      "name": "Upload HeyGen Audio",
+      "id": "upload-heygen-audio-http",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        1400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://upload.heygen.com/v1/asset?name={{ $('Read Audio File').first().json.script_id }}_voice.mp3",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "binaryPropertyName": "data",
+        "options": {},
+        "inputDataFieldName": "data",
+        "dataPropertyName": "data"
+      }
+    },
+    {
+      "parameters": {
+        "errorMessage": "HeyGen Generation Failed",
+        "errorDescription": "={{ $json.data.error || $json.data.detail || 'Unknown Error' }}"
+      },
+      "id": "stop-heygen-error",
+      "name": "Stop on Failure",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        1900
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-is-photo",
+              "leftValue": "={{ $('Prepare TTS Text').first().json.avatar_id }}",
+              "rightValue": "static_image",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-is-photo",
+      "name": "Is Talking Photo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Prepare TTS Text').first().json.config_image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-char-image",
+      "name": "Download Character Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://upload.heygen.com/v1/talking_photo?name=avatar.jpg",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "binaryPropertyName": "data",
+        "options": {},
+        "inputDataFieldName": "data"
+      },
+      "id": "upload-talking-photo",
+      "name": "Upload Talking Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        1300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.data.status }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "completed",
+              "output": 0
+            },
+            {
+              "value2": "processing",
+              "output": 1
+            },
+            {
+              "value2": "pending",
+              "output": 1
+            }
+          ]
+        },
+        "fallbackOutput": 2
+      },
+      "id": "route-status-switch",
+      "name": "Route Status",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1160,
+        1760
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 6am Scrape": {
+      "main": [
+        [
+          {
+            "node": "Parse Scrape Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Scrape Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Scrape Params": {
+      "main": [
+        [
+          {
+            "node": "TikTok?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Instagram?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "YouTube?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok?": {
+      "main": [
+        [
+          {
+            "node": "Apify TikTok",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip TikTok",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram?": {
+      "main": [
+        [
+          {
+            "node": "Apify Instagram Reels",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube?": {
+      "main": [
+        [
+          {
+            "node": "Apify YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify TikTok": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify Instagram Reels": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify YouTube": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip TikTok": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Instagram": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip YouTube": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Normalize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Data": {
+      "main": [
+        [
+          {
+            "node": "Analyze with Grok",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with Grok": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Process & Save Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process & Save Trends": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Approved Idea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond Immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Immediately": {
+      "main": [
+        [
+          {
+            "node": "Get Approved Idea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Approved Idea": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Specific ID?": {
+      "main": [
+        [
+          {
+            "node": "Get Specific Idea",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Get Specific Idea": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Normalize Idea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Idea": {
+      "main": [
+        [
+          {
+            "node": "Has Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Content?": {
+      "main": [
+        [
+          {
+            "node": "Update Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [
+          {
+            "node": "Generate Script (Grok)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Script (Grok)": {
+      "main": [
+        [
+          {
+            "node": "Parse Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Script": {
+      "main": [
+        [
+          {
+            "node": "Save Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Script": {
+      "main": [
+        [
+          {
+            "node": "Create Asset Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Asset Record": {
+      "main": [
+        [
+          {
+            "node": "Prepare B-Roll Searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare B-Roll Searches": {
+      "main": [
+        [
+          {
+            "node": "Search Pexels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Pexels": {
+      "main": [
+        [
+          {
+            "node": "Select Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Videos": {
+      "main": [
+        [
+          {
+            "node": "Video Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video Found?": {
+      "main": [
+        [
+          {
+            "node": "Download B-Roll",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip B-Roll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download B-Roll": {
+      "main": [
+        [
+          {
+            "node": "Save B-Roll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save B-Roll": {
+      "main": [
+        [
+          {
+            "node": "Merge B-Roll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip B-Roll": {
+      "main": [
+        [
+          {
+            "node": "Merge B-Roll",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge B-Roll": {
+      "main": [
+        [
+          {
+            "node": "Get Character Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Character Config": {
+      "main": [
+        [
+          {
+            "node": "Prepare TTS Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare TTS Text": {
+      "main": [
+        [
+          {
+            "node": "Check Voice Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Voice Exists": {
+      "main": [
+        [
+          {
+            "node": "Voice Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voice Exists?": {
+      "main": [
+        [
+          {
+            "node": "Get Duration",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Voice (ElevenLabs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Voice (ElevenLabs)": {
+      "main": [
+        [
+          {
+            "node": "Save Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Voice": {
+      "main": [
+        [
+          {
+            "node": "Get Duration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Duration": {
+      "main": [
+        [
+          {
+            "node": "Update Asset Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Asset Voice": {
+      "main": [
+        [
+          {
+            "node": "Read Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Audio File": {
+      "main": [
+        [
+          {
+            "node": "Upload HeyGen Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare HeyGen Data": {
+      "main": [
+        [
+          {
+            "node": "Check Video Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Video Exists": {
+      "main": [
+        [
+          {
+            "node": "Video Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video Exists?": {
+      "main": [
+        [
+          {
+            "node": "Build FFmpeg Command",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create HeyGen Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create HeyGen Video": {
+      "main": [
+        [
+          {
+            "node": "Extract Video ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Video ID": {
+      "main": [
+        [
+          {
+            "node": "Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "Check Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status": {
+      "main": [
+        [
+          {
+            "node": "Route Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment Retry": {
+      "main": [
+        [
+          {
+            "node": "Wait & Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait & Retry": {
+      "main": [
+        [
+          {
+            "node": "Check Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Avatar": {
+      "main": [
+        [
+          {
+            "node": "Save Avatar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Avatar": {
+      "main": [
+        [
+          {
+            "node": "Build FFmpeg Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build FFmpeg Command": {
+      "main": [
+        [
+          {
+            "node": "Run FFmpeg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run FFmpeg": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Whisper": {
+      "main": [
+        [
+          {
+            "node": "Read Audio for Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Audio for Whisper": {
+      "main": [
+        [
+          {
+            "node": "Whisper Transcribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper Transcribe": {
+      "main": [
+        [
+          {
+            "node": "Parse Whisper Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Whisper Response": {
+      "main": [
+        [
+          {
+            "node": "Save SRT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save SRT": {
+      "main": [
+        [
+          {
+            "node": "Build Caption Cmd",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Caption Cmd": {
+      "main": [
+        [
+          {
+            "node": "Burn Captions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Burn Captions": {
+      "main": [
+        [
+          {
+            "node": "Caption Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Caption Success?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Publish Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Caption Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Publish Data": {
+      "main": [
+        [
+          {
+            "node": "Read Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Final Video": {
+      "main": [
+        [
+          {
+            "node": "GCS Upload HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GCS Upload HTTP": {
+      "main": [
+        [
+          {
+            "node": "Format GCS URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format GCS URL": {
+      "main": [
+        [
+          {
+            "node": "Publish (Blotato)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish (Blotato)": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Save Publish Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Publish Record": {
+      "main": [
+        [
+          {
+            "node": "Update Status Published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status Published": {
+      "main": [
+        []
+      ]
+    },
+    "Serve Audio": {
+      "main": [
+        [
+          {
+            "node": "Read Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Audio": {
+      "main": [
+        [
+          {
+            "node": "Return Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Serve Video": {
+      "main": [
+        [
+          {
+            "node": "Read Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Video": {
+      "main": [
+        [
+          {
+            "node": "Return Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload HeyGen Audio": {
+      "main": [
+        [
+          {
+            "node": "Is Talking Photo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Talking Photo?": {
+      "main": [
+        [
+          {
+            "node": "Download Character Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare HeyGen Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Character Image": {
+      "main": [
+        [
+          {
+            "node": "Upload Talking Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Talking Photo": {
+      "main": [
+        [
+          {
+            "node": "Prepare HeyGen Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Status": {
+      "main": [
+        [
+          {
+            "node": "Download Avatar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Increment Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop on Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 6,
+  "updatedAt": "2026-01-06T00:00:00.000Z"
+}

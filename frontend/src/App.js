@@ -7,6 +7,7 @@ import ContentIdeas from './pages/ContentIdeas';
 import Scripts from './pages/Scripts';
 import Assets from './pages/Assets';
 import Published from './pages/Published';
+import MusicManager from './pages/MusicManager';
 import './App.css';
 
 function App() {
@@ -22,6 +23,9 @@ function App() {
           </li>
           <li>
             <NavLink to="/character">AI Character</NavLink> {/* Added NavLink for AI Character */}
+          </li>
+          <li>
+            <NavLink to="/music">Music Manager</NavLink>
           </li>
           <li>
             <NavLink to="/scraper">Scraper</NavLink>
@@ -53,6 +57,7 @@ function App() {
           <Route path="/ideas" element={<ContentIdeas />} />
           <Route path="/scripts" element={<Scripts />} />
           <Route path="/assets" element={<Assets />} />
+          <Route path="/music" element={<MusicManager />} />
           <Route path="/published" element={<Published />} />
         </Routes>
       </main>

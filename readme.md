@@ -985,16 +985,95 @@ docker compose logs -f
 docker compose logs --since 1h
 ```
 
-### Reset Pipeline
+### Nuclear SOP for Workflow Recovery (The "Nuclear Reset")
 
-```bash
-# Clear all data and restart
-docker compose down -v
-docker compose up -d --build
+Use this procedure when the "AI ContentGenerator" workflow is corrupted, showing "Add first step" despite being active, or refusing to save/activate (404 errors).
 
-# Reinitialize database
-docker exec -i n8n_postgres psql -U n8n -d content_pipeline < backend/init.sql
-```
+**Prerequisites:**
+- Shell access to the server
+- `COMPLETE_PIPELINE.json` present in `workflows/`
+- Docker services running
+
+**Procedure:**
+
+1.  **Identify Current Workflow ID:**
+    ```bash
+    # Get the ID of the broken workflow
+    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity WHERE name = 'AI ContentGenerator';"
+    # Example ID to delete: 'rTAhapEWXNxRAElT'
+    ```
+
+2.  **Purge Old State:**
+    ```bash
+    # Delete the corrupted workflow entity
+    # REPLACE 'WORKFLOW_ID' with the actual ID from step 1
+    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "DELETE FROM workflow_entity WHERE id = 'WORKFLOW_ID';"
+    ```
+
+3.  **Prepare Clean JSON:**
+     Create a temporary import file that strips the old ID but **keeps active=false** to avoid constraint violations during import.
+    ```python
+    # Run this python one-liner to create temp_import.json
+    python3 -c "import json; 
+    with open('/home/canderson/n8n/workflows/COMPLETE_PIPELINE.json') as f: data = json.load(f); 
+    data.pop('id', None); 
+    data.pop('versionId', None); 
+    data['active'] = False; 
+    with open('/home/canderson/n8n/workflows/temp_import.json', 'w') as f: json.dump(data, f, indent=2)"
+    ```
+
+4.  **Import Clean Workflow:**
+    ```bash
+    docker exec n8n n8n import:workflow --input=/home/node/workflows/temp_import.json
+    ```
+
+5.  **Retrieve New Workflow ID and Version ID:**
+    ```bash
+    # Get new ID
+    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, \"activeVersionId\" FROM workflow_entity WHERE name = 'AI ContentGenerator';"
+    # Note the NEW_ID and VERSION_ID
+    ```
+
+6.  **Repair Workflow History (Critical Step):**
+    If the workflow appears empty ("Add first step"), the import likely failed to populate `workflow_history`.
+    Run the repair script `workflows/repair_history.py` (ensure you update the IDs in the script first!):
+    ```bash
+    # Edit workflows/repair_history.py with the NEW_ID and VERSION_ID from Step 5
+    nano workflows/repair_history.py
+    
+    # Generate SQL
+    python3 workflows/repair_history.py > workflows/fix.sql
+    
+    # Apply Fix
+    cat workflows/fix.sql | docker exec -i n8n_postgres psql -U n8n -d content_pipeline
+    ```
+
+7.  **Restore Ownership:**
+    Ensure the workflow is owned by the default user so it appears in the UI.
+    ```bash
+    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "INSERT INTO shared_workflow (\"workflowId\", \"projectId\", \"role\", \"createdAt\", \"updatedAt\") VALUES ((SELECT id FROM workflow_entity WHERE name = 'AI ContentGenerator' LIMIT 1), (SELECT id FROM project LIMIT 1), 'workflow:owner', NOW(), NOW()) ON CONFLICT DO NOTHING;"
+    ```
+
+8.  **Activate and Restart:**
+    ```bash
+    # Force activate via CLI
+    # REPLACE 'NEW_ID' with the ID from Step 5
+    docker exec n8n n8n publish:workflow --id=NEW_ID
+    
+    # Restart n8n to bind triggers
+    docker restart n8n
+    ```
+
+9.  **Verification:**
+    - Login to n8n UI.
+    - Refresh page (Cmd+Shift+R).
+    - Verify "AI ContentGenerator" is Active and contains nodes.
+
+    **If "Permission Denied" or "Could not find workflow":**
+    If you see permission errors after import, it means the browser is caching the old ID or the ownership link needs a refresh.
+    1. Hard Refresh (Cmd+Shift+R).
+    2. Log out and Log back in.
+    3. If persistent, re-run the `shared_workflow` fix in Step 7.
 
 ---
 

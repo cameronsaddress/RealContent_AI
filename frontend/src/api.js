@@ -116,6 +116,15 @@ export const runScrape = async (scrapeConfig) => {
   return data;
 };
 
+export const triggerTestPipeline = async (data = {}) => {
+  // Direct call to n8n webhook, bypassing the backend API wrapper for this specific test case
+  // Use axios directly to avoid the baseURL if needed, but here we can just post to the absolute URL
+  const response = await axios.post('http://100.83.153.43:5678/webhook-test/trigger-pipeline', data, {
+    headers: { 'Content-Type': 'application/json' }
+  });
+  return response.data;
+};
+
 export const getScrapeRuns = async (params = {}) => {
   const { data } = await api.get('/api/scrape/runs', { params });
   return data;
@@ -170,6 +179,48 @@ export const saveCharacterConfig = async (config) => {
 
 export const generateAvatarImage = async (promptEnhancements) => {
   const { data } = await api.post('/api/generate-avatar-image', { prompt_enhancements: promptEnhancements });
+  return data;
+};
+
+// Music
+export const uploadMusic = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  // axios automatically sets boundary content-type for FormData, but we can be explicit or just let interceptor handle it?
+  // Our api instance has application/json default. We must override.
+  const { data } = await api.post('/api/music/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+  return data;
+};
+
+export const getMusicInfo = async () => {
+  const { data } = await api.get('/api/music/info');
+  return data;
+};
+
+export const getMusicFiles = async () => {
+  const { data } = await api.get('/api/music/files');
+  return data;
+};
+
+export const activateMusic = async (filename) => {
+  const { data } = await api.post('/api/music/activate', { filename });
+  return data;
+};
+
+// Character & Settings (Upload Extensions)
+export const uploadAvatarImage = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post('/api/upload/avatar', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+  return data;
+};
+
+export const getAvatarImages = async () => {
+  const { data } = await api.get('/api/avatar-images');
   return data;
 };
 

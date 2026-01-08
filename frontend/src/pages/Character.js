@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-    getVoices, getAvatars, getCharacterConfig, saveCharacterConfig, generateAvatarImage
+    getVoices, getAvatars, getCharacterConfig, saveCharacterConfig, generateAvatarImage,
+    uploadAvatarImage, getAvatarImages
 } from '../api';
 
 const Character = () => {
@@ -15,15 +16,17 @@ const Character = () => {
 
     const [voices, setVoices] = useState([]);
     const [avatars, setAvatars] = useState([]);
+    const [uploadedImages, setUploadedImages] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
     const [generatedImage, setGeneratedImage] = useState(null);
 
     // Filters
     const [voiceSearch, setVoiceSearch] = useState('');
     const [voiceGender, setVoiceGender] = useState('all');
-    const [activeTab, setActiveTab] = useState('pretrained'); // pretrained, ai_gen
+    const [activeTab, setActiveTab] = useState('pretrained'); // pretrained, ai_gen, upload
 
     // Prompt State
     const [avatarPrompt, setAvatarPrompt] = useState(
@@ -37,19 +40,25 @@ const Character = () => {
     const loadData = async () => {
         try {
             setIsLoading(true);
-            const [voicesData, avatarsData, configData] = await Promise.all([
+            const [voicesData, avatarsData, configData, imagesData] = await Promise.all([
                 getVoices(),
                 getAvatars(),
-                getCharacterConfig()
+                getCharacterConfig(),
+                getAvatarImages()
             ]);
 
             setVoices(voicesData.voices || []);
             setAvatars(avatarsData.avatars || []);
+            setUploadedImages(imagesData.images || []);
+
             if (configData) {
                 setConfig(configData);
-                if (configData.avatar_type === 'generated' || configData.avatar_type === 'static') {
-                    setActiveTab('ai_gen'); // Or static depending on impl. Logic implies AI Gen produces an image -> used as 'static' avatar in HeyGen terms usually.
-                    if (configData.image_url) setGeneratedImage(configData.image_url);
+                if (configData.avatar_type === 'generated' || configData.avatar_type === 'static' || configData.avatar_type === 'talking_photo') {
+                    // Start on AI Gen tab if it's a custom image, or keep default
+                    // We might want to switch tabs based on type, but for now logic is fine.
+                    if (configData.image_url && !avatarsData.avatars.find(a => a.avatar_id === configData.avatar_id)) {
+                        setActiveTab('upload');
+                    }
                 }
             }
         } catch (error) {
@@ -74,20 +83,15 @@ const Character = () => {
     const handleGenerateAvatar = async () => {
         try {
             setIsGenerating(true);
-            // Pass the custom prompt as "promptEnhancements" which essentially overrides/adds to the base.
-            // Actually, the backend appends it to a base. TO be cleaner, I should probably handle it smartly.
-            // But passing it as the enhancement is fine for now, or I can just let the backend use it.
-            // Let's assume the backend concatenates.
             const res = await generateAvatarImage(avatarPrompt);
             if (res.image_url) {
-                // Backend returns relative path "/static/..." or full URL.
-                // If relative to backend, we must prepend backend host.
-                // Assuming backend is on same host port 8000 based on current setup.
                 let fullUrl = res.image_url;
                 if (fullUrl.startsWith('/')) {
                     fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
                 }
                 setGeneratedImage(fullUrl);
+                // Refresh list to incude new generated image
+                refreshImages();
             }
         } catch (error) {
             console.error("Failed to generate", error);
@@ -97,20 +101,77 @@ const Character = () => {
         }
     };
 
+    const handleUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            setIsUploading(true);
+            const res = await uploadAvatarImage(file);
+            if (res.image_url) {
+                let fullUrl = res.image_url;
+                if (fullUrl.startsWith('/')) {
+                    fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
+                }
+
+                // Auto-select uploaded image
+                setConfig({
+                    ...config,
+                    avatar_id: 'static_image',
+                    avatar_type: 'talking_photo', // Use talking_photo for custom uploads
+                    image_url: fullUrl,
+                    avatar_name: 'Custom Upload'
+                });
+
+                // Refresh gallery
+                refreshImages();
+            }
+        } catch (error) {
+            console.error("Upload failed", error);
+            alert("Upload failed.");
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const refreshImages = async () => {
+        try {
+            const data = await getAvatarImages();
+            setUploadedImages(data.images || []);
+        } catch (e) {
+            console.error("Failed to refresh images", e);
+        }
+    };
+
     const confirmGeneratedAvatar = () => {
         setConfig({
             ...config,
-            avatar_id: 'static_image', // Or however we handle static
-            avatar_type: 'generated',
+            avatar_id: 'static_image',
+            avatar_type: 'talking_photo',
             image_url: generatedImage,
             avatar_name: 'AI Generated Avatar'
+        });
+        setGeneratedImage(null); // Clear preview, it's now selected
+    };
+
+    const selectGalleryImage = (img) => {
+        // Construct full URL if relative
+        let fullUrl = img.url;
+        if (fullUrl.startsWith('/')) {
+            fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
+        }
+
+        setConfig({
+            ...config,
+            avatar_id: 'static_image',
+            avatar_type: 'talking_photo',
+            image_url: fullUrl,
+            avatar_name: 'Custom Avatar'
         });
     };
 
     const filteredVoices = voices.filter(v => {
         const matchesSearch = v.name.toLowerCase().includes(voiceSearch.toLowerCase());
-        // ElevenLabs API V1 doesn't always return gender in strict metadata fields unless we parse 'labels'.
-        // Assuming labels might have 'gender'.
         const gender = v.labels?.gender || 'unknown';
         const matchesGender = voiceGender === 'all' || gender === voiceGender;
         return matchesSearch && matchesGender;
@@ -162,7 +223,7 @@ const Character = () => {
                                     fontWeight: 'bold'
                                 }}
                             >
-                                Pre-trained Avatars
+                                Pre-trained
                             </button>
                             <button
                                 onClick={() => setActiveTab('ai_gen')}
@@ -178,9 +239,23 @@ const Character = () => {
                             >
                                 AI Generator
                             </button>
+                            <button
+                                onClick={() => setActiveTab('upload')}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    backgroundColor: activeTab === 'upload' ? 'var(--bg-tertiary)' : 'transparent',
+                                    color: activeTab === 'upload' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    fontWeight: 'bold'
+                                }}
+                            >
+                                Upload
+                            </button>
                         </div>
 
-                        {activeTab === 'pretrained' ? (
+                        {activeTab === 'pretrained' && (
                             <div style={{
                                 display: 'grid',
                                 gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
@@ -219,10 +294,12 @@ const Character = () => {
                                     </div>
                                 ))}
                             </div>
-                        ) : (
+                        )}
+
+                        {activeTab === 'ai_gen' && (
                             <div style={{ textAlign: 'center', padding: '2rem', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
                                 <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
-                                    Generate a unique AI avatar seeded with extensive movement prompts (hands, gestures).
+                                    Generate a unique AI avatar seeded with extensive movement prompts.
                                 </p>
 
                                 <div style={{ marginBottom: '1.5rem', textAlign: 'left' }}>
@@ -283,6 +360,36 @@ const Character = () => {
                                 )}
                             </div>
                         )}
+
+                        {activeTab === 'upload' && (
+                            <div style={{ padding: '2rem', background: 'var(--bg-tertiary)', borderRadius: '8px', textAlign: 'center' }}>
+                                <div style={{ border: '2px dashed var(--border-color)', borderRadius: '8px', padding: '2rem', marginBottom: '1rem' }}>
+                                    <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Upload your own photo to use as a dynamic Talking Photo.</p>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleUpload}
+                                        disabled={isUploading}
+                                        style={{ display: 'none' }}
+                                        id="avatar-upload-input"
+                                    />
+                                    <label
+                                        htmlFor="avatar-upload-input"
+                                        style={{
+                                            display: 'inline-block',
+                                            padding: '0.75rem 1.5rem',
+                                            backgroundColor: 'var(--accent-primary)',
+                                            color: 'white',
+                                            borderRadius: '6px',
+                                            cursor: isUploading ? 'wait' : 'pointer',
+                                            fontWeight: 'bold'
+                                        }}
+                                    >
+                                        {isUploading ? 'Uploading...' : 'Select Image File'}
+                                    </label>
+                                </div>
+                            </div>
+                        )}
                     </section>
 
                     {/* RIGHT: VOICE SECTION */}
@@ -290,7 +397,7 @@ const Character = () => {
                         <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
                             2. Choose Voice
                         </h2>
-
+                        {/* No changes to voice section */}
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
                             <input
                                 type="text"
@@ -388,6 +495,50 @@ const Character = () => {
                     <img src={config.image_url} alt="Selected Avatar" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }} />
                 )}
             </div>
+
+            {/* New Image Gallery Collage */}
+            {uploadedImages.length > 0 && (
+                <div style={{ marginTop: '2rem' }}>
+                    <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>My Avatar Gallery</h3>
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
+                        gap: '1rem'
+                    }}>
+                        {uploadedImages.map((img, idx) => {
+                            let fullUrl = img.url;
+                            if (fullUrl.startsWith('/')) {
+                                fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
+                            }
+                            const isSelected = config.image_url === fullUrl;
+
+                            return (
+                                <div
+                                    key={idx}
+                                    onClick={() => selectGalleryImage(img)}
+                                    style={{
+                                        cursor: 'pointer',
+                                        borderRadius: '8px',
+                                        overflow: 'hidden',
+                                        border: isSelected ? '2px solid var(--accent-primary)' : '2px solid transparent',
+                                        position: 'relative',
+                                        aspectRatio: '1',
+                                        transition: 'transform 0.2s',
+                                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                                    }}
+                                    className="gallery-item"
+                                >
+                                    <img
+                                        src={fullUrl}
+                                        alt={img.name}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                    />
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

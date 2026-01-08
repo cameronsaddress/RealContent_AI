@@ -1047,13 +1047,15 @@
     },
     {
       "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const fs = require('fs');\nconst item = $input.item;\ntry {\n  const scriptId = $('Prepare TTS Text').first().json.script_id;\n  const fileName = `/home/node/.n8n-files/assets/audio/${scriptId}_voice.mp3`;\n  \n  if (item.binary && item.binary.data) {\n    fs.writeFileSync(fileName, Buffer.from(item.binary.data.data, 'base64'));\n    item.json.saved_path = fileName;\n  }\n} catch (e) {\n  console.log('Error writing voice file: ' + e.message);\n  throw e;\n}\nreturn item;"
+        "operation": "write",
+        "fileName": "=/home/node/.n8n-files/assets/audio/{{ $('Prepare TTS Text').first().json.script_id }}_voice.mp3",
+        "binaryPropertyName": "data",
+        "options": {}
       },
       "id": "save-voice-file",
       "name": "Save Voice",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
       "position": [
         500,
         1400
@@ -1132,7 +1134,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse duration and prepare for HeyGen\nconst uploadResult = $input.first().json;\nconst durationResult = $('Get Duration').first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\n// Avatar Fallback Logic\nlet avatarId = ttsData.avatar_id;\nlet avatarType = ttsData.avatar_type;\n\n// If configured for Talking Photo but no ID is provided, fallback to default Avatar\nif (avatarId === 'static_image' && (!$env.HEYGEN_TALKING_PHOTO_ID || $env.HEYGEN_TALKING_PHOTO_ID.trim() === '')) {\n  console.log('Missing HEYGEN_TALKING_PHOTO_ID, falling back to default avatar');\n  avatarId = 'Anna_public_3_20240108';\n  avatarType = 'avatar';\n}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/.n8n-files/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths,\n    avatar_id: avatarId,\n    avatar_type: avatarType,\n    audio_asset_id: uploadResult.data.id\n  }\n}];"
+        "jsCode": "// Parse inputs\nconst uploadResult = $('Upload HeyGen Audio').first().json;\nconst durationResult = $('Get Duration').first().json;\nconst ttsData = $('Prepare TTS Text').first().json;\n\n// Check for Dynamic Photo Upload\nlet dynamicPhotoId = null;\ntry {\n  const photoUpload = $('Upload Talking Photo').first();\n  if (photoUpload && photoUpload.json && photoUpload.json.data) {\n      // v1/talking_photo returns 'talking_photo_id'. v1/asset returns 'id'.\n      // We prioritize talking_photo_id.\n      dynamicPhotoId = photoUpload.json.data.talking_photo_id || photoUpload.json.data.id;\n  }\n} catch(e) {}\n\nlet duration = 45;\ntry {\n  duration = parseFloat(durationResult.stdout.trim()) || 45;\n} catch (e) {}\n\n// Avatar Logic\nlet avatarId = ttsData.avatar_id;\nlet avatarType = ttsData.avatar_type;\n\n// If static_image, we MUST have a dynamic ID now\nif (avatarId === 'static_image') {\n    if (dynamicPhotoId) {\n        avatarType = 'talking_photo';\n        avatarId = dynamicPhotoId;\n    } else {\n        // Fallback\n        console.log('Missing dynamic photo upload, falling back to default avatar');\n        avatarId = 'Anna_public_3_20240108';\n        avatarType = 'avatar';\n    }\n}\n\nreturn [{\n  json: {\n    asset_id: ttsData.asset_id,\n    script_id: ttsData.script_id,\n    content_idea_id: ttsData.content_idea_id,\n    voice_path: `/home/node/.n8n-files/assets/audio/${ttsData.script_id}_voice.mp3`,\n    duration_seconds: Math.round(duration * 10) / 10,\n    broll_paths: ttsData.broll_paths,\n    avatar_id: avatarId,\n    avatar_type: avatarType,\n    audio_asset_id: uploadResult.data.id\n  }\n}];"
       },
       "id": "prepare-heygen-data",
       "name": "Prepare HeyGen Data",
@@ -1160,7 +1162,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"video_inputs\": [\n    {\n      \"character\": {\n        \"type\": \"{{ $json.avatar_id === 'static_image' ? 'talking_photo' : 'avatar' }}\",\n        \"avatar_id\": \"{{ $json.avatar_id === 'static_image' ? ($env.HEYGEN_TALKING_PHOTO_ID || '12345') : $json.avatar_id }}\",\n        \"avatar_style\": \"normal\",\n        \"talking_photo_id\": \"{{ $json.avatar_id === 'static_image' ? ($env.HEYGEN_TALKING_PHOTO_ID || '') : '' }}\"\n      },\n      \"voice\": {\n        \"type\": \"audio\",\n        \"audio_asset_id\": \"{{ $json.audio_asset_id }}\"\n      },\n      \"background\": {\n        \"type\": \"color\",\n        \"value\": \"#00FF00\"\n      }\n    }\n  ],\n  \"dimension\": {\n    \"width\": 1080,\n    \"height\": 1920\n  },\n  \"aspect_ratio\": \"9:16\"\n}",
+        "jsonBody": "={{\n{\n  \"video_inputs\": [\n    {\n      \"character\": $json.avatar_type === 'talking_photo'\n        ? {\n            \"type\": \"talking_photo\",\n            \"talking_photo_id\": $json.avatar_id\n          }\n        : {\n            \"type\": \"avatar\",\n            \"avatar_id\": $json.avatar_id,\n            \"avatar_style\": \"normal\"\n          },\n      \"voice\": {\n        \"type\": \"audio\",\n        \"audio_asset_id\": $json.audio_asset_id\n      },\n      \"background\": {\n        \"type\": \"color\",\n        \"value\": \"#00FF00\"\n      }\n    }\n  ],\n  \"dimension\": {\n    \"width\": 720,\n    \"height\": 1280\n  },\n  \"aspect_ratio\": \"9:16\"\n}\n}}",
         "options": {
           "timeout": 60000
         }
@@ -1278,38 +1280,6 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "check-completed",
-              "leftValue": "={{ $json.data?.status }}",
-              "rightValue": "completed",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-heygen-complete",
-      "name": "Completed?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        1160,
-        1760
-      ]
-    },
-    {
-      "parameters": {
         "jsCode": "// Increment retry counter and check max\nconst prevData = $('Extract Video ID').first().json;\nconst checkData = $input.first().json;\nconst retryCount = (prevData.retry_count || 0) + 1;\nconst maxRetries = prevData.max_retries || 20;\n\nif (retryCount > maxRetries) {\n  throw new Error(`HeyGen timeout: Video ${prevData.heygen_video_id} did not complete after ${maxRetries} retries (${maxRetries * 15 / 60} minutes). Last status: ${checkData.data?.status}`);\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    retry_count: retryCount,\n    last_status: checkData.data?.status\n  }\n}];"
       },
       "id": "increment-retry",
@@ -1323,7 +1293,7 @@
     },
     {
       "parameters": {
-        "amount": 15,
+        "amount": 60,
         "unit": "seconds"
       },
       "id": "wait-retry",
@@ -1390,7 +1360,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build FFmpeg command for video compositing\nconst extractNode = $('Extract Video ID').first();\n// Fallback to Prepare HeyGen Data if skipped (Idempotency)\nconst sourceData = extractNode ? extractNode.json : $('Prepare HeyGen Data').first().json;\n\nconst scriptId = sourceData.script_id;\n\nconst avatarPath = `/home/node/.n8n-files/assets/avatar/${scriptId}_avatar.mp4`;\nconst brollPaths = sourceData.broll_paths || [];\nconst outputPath = `/home/node/.n8n-files/assets/output/${scriptId}_combined.mp4`;\n\n// Build FFmpeg filter complex\nlet inputs = `-i ${avatarPath}`;\nlet filterComplex = '';\n\nif (brollPaths.length > 0) {\n  // Add B-roll inputs\n  brollPaths.forEach(path => {\n    inputs += ` -i ${path}`;\n  });\n  \n  // Concat B-roll clips\n  const brollInputs = brollPaths.map((_, i) => `[${i + 1}:v]`).join('');\n  filterComplex = `${brollInputs}concat=n=${brollPaths.length}:v=1:a=0[broll];`;\n  filterComplex += `[broll]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[broll_scaled];`;\n  filterComplex += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  filterComplex += `[broll_scaled][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]`;\n} else {\n  // No B-roll - solid background\n  filterComplex = `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  filterComplex += `color=c=#1a1a2e:s=1080x1920:d=120[bg];`;\n  filterComplex += `[bg][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]`;\n}\n\nconst ffmpegCmd = `ffmpeg -y ${inputs} -filter_complex \"${filterComplex}\" -map \"[outv]\" -map 0:a? -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart ${outputPath}`;\n\nreturn [{\n  json: {\n    asset_id: sourceData.asset_id,\n    script_id: scriptId,\n    content_idea_id: sourceData.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath\n  }\n}];"
+        "jsCode": "const fs = require('fs');\nconst extractNode = $('Extract Video ID').first();\n// Robust fallback if extraction hasn't happened yet (idempotency)\nconst sourceData = extractNode ? extractNode.json : $('Prepare HeyGen Data').first().json;\nconst scriptId = sourceData.script_id;\n\n// --- FILE PATHS ---\n// Ensure these match your Docker volume mapping\nconst avatarPath = `/home/node/.n8n-files/assets/avatar/${scriptId}_avatar.mp4`;\nconst outputPath = `/home/node/.n8n-files/assets/output/${scriptId}_combined.mp4`;\nconst musicPath = `/home/node/.n8n-files/assets/music/background_music.mp3`; \nconst brollPaths = sourceData.broll_paths || [];\n\n// --- BUILD INPUTS ---\nlet inputs = `-i ${avatarPath}`; // Input 0: The Avatar Video\nlet inputCount = 1;\n\n// SAFETY CHECK: Does the music file actually exist?\nlet musicExists = false;\ntry {\n    if (fs.existsSync(musicPath)) {\n        musicExists = true;\n    }\n} catch (e) {\n    console.log(\"Music check failed, proceeding without music.\");\n}\n\nlet musicIndex = -1;\n\nif (musicExists) {\n  // -stream_loop -1 makes the music repeat if the video is longer than the song\n  inputs += ` -stream_loop -1 -i ${musicPath}`;\n  musicIndex = inputCount;\n  inputCount++;\n}\n\n// Add B-Roll Inputs\nbrollPaths.forEach(path => {\n  inputs += ` -i ${path}`;\n});\nconst brollStartIndex = inputCount;\n\n// --- BUILD FILTER COMPLEX ---\nlet fc = '';\n\n// 1. VIDEO COMPOSITING\nif (brollPaths.length > 0) {\n  // Create a chain of B-Roll clips\n  const brollInputs = brollPaths.map((_, i) => `[${brollStartIndex + i}:v]`).join('');\n  \n  // Concatenate B-Roll\n  fc += `${brollInputs}concat=n=${brollPaths.length}:v=1:a=0[broll_raw];`;\n  \n  // Scale and Crop B-Roll to 9:16 (1080x1920) to match Avatar\n  fc += `[broll_raw]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[broll];`;\n  \n  // Chroma Key the Avatar (Green Screen Removal)\n  fc += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  \n  // Overlay Avatar on top of B-Roll\n  fc += `[broll][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv];`;\n} else {\n  // Fallback: If no B-Roll, put Avatar over a solid background\n  fc += `[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed];`;\n  fc += `color=c=#1a1a2e:s=1080x1920:d=120[bg];`;\n  fc += `[bg][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv];`;\n}\n\n// 2. AUDIO MIXING\nif (musicExists) {\n  // [0:a] is the Voice (Avatar)\n  // [musicIndex:a] is the Background Music\n  // volume=0.1 drops music to 10% so voice is clear\n  // amix mixes them. duration=first cuts audio when video ends.\n  fc += `[${musicIndex}:a]volume=0.1[music_low];[0:a][music_low]amix=inputs=2:duration=first[outa]`;\n} else {\n  // If no music, just pass the voice through as stereo\n  fc += `[0:a]aformat=channel_layouts=stereo[outa]`;\n}\n\n// --- FINAL COMMAND ---\nconst ffmpegCmd = `ffmpeg -y ${inputs} -filter_complex \"${fc}\" -map \"[outv]\" -map \"[outa]\" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart ${outputPath}`;\n\nreturn [{\n  json: {\n    asset_id: sourceData.asset_id,\n    script_id: scriptId,\n    content_idea_id: sourceData.content_idea_id,\n    ffmpeg_command: ffmpegCmd,\n    output_path: outputPath\n  }\n}];"
       },
       "id": "build-ffmpeg-cmd",
       "name": "Build FFmpeg Command",
@@ -2000,6 +1970,131 @@
         "inputDataFieldName": "data",
         "dataPropertyName": "data"
       }
+    },
+    {
+      "parameters": {
+        "errorMessage": "HeyGen Generation Failed",
+        "errorDescription": "={{ $json.data.error || $json.data.detail || 'Unknown Error' }}"
+      },
+      "id": "stop-heygen-error",
+      "name": "Stop on Failure",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        1900
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-is-photo",
+              "leftValue": "={{ $('Prepare TTS Text').first().json.avatar_id }}",
+              "rightValue": "static_image",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-is-photo",
+      "name": "Is Talking Photo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        1400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Prepare TTS Text').first().json.config_image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-char-image",
+      "name": "Download Character Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        1300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://upload.heygen.com/v1/talking_photo?name=avatar.jpg",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "binaryPropertyName": "data",
+        "options": {},
+        "inputDataFieldName": "data"
+      },
+      "id": "upload-talking-photo",
+      "name": "Upload Talking Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        1300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "heygen",
+          "name": "heygen"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.data.status }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "completed",
+              "output": 0
+            },
+            {
+              "value2": "processing",
+              "output": 1
+            },
+            {
+              "value2": "pending",
+              "output": 1
+            }
+          ]
+        },
+        "fallbackOutput": 2
+      },
+      "id": "route-status-switch",
+      "name": "Route Status",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1160,
+        1760
+      ]
     }
   ],
   "connections": {
@@ -2667,25 +2762,7 @@
       "main": [
         [
           {
-            "node": "Completed?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Completed?": {
-      "main": [
-        [
-          {
-            "node": "Download Avatar",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Increment Retry",
+            "node": "Route Status",
             "type": "main",
             "index": 0
           }
@@ -3001,7 +3078,72 @@
       "main": [
         [
           {
+            "node": "Is Talking Photo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Talking Photo?": {
+      "main": [
+        [
+          {
+            "node": "Download Character Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Prepare HeyGen Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Character Image": {
+      "main": [
+        [
+          {
+            "node": "Upload Talking Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Talking Photo": {
+      "main": [
+        [
+          {
+            "node": "Prepare HeyGen Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Status": {
+      "main": [
+        [
+          {
+            "node": "Download Avatar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Increment Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop on Failure",
             "type": "main",
             "index": 0
           }

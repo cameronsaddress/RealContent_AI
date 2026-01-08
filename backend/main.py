@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, File, UploadFile, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,9 @@ import uuid
 from datetime import datetime
 
 import httpx
+import shutil
+import json
+from pathlib import Path
 from models import (
     get_db, ContentIdea as ContentIdeaModel, Script as ScriptModel,
     Asset as AssetModel, Published as PublishedModel, Analytics as AnalyticsModel,
@@ -55,6 +58,8 @@ app.add_middleware(
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount assets for media playback (Music, Videos)
+app.mount("/assets", StaticFiles(directory="/app/assets"), name="assets")
 
 @app.get("/")
 def root():
@@ -797,26 +802,219 @@ async def generate_avatar_image(req: AvatarGenerationRequest, db: Session = Depe
             with open(file_path, "wb") as f:
                 f.write(image_data)
                 
-            local_url = f"http://localhost:8000/static/avatars/{filename}"
+            # Construct URL
+            # N8N_HOST env var is 100.83.153.43 (for example), port 8000
+            # Ideally clients use relative or construct full URL
+            image_url = f"/static/avatars/{filename}"
             
-            # Return relative path so frontend can construct the full URL
-            # The frontend should prepend the API host, or we can use a relative protocol if served from same origin.
-            # But here they are on different ports.
-            # Returning relative path starting with /static
-            relative_url = f"/static/avatars/{filename}"
+            return AvatarGenerationResponse(image_url=image_url)
             
-            # Create Asset Record in DB for "Assets" page visibility
-            # We use script_id=None to indicate a global/library asset
-            new_asset = AssetModel(
-                script_id=None,
-                avatar_video_path=relative_url, # Store relative path or full? relative is safer for migrations.
-                status=DBContentStatus.avatar_ready,
-                created_at=datetime.utcnow()
-            )
-            db.add(new_asset)
-            db.commit()
+        except httpx.HTTPError as e:
+            msg = f"OpenAI API Error: {str(e)}"
+            if e.response:
+                msg += f" - Response: {e.response.text}"
+            print(msg)
+            return JSONResponse(status_code=500, content={"detail": msg})
 
-            return AvatarGenerationResponse(image_url=relative_url)
-        except Exception as e:
-            print(f"Image Gen Error: {e}")
-            raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+@app.post("/api/upload/avatar")
+async def upload_avatar_image(file: UploadFile = File(...)):
+    try:
+        AVATAR_DIR = os.path.join("static", "avatars")
+        os.makedirs(AVATAR_DIR, exist_ok=True)
+        
+        # Generate unique filename
+        ext = os.path.splitext(file.filename)[1] or ".png"
+        filename = f"{uuid.uuid4()}{ext}"
+        file_path = os.path.join(AVATAR_DIR, filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        return {"image_url": f"/static/avatars/{filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/avatar-images")
+def list_avatar_images():
+    AVATAR_DIR = os.path.join("static", "avatars")
+    if not os.path.exists(AVATAR_DIR):
+        return {"images": []}
+        
+    try:
+        # Sort by creation time (newest first)
+        files = []
+        with os.scandir(AVATAR_DIR) as entries:
+            for entry in entries:
+                if entry.is_file() and entry.name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    files.append({
+                        "name": entry.name,
+                        "url": f"/static/avatars/{entry.name}",
+                        "created_at": entry.stat().st_mtime
+                    })
+        
+        files.sort(key=lambda x: x["created_at"], reverse=True)
+        return {"images": files}
+    except Exception as e:
+        print(f"Error listing avatars: {e}")
+        return {"images": []}
+
+
+# ==================== Music Management ====================
+
+MUSIC_DIR = Path("/app/assets/music")
+MUSIC_STATE_FILE = MUSIC_DIR / "custom_state.json"
+ACTIVE_MUSIC_FILE = MUSIC_DIR / "background_music.mp3"
+
+def get_active_music_filename():
+    if not MUSIC_STATE_FILE.exists():
+        return None
+    try:
+        with open(MUSIC_STATE_FILE, 'r') as f:
+            data = json.load(f)
+            return data.get('active_filename')
+    except:
+        return None
+
+def set_active_music_filename(filename):
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    with open(MUSIC_STATE_FILE, 'w') as f:
+        json.dump({'active_filename': filename}, f)
+
+@app.post("/api/music/upload")
+async def upload_music(file: UploadFile = File(...)):
+    """Upload background music, save to library, and set as active."""
+    ALLOWED_TYPES = ["audio/mpeg", "audio/mp3"]
+    # Check mime or extension
+    if file.content_type not in ALLOWED_TYPES and not file.filename.endswith(".mp3"):
+        pass # Allow loose checking
+        
+    if not file.filename.lower().endswith(".mp3"):
+         raise HTTPException(status_code=400, detail="Only MP3 files are allowed")
+
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Sanitize filename (basic)
+    safe_filename = "".join([c for c in file.filename if c.isalpha() or c.isdigit() or c in (' ', '.', '_', '-')]).strip()
+    if not safe_filename:
+        safe_filename = f"track_{uuid.uuid4().hex[:8]}.mp3"
+        
+    destination = MUSIC_DIR / safe_filename
+    
+    # Save to library
+    try:
+        with destination.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+        
+    # Activate (copy to background_music.mp3)
+    try:
+        shutil.copy2(destination, ACTIVE_MUSIC_FILE)
+        set_active_music_filename(safe_filename)
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=f"Failed to activate track: {str(e)}")
+
+    return {
+        "filename": safe_filename,
+        "status": "uploaded_and_activated",
+        "path": str(destination)
+    }
+
+@app.get("/api/music/files")
+def list_music_files():
+    """List all MP3 files in library"""
+    if not MUSIC_DIR.exists():
+        return {"files": []}
+        
+    files = []
+    active_filename = get_active_music_filename()
+    
+    # Legacy Migration: If no state but background_music.mp3 exists, loop might return empty.
+    # We want to "import" the existing background_music.mp3 into the library.
+    if not active_filename and (MUSIC_DIR / "background_music.mp3").exists():
+        # Check if we have any OTHER mp3s (if so, maybe we just lost state, don't blindly import)
+        # But if ONLY background_music.mp3 exists, it's definitely a legacy state.
+        has_library_files = False
+        with os.scandir(MUSIC_DIR) as entries:
+            for entry in entries:
+                if entry.is_file() and entry.name.endswith('.mp3') and entry.name != "background_music.mp3":
+                    has_library_files = True
+                    break
+        
+        if not has_library_files:
+            # Import legacy file
+            legacy_name = f"legacy_track_{int(datetime.utcnow().timestamp())}.mp3"
+            try:
+                shutil.copy2(MUSIC_DIR / "background_music.mp3", MUSIC_DIR / legacy_name)
+                set_active_music_filename(legacy_name)
+                active_filename = legacy_name # Update local var for the list loop below
+            except Exception as e:
+                print(f"Failed to migrate legacy track: {e}")
+
+    
+    # If no state file, but background_music.mp3 exists, we don't know source. 
+    # But we can still list files.
+    
+    try:
+        with os.scandir(MUSIC_DIR) as entries:
+            for entry in entries:
+                if entry.is_file() and entry.name.lower().endswith('.mp3'):
+                    # Skip the actual active file pointer if it shows up (it's named background_music.mp3)
+                    if entry.name == "background_music.mp3":
+                        continue
+                        
+                    files.append({
+                        "filename": entry.name,
+                        "url": f"/assets/music/{entry.name}",
+                        "is_active": (entry.name == active_filename),
+                        "size": entry.stat().st_size,
+                        "created_at": entry.stat().st_mtime
+                    })
+        
+        files.sort(key=lambda x: x["created_at"], reverse=True)
+        return {"files": files}
+    except Exception as e:
+        print(f"Error listing music: {e}")
+        return {"files": []}
+
+@app.post("/api/music/activate")
+async def activate_music(request: Request):
+    """Set a specific library file as the active background track"""
+    try:
+        body = await request.json()
+        filename = body.get("filename")
+    except:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        
+    if not filename:
+        raise HTTPException(status_code=400, detail="Filename required")
+        
+    source_path = MUSIC_DIR / filename
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        shutil.copy2(source_path, ACTIVE_MUSIC_FILE)
+        set_active_music_filename(filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to activate: {str(e)}")
+        
+    return {"status": "activated", "active_filename": filename}
+
+@app.get("/api/music/info")
+def get_music_info():
+    """Get status of the active background music file"""
+    if not ACTIVE_MUSIC_FILE.exists():
+        return {"exists": False}
+    
+    active_filename = get_active_music_filename() or "Unknown Source"
+    
+    stat = ACTIVE_MUSIC_FILE.stat()
+    return {
+        "exists": True,
+        "filename": active_filename, # Return the source filename name
+        "size_bytes": stat.st_size,
+        "last_modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        # URL always points to the active file for playback
+        "url": "/assets/music/background_music.mp3" 
+    }
