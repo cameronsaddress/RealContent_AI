@@ -79,6 +79,10 @@ This pipeline automates the complete lifecycle of viral video content creation:
 - **Status-Driven**: Each workflow triggers the next based on database status changes
 - **Error Resilient**: Comprehensive error handling with retry logic and status tracking
 - **Cost-Effective**: ~$0.75-1.40 per video, leveraging self-hosted video processing
+- **Configurable AI Character**: Custom voice (ElevenLabs) and avatar (HeyGen) selection via UI
+- **Greenscreen Support**: Toggle greenscreen background for avatar compositing
+- **Direct Link Submission**: Paste any social media video URL to process through the pipeline
+- **Source Video Download**: Uses yt-dlp to download original viral videos as backgrounds
 
 ---
 
@@ -736,6 +740,10 @@ N8N_PORT=5678
 | `/scripts` | Script viewing and editing |
 | `/assets` | Asset tracking with status indicators |
 | `/published` | Published content with platform links |
+| `/scraper` | Content scraping configuration and direct link submission |
+| `/settings` | Pipeline settings (video, audio, LLM configuration) |
+| `/character` | AI character configuration (voice, avatar selection) |
+| `/music` | Background music library management |
 
 ### Features
 
@@ -744,6 +752,10 @@ N8N_PORT=5678
 - **Scripts**: View generated scripts, edit if needed, see platform captions
 - **Assets**: Track progress through pipeline, view file paths, retry failed items
 - **Published**: See all platform URLs, view analytics
+- **Scraper**: Configure scraping niches/hashtags, submit direct video links from any platform
+- **Settings**: Configure video output (resolution, codec, greenscreen), audio mixing, LLM prompts
+- **AI Character**: Select ElevenLabs voice and HeyGen avatar for video generation
+- **Music Manager**: Upload and manage background music tracks
 
 ### Triggering Workflows from UI
 
@@ -797,7 +809,11 @@ await fetch('http://100.83.153.43:5678/webhook/publish-video', {
 │           ├── ContentIdeas.js # Idea management
 │           ├── Scripts.js      # Script viewing
 │           ├── Assets.js       # Asset tracking
-│           └── Published.js    # Published content
+│           ├── Published.js    # Published content
+│           ├── Scraper.js      # Scraping config & direct links
+│           ├── Settings.js     # Pipeline settings (video/audio/LLM)
+│           ├── Character.js    # AI character (voice/avatar)
+│           └── MusicManager.js # Background music library
 │
 ├── workflows/                  # n8n workflow JSON exports
 │   ├── 01-scrape.json
@@ -1097,4 +1113,4 @@ Private repository. All rights reserved.
 
 ---
 
-*Last updated: January 2026*
+*Last updated: January 9, 2026*

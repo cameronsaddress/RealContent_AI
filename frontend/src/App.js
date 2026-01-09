@@ -8,6 +8,7 @@ import Scripts from './pages/Scripts';
 import Assets from './pages/Assets';
 import Published from './pages/Published';
 import MusicManager from './pages/MusicManager';
+import Settings from './pages/Settings';
 import './App.css';
 
 function App() {
@@ -42,6 +43,9 @@ function App() {
           <li>
             <NavLink to="/published">Published</NavLink>
           </li>
+          <li>
+            <NavLink to="/settings">Settings</NavLink>
+          </li>
         </ul>
         <div className="nav-footer">
           <a href="http://100.83.153.43:5678" target="_blank" rel="noopener noreferrer">
@@ -59,6 +63,7 @@ function App() {
           <Route path="/assets" element={<Assets />} />
           <Route path="/music" element={<MusicManager />} />
           <Route path="/published" element={<Published />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

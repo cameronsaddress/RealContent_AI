@@ -224,4 +224,40 @@ export const getAvatarImages = async () => {
   return data;
 };
 
+// Pipeline Settings
+export const getAudioSettings = async () => {
+  const { data } = await api.get('/api/settings/audio');
+  return data;
+};
+
+export const updateAudioSettings = async (settings) => {
+  const { data } = await api.put('/api/settings/audio', settings);
+  return data;
+};
+
+export const getVideoSettings = async () => {
+  const { data } = await api.get('/api/settings/video');
+  return data;
+};
+
+export const updateVideoSettings = async (settings) => {
+  const { data } = await api.put('/api/settings/video', settings);
+  return data;
+};
+
+export const getLLMSettings = async () => {
+  const { data } = await api.get('/api/settings/llm');
+  return data;
+};
+
+export const updateLLMSetting = async (key, update) => {
+  const { data } = await api.put(`/api/settings/llm/${key}`, update);
+  return data;
+};
+
+export const getAllSettings = async () => {
+  const { data } = await api.get('/api/settings/all');
+  return data;
+};
+
 export default api;

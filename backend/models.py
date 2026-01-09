@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Text, Float, DateTime, ForeignKey,
+    Column, Integer, String, Text, Float, DateTime, ForeignKey, Boolean,
     Enum as SQLEnum, CheckConstraint, create_engine
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -218,6 +218,45 @@ class SystemSettings(Base):
 
     key = Column(String(50), primary_key=True)
     value = Column(JSONB)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ==================== PIPELINE SETTINGS ====================
+
+class AudioSettings(Base):
+    __tablename__ = "audio_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    original_volume = Column(Float, default=0.7)
+    avatar_volume = Column(Float, default=1.0)
+    ducking_enabled = Column(Boolean, default=True)
+    avatar_delay_seconds = Column(Float, default=3.0)
+    duck_to_percent = Column(Float, default=0.5)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class VideoSettings(Base):
+    __tablename__ = "video_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    output_width = Column(Integer, default=1080)
+    output_height = Column(Integer, default=1920)
+    output_format = Column(String, default='mp4')
+    codec = Column(String, default='libx264')
+    crf = Column(Integer, default=18)
+    preset = Column(String, default='slow')
+    greenscreen_enabled = Column(Boolean, default=True)
+    greenscreen_color = Column(String, default='#00FF00')
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class LLMSettings(Base):
+    __tablename__ = "llm_settings"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True, nullable=False)
+    value = Column(Text, nullable=False)
+    description = Column(String)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

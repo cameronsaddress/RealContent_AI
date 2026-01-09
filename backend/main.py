@@ -22,7 +22,10 @@ from models import (
     PillarType as DBPillarType, PlatformType as DBPlatformType,
     ScrapeRun as ScrapeRunModel, NichePreset as NichePresetModel,
     SystemSettings as SystemSettingsModel,
-    ScrapeRunStatus as DBScrapeRunStatus, Base, engine
+    ScrapeRunStatus as DBScrapeRunStatus, Base, engine,
+    AudioSettings as AudioSettingsModel,
+    VideoSettings as VideoSettingsModel,
+    LLMSettings as LLMSettingsModel
 )
 from schemas import (
     ContentIdea, ContentIdeaCreate, ContentIdeaUpdate,
@@ -34,7 +37,10 @@ from schemas import (
     ScrapeRun, ScrapeRunCreate, ScrapeResponse, ScrapeRunStatus,
     NichePreset, NichePresetCreate,
     SystemSettings, SystemSettingsCreate, CharacterConfig,
-    AvatarGenerationRequest, AvatarGenerationResponse
+    AvatarGenerationRequest, AvatarGenerationResponse,
+    AudioSettingsResponse, AudioSettingsUpdate,
+    VideoSettingsResponse, VideoSettingsUpdate,
+    LLMSettingResponse, LLMSettingUpdate, AllSettingsResponse
 )
 
 app = FastAPI(
@@ -1006,9 +1012,9 @@ def get_music_info():
     """Get status of the active background music file"""
     if not ACTIVE_MUSIC_FILE.exists():
         return {"exists": False}
-    
+
     active_filename = get_active_music_filename() or "Unknown Source"
-    
+
     stat = ACTIVE_MUSIC_FILE.stat()
     return {
         "exists": True,
@@ -1016,5 +1022,126 @@ def get_music_info():
         "size_bytes": stat.st_size,
         "last_modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         # URL always points to the active file for playback
-        "url": "/assets/music/background_music.mp3" 
+        "url": "/assets/music/background_music.mp3"
+    }
+
+
+# ==================== PIPELINE SETTINGS ====================
+
+@app.get("/api/settings/audio", response_model=AudioSettingsResponse)
+def get_audio_settings(db: Session = Depends(get_db)):
+    """Get current audio settings"""
+    settings = db.query(AudioSettingsModel).filter(AudioSettingsModel.id == 1).first()
+    if not settings:
+        # Create default settings if not exists
+        settings = AudioSettingsModel(id=1)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@app.put("/api/settings/audio", response_model=AudioSettingsResponse)
+def update_audio_settings(update: AudioSettingsUpdate, db: Session = Depends(get_db)):
+    """Update audio settings"""
+    settings = db.query(AudioSettingsModel).filter(AudioSettingsModel.id == 1).first()
+    if not settings:
+        settings = AudioSettingsModel(id=1)
+        db.add(settings)
+
+    for field, value in update.model_dump(exclude_unset=True).items():
+        setattr(settings, field, value)
+
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+@app.get("/api/settings/video", response_model=VideoSettingsResponse)
+def get_video_settings(db: Session = Depends(get_db)):
+    """Get current video settings"""
+    settings = db.query(VideoSettingsModel).filter(VideoSettingsModel.id == 1).first()
+    if not settings:
+        settings = VideoSettingsModel(id=1)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@app.put("/api/settings/video", response_model=VideoSettingsResponse)
+def update_video_settings(update: VideoSettingsUpdate, db: Session = Depends(get_db)):
+    """Update video settings"""
+    settings = db.query(VideoSettingsModel).filter(VideoSettingsModel.id == 1).first()
+    if not settings:
+        settings = VideoSettingsModel(id=1)
+        db.add(settings)
+
+    for field, value in update.model_dump(exclude_unset=True).items():
+        setattr(settings, field, value)
+
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+@app.get("/api/settings/llm")
+def get_llm_settings(db: Session = Depends(get_db)):
+    """Get all LLM prompt settings"""
+    settings = db.query(LLMSettingsModel).all()
+    return [{"key": s.key, "value": s.value, "description": s.description, "updated_at": s.updated_at} for s in settings]
+
+
+@app.get("/api/settings/llm/{key}")
+def get_llm_setting(key: str, db: Session = Depends(get_db)):
+    """Get a specific LLM prompt by key"""
+    setting = db.query(LLMSettingsModel).filter(LLMSettingsModel.key == key).first()
+    if not setting:
+        raise HTTPException(404, f"LLM setting '{key}' not found")
+    return {"key": setting.key, "value": setting.value, "description": setting.description}
+
+
+@app.put("/api/settings/llm/{key}")
+def update_llm_setting(key: str, update: LLMSettingUpdate, db: Session = Depends(get_db)):
+    """Update a specific LLM prompt"""
+    setting = db.query(LLMSettingsModel).filter(LLMSettingsModel.key == key).first()
+    if not setting:
+        # Create new setting if doesn't exist
+        setting = LLMSettingsModel(key=key, value=update.value or '', description=update.description)
+        db.add(setting)
+    else:
+        if update.value is not None:
+            setting.value = update.value
+        if update.description is not None:
+            setting.description = update.description
+
+    db.commit()
+    db.refresh(setting)
+    return {"key": setting.key, "value": setting.value, "description": setting.description}
+
+
+@app.get("/api/settings/all")
+def get_all_settings(db: Session = Depends(get_db)):
+    """Get all settings in one call (for n8n workflow)"""
+    audio = db.query(AudioSettingsModel).filter(AudioSettingsModel.id == 1).first()
+    video = db.query(VideoSettingsModel).filter(VideoSettingsModel.id == 1).first()
+    llm = db.query(LLMSettingsModel).all()
+
+    return {
+        "audio": {
+            "original_volume": audio.original_volume if audio else 0.7,
+            "avatar_volume": audio.avatar_volume if audio else 1.0,
+            "ducking_enabled": audio.ducking_enabled if audio else True,
+            "avatar_delay_seconds": audio.avatar_delay_seconds if audio else 3.0,
+            "duck_to_percent": audio.duck_to_percent if audio else 0.5
+        },
+        "video": {
+            "output_width": video.output_width if video else 1080,
+            "output_height": video.output_height if video else 1920,
+            "crf": video.crf if video else 18,
+            "preset": video.preset if video else 'slow',
+            "greenscreen_enabled": video.greenscreen_enabled if video else True,
+            "greenscreen_color": video.greenscreen_color if video else '#00FF00'
+        },
+        "llm": {s.key: s.value for s in llm}
     }

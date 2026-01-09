@@ -392,3 +392,90 @@ class AvatarGenerationRequest(BaseModel):
 
 class AvatarGenerationResponse(BaseModel):
     image_url: str
+
+
+# ==================== AUDIO SETTINGS SCHEMAS ====================
+
+class AudioSettingsBase(BaseModel):
+    original_volume: float = 0.7
+    avatar_volume: float = 1.0
+    ducking_enabled: bool = True
+    avatar_delay_seconds: float = 3.0
+    duck_to_percent: float = 0.5
+
+
+class AudioSettingsUpdate(BaseModel):
+    original_volume: Optional[float] = None
+    avatar_volume: Optional[float] = None
+    ducking_enabled: Optional[bool] = None
+    avatar_delay_seconds: Optional[float] = None
+    duck_to_percent: Optional[float] = None
+
+
+class AudioSettingsResponse(AudioSettingsBase):
+    id: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== VIDEO SETTINGS SCHEMAS ====================
+
+class VideoSettingsBase(BaseModel):
+    output_width: int = 1080
+    output_height: int = 1920
+    output_format: str = 'mp4'
+    codec: str = 'libx264'
+    crf: int = 18
+    preset: str = 'slow'
+    greenscreen_enabled: bool = True
+    greenscreen_color: str = '#00FF00'
+
+
+class VideoSettingsUpdate(BaseModel):
+    output_width: Optional[int] = None
+    output_height: Optional[int] = None
+    output_format: Optional[str] = None
+    codec: Optional[str] = None
+    crf: Optional[int] = None
+    preset: Optional[str] = None
+    greenscreen_enabled: Optional[bool] = None
+    greenscreen_color: Optional[str] = None
+
+
+class VideoSettingsResponse(VideoSettingsBase):
+    id: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== LLM SETTINGS SCHEMAS ====================
+
+class LLMSettingBase(BaseModel):
+    key: str
+    value: str
+    description: Optional[str] = None
+
+
+class LLMSettingUpdate(BaseModel):
+    value: Optional[str] = None
+    description: Optional[str] = None
+
+
+class LLMSettingResponse(LLMSettingBase):
+    id: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== COMBINED SETTINGS ====================
+
+class AllSettingsResponse(BaseModel):
+    audio: Dict[str, Any]
+    video: Dict[str, Any]
+    llm: Dict[str, str]

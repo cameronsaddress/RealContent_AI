@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { runScrape, getScrapeRuns, getNichePresets, createNichePreset, deleteNichePreset } from '../api';
+import { runScrape, getScrapeRuns, getNichePresets, createNichePreset, deleteNichePreset, createContentIdea } from '../api';
 import { format } from 'date-fns';
 
 function Scraper() {
@@ -12,6 +12,13 @@ function Scraper() {
         youtube: false
     });
     const [newPresetName, setNewPresetName] = useState('');
+
+    // Direct link submission state
+    const [directLink, setDirectLink] = useState('');
+    const [directLinkDescription, setDirectLinkDescription] = useState('');
+    const [directLinkPillar, setDirectLinkPillar] = useState('educational_tips');
+    const [directLinkHook, setDirectLinkHook] = useState('');
+    const [submitSuccess, setSubmitSuccess] = useState(false);
 
     // Queries
     const { data: runs, isLoading: runsLoading } = useQuery({
@@ -47,6 +54,47 @@ function Scraper() {
             queryClient.invalidateQueries(['nichePresets']);
         }
     });
+
+    // Direct link submission mutation
+    const directLinkMutation = useMutation({
+        mutationFn: createContentIdea,
+        onSuccess: () => {
+            setDirectLink('');
+            setDirectLinkDescription('');
+            setDirectLinkHook('');
+            setSubmitSuccess(true);
+            setTimeout(() => setSubmitSuccess(false), 3000);
+        }
+    });
+
+    // Detect platform from URL
+    const detectPlatform = (url) => {
+        if (url.includes('x.com') || url.includes('twitter.com')) return 'twitter';
+        if (url.includes('tiktok.com')) return 'tiktok';
+        if (url.includes('instagram.com')) return 'instagram';
+        if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+        if (url.includes('reddit.com')) return 'reddit';
+        if (url.includes('facebook.com')) return 'facebook';
+        if (url.includes('linkedin.com')) return 'linkedin';
+        return 'unknown';
+    };
+
+    const handleDirectLinkSubmit = (e) => {
+        e.preventDefault();
+        if (!directLink) return;
+
+        const platform = detectPlatform(directLink);
+
+        directLinkMutation.mutate({
+            source_url: directLink,
+            source_platform: platform,
+            original_text: directLinkDescription || `Video from ${platform}`,
+            suggested_hook: directLinkHook || '',
+            pillar: directLinkPillar,
+            viral_score: 8,
+            status: 'approved'  // Auto-approve so it goes to pipeline
+        });
+    };
 
     const handleStartScrape = (e) => {
         e.preventDefault();
@@ -206,6 +254,87 @@ function Scraper() {
                             ))}
                             {presets?.length === 0 && <li className="empty-text">No presets saved</li>}
                         </ul>
+                    </div>
+
+                    {/* Direct Link Submission */}
+                    <div className="card direct-link-card">
+                        <h2>Direct Video Link</h2>
+                        <p className="card-description">
+                            Paste a video URL from X, TikTok, Instagram, or YouTube to add it directly to the pipeline.
+                        </p>
+                        <form onSubmit={handleDirectLinkSubmit}>
+                            <div className="form-group">
+                                <label className="form-label">Video URL</label>
+                                <input
+                                    type="url"
+                                    className="form-input"
+                                    placeholder="https://x.com/user/status/123..."
+                                    value={directLink}
+                                    onChange={(e) => setDirectLink(e.target.value)}
+                                />
+                                {directLink && (
+                                    <span className="detected-platform">
+                                        Platform: <strong>{detectPlatform(directLink)}</strong>
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Description (optional)</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    placeholder="What's this video about?"
+                                    value={directLinkDescription}
+                                    onChange={(e) => setDirectLinkDescription(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Hook (optional)</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    placeholder="Suggested hook for the video"
+                                    value={directLinkHook}
+                                    onChange={(e) => setDirectLinkHook(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Content Pillar</label>
+                                <select
+                                    className="form-input"
+                                    value={directLinkPillar}
+                                    onChange={(e) => setDirectLinkPillar(e.target.value)}
+                                >
+                                    <option value="market_intelligence">Market Intelligence</option>
+                                    <option value="educational_tips">Educational Tips</option>
+                                    <option value="lifestyle_local">Lifestyle / Local</option>
+                                    <option value="brand_humanization">Brand Humanization</option>
+                                </select>
+                            </div>
+
+                            <button
+                                type="submit"
+                                className="btn btn-success btn-block"
+                                disabled={directLinkMutation.isPending || !directLink}
+                            >
+                                {directLinkMutation.isPending ? 'Submitting...' : 'Add to Pipeline'}
+                            </button>
+
+                            {submitSuccess && (
+                                <div className="success-message">
+                                    Video added successfully! It will be processed shortly.
+                                </div>
+                            )}
+
+                            {directLinkMutation.isError && (
+                                <div className="error-message">
+                                    {directLinkMutation.error?.response?.data?.detail || 'Failed to add video'}
+                                </div>
+                            )}
+                        </form>
                     </div>
                 </div>
 
@@ -418,9 +547,59 @@ function Scraper() {
         .platform-dot.instagram { background-color: #E1306C; }
         .platform-dot.youtube { background-color: #FF0000; }
         .error-message {
-          color: red;
-          margin-top: 10px;
+          color: var(--error);
+          background: rgba(239, 68, 68, 0.1);
+          padding: 10px 14px;
+          border-radius: 6px;
+          margin-top: 12px;
           font-size: 14px;
+          border: 1px solid var(--error);
+        }
+        .success-message {
+          color: var(--success);
+          background: rgba(16, 185, 129, 0.1);
+          padding: 10px 14px;
+          border-radius: 6px;
+          margin-top: 12px;
+          font-size: 14px;
+          border: 1px solid var(--success);
+        }
+        .direct-link-card {
+          border-left: 3px solid var(--success);
+        }
+        .card-description {
+          color: var(--text-secondary);
+          font-size: 0.85rem;
+          margin-bottom: 16px;
+          line-height: 1.5;
+        }
+        .detected-platform {
+          display: inline-block;
+          margin-top: 8px;
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          padding: 4px 10px;
+          background: var(--bg-tertiary);
+          border-radius: 4px;
+        }
+        .detected-platform strong {
+          color: var(--accent-primary);
+          text-transform: capitalize;
+        }
+        .btn-success {
+          background: var(--success);
+          color: white;
+          border: none;
+        }
+        .btn-success:hover {
+          background: #059669;
+        }
+        .btn-success:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        select.form-input {
+          cursor: pointer;
         }
       `}</style>
         </div>
