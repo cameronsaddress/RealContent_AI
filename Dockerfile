@@ -13,7 +13,8 @@ RUN wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-stati
 
 # Create directories for assets
 RUN mkdir -p /home/node/assets/fonts /home/node/assets/logos /home/node/assets/templates \
-    && chown -R node:node /home/node/assets
+    && mkdir -p /home/node/.n8n-files/assets/videos \
+    && chown -R node:node /home/node/assets /home/node/.n8n-files
 
 USER node
 

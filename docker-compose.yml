@@ -98,6 +98,32 @@ services:
     volumes:
       - ./frontend/src:/app/src
 
+  video-processor:
+    build:
+      context: ./video-downloader
+      dockerfile: Dockerfile
+    image: n8n-video-processor:latest
+    container_name: video-processor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./assets/videos:/downloads
+      - ./assets/output:/outputs
+      - ./assets/audio:/audio
+      - ./assets/avatar:/avatar
+      - ./assets/captions:/captions
+      - ./assets/music:/music
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
 volumes:
   n8n_data:
   postgres_data:
