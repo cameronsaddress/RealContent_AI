@@ -112,6 +112,7 @@ class Asset(Base):
     srt_path = Column(Text)
     ass_path = Column(Text)
     avatar_video_path = Column(Text)
+    heygen_video_id = Column(Text)  # Store HeyGen video ID for resume capability
     background_video_path = Column(Text)
     combined_video_path = Column(Text)
     final_video_path = Column(Text)
@@ -229,9 +230,11 @@ class AudioSettings(Base):
     id = Column(Integer, primary_key=True, default=1)
     original_volume = Column(Float, default=0.7)
     avatar_volume = Column(Float, default=1.0)
+    music_volume = Column(Float, default=0.3)
     ducking_enabled = Column(Boolean, default=True)
     avatar_delay_seconds = Column(Float, default=3.0)
     duck_to_percent = Column(Float, default=0.5)
+    music_autoduck = Column(Boolean, default=True)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

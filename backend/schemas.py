@@ -44,12 +44,13 @@ class PlatformType(str, Enum):
 
 # ==================== ASSET SCHEMAS ====================
 class AssetBase(BaseModel):
-    script_id: int
+    script_id: Optional[int] = None
     voiceover_path: Optional[str] = None
     voiceover_duration: Optional[float] = None
     srt_path: Optional[str] = None
     ass_path: Optional[str] = None
     avatar_video_path: Optional[str] = None
+    heygen_video_id: Optional[str] = None
     background_video_path: Optional[str] = None
     combined_video_path: Optional[str] = None
     final_video_path: Optional[str] = None
@@ -67,6 +68,7 @@ class AssetUpdate(BaseModel):
     srt_path: Optional[str] = None
     ass_path: Optional[str] = None
     avatar_video_path: Optional[str] = None
+    heygen_video_id: Optional[str] = None
     background_video_path: Optional[str] = None
     combined_video_path: Optional[str] = None
     final_video_path: Optional[str] = None
@@ -399,17 +401,21 @@ class AvatarGenerationResponse(BaseModel):
 class AudioSettingsBase(BaseModel):
     original_volume: float = 0.7
     avatar_volume: float = 1.0
+    music_volume: float = 0.3
     ducking_enabled: bool = True
     avatar_delay_seconds: float = 3.0
     duck_to_percent: float = 0.5
+    music_autoduck: bool = True
 
 
 class AudioSettingsUpdate(BaseModel):
     original_volume: Optional[float] = None
     avatar_volume: Optional[float] = None
+    music_volume: Optional[float] = None
     ducking_enabled: Optional[bool] = None
     avatar_delay_seconds: Optional[float] = None
     duck_to_percent: Optional[float] = None
+    music_autoduck: Optional[bool] = None
 
 
 class AudioSettingsResponse(AudioSettingsBase):
