@@ -260,4 +260,32 @@ export const getAllSettings = async () => {
   return data;
 };
 
+// Brand Persona Settings
+export const getBrandPersona = async () => {
+  const { data } = await api.get('/api/settings/persona');
+  return data;
+};
+
+export const updateBrandPersona = async (persona) => {
+  const { data } = await api.put('/api/settings/persona', persona);
+  return data;
+};
+
+// New categorized endpoints for Character page
+export const getHeyGenAvatars = async (params = {}) => {
+  const { data } = await api.get('/api/settings/heygen-avatars', { params });
+  return data;
+};
+
+export const getElevenLabsVoices = async () => {
+  const { data } = await api.get('/api/settings/elevenlabs-voices');
+  return data;
+};
+
+// API Credits
+export const getApiCredits = async () => {
+  const { data } = await api.get('/api/credits');
+  return data;
+};
+
 export default api;

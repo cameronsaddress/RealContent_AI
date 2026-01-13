@@ -60,14 +60,25 @@ class ContentIdea(Base):
     id = Column(Integer, primary_key=True, index=True)
     source_url = Column(Text)
     source_platform = Column(SQLEnum(PlatformType, name="platform_type", create_type=False))
-    original_text = Column(Text)
+    original_text = Column(Text)  # Caption/description from the post
+    source_transcription = Column(Text)  # What was actually SAID in the video (Whisper)
+    source_video_path = Column(Text)  # Local path to downloaded source video
     pillar = Column(SQLEnum(PillarType, name="pillar_type", create_type=False))
     viral_score = Column(Integer)
     suggested_hook = Column(Text)
+    why_viral = Column(Text)  # LLM analysis of why it went viral
     status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending)
     error_message = Column(Text)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Engagement metrics from scraping
+    views = Column(Integer, default=0)
+    likes = Column(Integer, default=0)
+    shares = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    author = Column(Text)
+    author_followers = Column(Integer, default=0)
 
     __table_args__ = (
         CheckConstraint('viral_score >= 1 AND viral_score <= 10', name='check_viral_score'),
@@ -250,6 +261,79 @@ class VideoSettings(Base):
     preset = Column(String, default='slow')
     greenscreen_enabled = Column(Boolean, default=True)
     greenscreen_color = Column(String, default='#00FF00')
+
+    # Avatar composition settings
+    avatar_position = Column(String, default='bottom-left')  # bottom-left, bottom-center, bottom-right
+    avatar_scale = Column(Float, default=0.8)  # 0.3 to 1.0 (percentage of screen width)
+    avatar_offset_x = Column(Integer, default=-200)  # horizontal offset (negative = left)
+    avatar_offset_y = Column(Integer, default=500)  # vertical offset (positive = push down below frame)
+
+    # Caption settings
+    caption_style = Column(String, default='karaoke')  # karaoke, static, none
+    caption_font_size = Column(Integer, default=96)  # font size in points
+    caption_font = Column(String, default='Arial')
+    caption_color = Column(String, default='#FFFFFF')  # primary text color
+    caption_highlight_color = Column(String, default='#FFFF00')  # karaoke highlight color
+    caption_outline_color = Column(String, default='#000000')
+    caption_outline_width = Column(Integer, default=5)
+    caption_position_y = Column(Integer, default=850)  # MarginV from bottom in ASS format
+
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BrandPersona(Base):
+    """
+    Brand persona settings for script generation.
+    Defines who the creator is, their tone, values, and content boundaries.
+    """
+    __tablename__ = "brand_persona"
+
+    id = Column(Integer, primary_key=True, default=1)
+
+    # Identity
+    name = Column(String, default="Beth Anderson")
+    title = Column(String, default="Real Estate Expert")
+    location = Column(String, default="North Idaho & Spokane area")
+
+    # Bio/Background (shown to LLM for context)
+    bio = Column(Text, default="A knowledgeable and approachable real estate professional who helps first-time homebuyers and families find their dream homes in the beautiful Pacific Northwest.")
+
+    # Tone & Voice
+    tone = Column(String, default="professional")  # professional, casual, energetic, warm, authoritative
+    energy_level = Column(String, default="warm")  # calm, warm, energetic, high-energy
+    humor_style = Column(String, default="light")  # none, light, playful, witty
+
+    # Values & Approach (what we stand for)
+    core_values = Column(JSONB, default=lambda: [
+        "Honesty and transparency",
+        "Client-first approach",
+        "Education over sales",
+        "Community connection",
+        "Professional excellence"
+    ])
+
+    # Content Boundaries (what we WON'T do)
+    content_boundaries = Column(JSONB, default=lambda: [
+        "No dancing or twerking - we maintain professional dignity",
+        "No clickbait or misleading claims",
+        "No putting down other realtors or competitors",
+        "No political or controversial topics",
+        "No inappropriate language or innuendo"
+    ])
+
+    # How we respond to different content types
+    response_style = Column(Text, default="""When reviewing viral content:
+- If the content is professional and educational: Praise it, add our own insights, and connect it to our local market
+- If the content is entertaining but unprofessional: Acknowledge the entertainment value, then pivot to show a more professional approach
+- If the content has misinformation: Gently correct it while being respectful to the creator
+- If the content is cringe or inappropriate: Focus on the underlying topic, not the presentation style
+- Always provide genuine value - actionable tips, local insights, or helpful information""")
+
+    # Signature phrases/CTAs
+    signature_intro = Column(String, default="Hey neighbors!")
+    signature_cta = Column(String, default="DM me to chat about your home journey in {location}")
+    hashtags = Column(JSONB, default=lambda: ["CDAhomes", "LibertyLake", "NorthIdahoRealEstate", "PNWliving"])
+
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

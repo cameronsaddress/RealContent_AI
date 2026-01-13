@@ -181,11 +181,11 @@ function ContentIdeas() {
                 </th>
                 <th style={{ width: '60px' }}>ID</th>
                 <th style={{ width: '100px' }}>PLATFORM</th>
+                <th style={{ width: '100px' }}>VIEWS</th>
                 <th style={{ width: '140px' }}>PILLAR</th>
                 <th>HOOK</th>
                 <th style={{ width: '80px' }}>SCORE</th>
                 <th style={{ width: '140px' }}>STATUS</th>
-                <th style={{ width: '200px' }}>PIPELINE</th>
                 <th style={{ width: '120px' }}>CREATED</th>
                 <th style={{ width: '120px' }}>ACTIONS</th>
               </tr>
@@ -207,6 +207,17 @@ function ContentIdeas() {
                         {idea.source_platform}
                       </span>
                     )}
+                  </td>
+                  <td>
+                    {idea.views ? (
+                      <span style={{ fontWeight: 500 }}>
+                        {idea.views >= 1000000
+                          ? `${(idea.views / 1000000).toFixed(1)}M`
+                          : idea.views >= 1000
+                            ? `${(idea.views / 1000).toFixed(0)}K`
+                            : idea.views}
+                      </span>
+                    ) : '-'}
                   </td>
                   <td>
                     {idea.pillar && (
@@ -335,6 +346,71 @@ function ContentIdeas() {
                   <label className="form-label">Viral Score</label>
                   <strong>{viewingIdea.viral_score}/10</strong>
                 </div>
+                {(viewingIdea.views > 0 || viewingIdea.likes > 0 || viewingIdea.author) && (
+                  <div className="form-group">
+                    <label className="form-label">Engagement Metrics</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginTop: '8px' }}>
+                      {viewingIdea.views > 0 && (
+                        <div style={{ textAlign: 'center', padding: '8px', background: '#f0f9ff', borderRadius: '6px' }}>
+                          <div style={{ fontSize: '1.2em', fontWeight: 'bold', color: '#0284c7' }}>
+                            {viewingIdea.views >= 1000000
+                              ? `${(viewingIdea.views / 1000000).toFixed(1)}M`
+                              : viewingIdea.views >= 1000
+                                ? `${(viewingIdea.views / 1000).toFixed(0)}K`
+                                : viewingIdea.views}
+                          </div>
+                          <div style={{ fontSize: '0.8em', color: '#666' }}>Views</div>
+                        </div>
+                      )}
+                      {viewingIdea.likes > 0 && (
+                        <div style={{ textAlign: 'center', padding: '8px', background: '#fef2f2', borderRadius: '6px' }}>
+                          <div style={{ fontSize: '1.2em', fontWeight: 'bold', color: '#dc2626' }}>
+                            {viewingIdea.likes >= 1000000
+                              ? `${(viewingIdea.likes / 1000000).toFixed(1)}M`
+                              : viewingIdea.likes >= 1000
+                                ? `${(viewingIdea.likes / 1000).toFixed(0)}K`
+                                : viewingIdea.likes}
+                          </div>
+                          <div style={{ fontSize: '0.8em', color: '#666' }}>Likes</div>
+                        </div>
+                      )}
+                      {viewingIdea.shares > 0 && (
+                        <div style={{ textAlign: 'center', padding: '8px', background: '#f0fdf4', borderRadius: '6px' }}>
+                          <div style={{ fontSize: '1.2em', fontWeight: 'bold', color: '#16a34a' }}>
+                            {viewingIdea.shares >= 1000
+                              ? `${(viewingIdea.shares / 1000).toFixed(0)}K`
+                              : viewingIdea.shares}
+                          </div>
+                          <div style={{ fontSize: '0.8em', color: '#666' }}>Shares</div>
+                        </div>
+                      )}
+                      {viewingIdea.comments > 0 && (
+                        <div style={{ textAlign: 'center', padding: '8px', background: '#fefce8', borderRadius: '6px' }}>
+                          <div style={{ fontSize: '1.2em', fontWeight: 'bold', color: '#ca8a04' }}>
+                            {viewingIdea.comments >= 1000
+                              ? `${(viewingIdea.comments / 1000).toFixed(0)}K`
+                              : viewingIdea.comments}
+                          </div>
+                          <div style={{ fontSize: '0.8em', color: '#666' }}>Comments</div>
+                        </div>
+                      )}
+                    </div>
+                    {viewingIdea.author && (
+                      <div style={{ marginTop: '12px', padding: '8px', background: '#f5f5f5', borderRadius: '6px' }}>
+                        <strong>@{viewingIdea.author}</strong>
+                        {viewingIdea.author_followers > 0 && (
+                          <span style={{ marginLeft: '8px', color: '#666' }}>
+                            ({viewingIdea.author_followers >= 1000000
+                              ? `${(viewingIdea.author_followers / 1000000).toFixed(1)}M`
+                              : viewingIdea.author_followers >= 1000
+                                ? `${(viewingIdea.author_followers / 1000).toFixed(0)}K`
+                                : viewingIdea.author_followers} followers)
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Suggested Hook</label>
                   <p>{viewingIdea.suggested_hook}</p>

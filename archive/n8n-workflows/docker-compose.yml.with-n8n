@@ -1,7 +1,54 @@
 services:
+  n8n:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: n8n-ffmpeg:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=${N8N_PORT}
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://${N8N_HOST}:${N8N_PORT}/
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=UTC
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - DATABASE_URL=${DATABASE_URL}
+      # API Keys for n8n workflows
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - APIFY_API_KEY=${APIFY_API_KEY}
+      - HEYGEN_API_KEY=${HEYGEN_API_KEY}
+      - HEYGEN_AVATAR_ID=${HEYGEN_AVATAR_ID}
+      - HEYGEN_TALKING_PHOTO_ID=${HEYGEN_TALKING_PHOTO_ID}
+      - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - BLOTATO_API_KEY=${BLOTATO_API_KEY}
+      - N8N_PUBLIC_URL=${N8N_PUBLIC_URL}
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
+      - NODE_FUNCTION_ALLOW_EXTERNAL=*
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/workflows
+      - ./assets:/home/node/.n8n-files/assets
+    depends_on:
+      - postgres
+
   postgres:
     image: postgres:16-alpine
-    container_name: SocialGen_postgres
+    container_name: n8n_postgres
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
@@ -15,7 +62,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: SocialGen_redis
+    container_name: n8n_redis
     restart: unless-stopped
     ports:
       - "6380:6379"
@@ -26,7 +73,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: SocialGen_backend
+    container_name: backend
     restart: unless-stopped
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     environment:
@@ -47,6 +94,7 @@ services:
       - DROPBOX_APP_SECRET=${DROPBOX_APP_SECRET}
       - DROPBOX_REFRESH_TOKEN=${DROPBOX_REFRESH_TOKEN}
       - ASSETS_BASE_PATH=/app/assets
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/scrape-trends
     ports:
       - "8000:8000"
     volumes:
@@ -60,7 +108,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: SocialGen_celery_worker
+    container_name: celery-worker
     restart: unless-stopped
     working_dir: /app
     command: celery -A celery_app worker --loglevel=info --concurrency=2
@@ -82,26 +130,18 @@ services:
       - DROPBOX_APP_SECRET=${DROPBOX_APP_SECRET}
       - DROPBOX_REFRESH_TOKEN=${DROPBOX_REFRESH_TOKEN}
       - ASSETS_BASE_PATH=/app/assets
-      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./assets:/app/assets
       - ./backend:/app
     depends_on:
       - postgres
       - redis
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   celery-beat:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: SocialGen_celery_beat
+    container_name: celery-beat
     restart: unless-stopped
     working_dir: /app
     command: celery -A celery_app beat --loglevel=info
@@ -120,7 +160,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: SocialGen_frontend
+    container_name: frontend
     restart: unless-stopped
     environment:
       - REACT_APP_API_URL=http://${N8N_HOST}:8000
@@ -135,8 +175,8 @@ services:
     build:
       context: ./video-downloader
       dockerfile: Dockerfile
-    image: socialgen-video-processor:latest
-    container_name: SocialGen_video_processor
+    image: n8n-video-processor:latest
+    container_name: video-processor
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -158,5 +198,6 @@ services:
               capabilities: [gpu]
 
 volumes:
+  n8n_data:
   postgres_data:
   redis_data:

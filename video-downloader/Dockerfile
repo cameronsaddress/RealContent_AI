@@ -10,13 +10,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies including curl_cffi for browser impersonation
+# curl_cffi is required for TikTok/Instagram to avoid IP blocks
+# Note: curl_cffi 0.13.x is the latest version supported by yt-dlp (0.14.x not yet compatible)
 RUN pip install --no-cache-dir \
-    yt-dlp \
+    "yt-dlp[default,curl-cffi]" \
     fastapi \
     uvicorn[standard] \
     python-multipart \
-    aiofiles
+    aiofiles \
+    "curl_cffi>=0.10,<0.14" \
+    httpx
 
 # Copy the API server
 COPY main.py .

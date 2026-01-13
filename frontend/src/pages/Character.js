@@ -1,37 +1,131 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    getVoices, getAvatars, getCharacterConfig, saveCharacterConfig, generateAvatarImage,
-    uploadAvatarImage, getAvatarImages
+    getCharacterConfig, saveCharacterConfig, generateAvatarImage,
+    uploadAvatarImage, getAvatarImages, getHeyGenAvatars, getElevenLabsVoices
 } from '../api';
+import './Character.css';
 
 const Character = () => {
+    // Character configuration state
     const [config, setConfig] = useState({
         voice_id: '',
         avatar_id: '',
-        avatar_type: 'pretrained',
+        avatar_type: 'video_avatar',
         voice_name: '',
         avatar_name: '',
-        image_url: ''
+        image_url: '',
+        is_cloned_voice: false
     });
 
-    const [voices, setVoices] = useState([]);
-    const [avatars, setAvatars] = useState([]);
+    // Avatar data with pagination
+    const [videoAvatars, setVideoAvatars] = useState([]);
+    const [talkingPhotos, setTalkingPhotos] = useState([]);
     const [uploadedImages, setUploadedImages] = useState([]);
+
+    // Pagination state
+    const [videoPage, setVideoPage] = useState(1);
+    const [photoPage, setPhotoPage] = useState(1);
+    const [videoHasMore, setVideoHasMore] = useState(true);
+    const [photoHasMore, setPhotoHasMore] = useState(true);
+    const [videoTotal, setVideoTotal] = useState(0);
+    const [photoTotal, setPhotoTotal] = useState(0);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+    // Search
+    const [avatarSearch, setAvatarSearch] = useState('');
+    const searchTimeoutRef = useRef(null);
+
+    // Voice data
+    const [clonedVoices, setClonedVoices] = useState([]);
+    const [libraryVoices, setLibraryVoices] = useState([]);
+
+    // UI state
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [generatedImage, setGeneratedImage] = useState(null);
 
+    // Tabs
+    const [avatarTab, setAvatarTab] = useState('video'); // video, photo, upload
+    const [voiceTab, setVoiceTab] = useState('cloned'); // cloned, library
+
     // Filters
     const [voiceSearch, setVoiceSearch] = useState('');
     const [voiceGender, setVoiceGender] = useState('all');
-    const [activeTab, setActiveTab] = useState('pretrained'); // pretrained, ai_gen, upload
 
-    // Prompt State
+    // AI Generator prompt
     const [avatarPrompt, setAvatarPrompt] = useState(
         "Raw unedited photo of a real human woman, news anchor, looking at camera. Shot on Sony A7R IV. Hyper-realistic, 8k, pore-level skin detail, slight imperfections. Green screen background. Natural studio lighting. NOT an illustration, NOT 3D render. 100% photograph."
     );
+
+    // Refs for infinite scroll
+    const videoGridRef = useRef(null);
+    const photoGridRef = useRef(null);
+
+    // Load avatars with pagination
+    const loadAvatars = useCallback(async (type, page, search = '', append = false) => {
+        try {
+            if (page === 1) setIsLoading(true);
+            else setIsLoadingMore(true);
+
+            const data = await getHeyGenAvatars({
+                avatar_type: type === 'video' ? 'video' : 'talking_photo',
+                page,
+                limit: 24,
+                search: search || undefined
+            });
+
+            if (type === 'video') {
+                setVideoAvatars(prev => append ? [...prev, ...data.items] : data.items);
+                setVideoHasMore(data.has_more);
+                setVideoTotal(data.video_avatars_total);
+                setPhotoTotal(data.talking_photos_total);
+                setVideoPage(page);
+            } else {
+                setTalkingPhotos(prev => append ? [...prev, ...data.items] : data.items);
+                setPhotoHasMore(data.has_more);
+                setPhotoTotal(data.talking_photos_total);
+                setVideoTotal(data.video_avatars_total);
+                setPhotoPage(page);
+            }
+        } catch (error) {
+            console.error(`Failed to load ${type} avatars`, error);
+        } finally {
+            setIsLoading(false);
+            setIsLoadingMore(false);
+        }
+    }, []);
+
+    // Handle scroll for infinite loading
+    const handleScroll = useCallback((e, type) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+
+        if (isNearBottom && !isLoadingMore) {
+            if (type === 'video' && videoHasMore) {
+                loadAvatars('video', videoPage + 1, avatarSearch, true);
+            } else if (type === 'photo' && photoHasMore) {
+                loadAvatars('photo', photoPage + 1, avatarSearch, true);
+            }
+        }
+    }, [isLoadingMore, videoHasMore, photoHasMore, videoPage, photoPage, avatarSearch, loadAvatars]);
+
+    // Handle search with debounce
+    const handleAvatarSearch = (value) => {
+        setAvatarSearch(value);
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+
+        searchTimeoutRef.current = setTimeout(() => {
+            if (avatarTab === 'video') {
+                setVideoPage(1);
+                loadAvatars('video', 1, value, false);
+            } else if (avatarTab === 'photo') {
+                setPhotoPage(1);
+                loadAvatars('photo', 1, value, false);
+            }
+        }, 300);
+    };
 
     useEffect(() => {
         loadData();
@@ -40,25 +134,37 @@ const Character = () => {
     const loadData = async () => {
         try {
             setIsLoading(true);
-            const [voicesData, avatarsData, configData, imagesData] = await Promise.all([
-                getVoices(),
-                getAvatars(),
+            const [voiceData, configData, imagesData] = await Promise.all([
+                getElevenLabsVoices(),
                 getCharacterConfig(),
                 getAvatarImages()
             ]);
 
-            setVoices(voicesData.voices || []);
-            setAvatars(avatarsData.avatars || []);
+            // Load first page of video avatars
+            await loadAvatars('video', 1, '', false);
+
             setUploadedImages(imagesData.images || []);
 
+            // Set voice data
+            setClonedVoices(voiceData.cloned_voices || []);
+            setLibraryVoices(voiceData.library_voices || []);
+
+            // Set config and determine initial tab
             if (configData) {
                 setConfig(configData);
-                if (configData.avatar_type === 'generated' || configData.avatar_type === 'static' || configData.avatar_type === 'talking_photo') {
-                    // Start on AI Gen tab if it's a custom image, or keep default
-                    // We might want to switch tabs based on type, but for now logic is fine.
-                    if (configData.image_url && !avatarsData.avatars.find(a => a.avatar_id === configData.avatar_id)) {
-                        setActiveTab('upload');
-                    }
+
+                // Set voice tab based on whether it's a cloned voice
+                if (configData.is_cloned_voice || voiceData.cloned_voices?.some(v => v.voice_id === configData.voice_id)) {
+                    setVoiceTab('cloned');
+                } else {
+                    setVoiceTab(voiceData.cloned_voices?.length > 0 ? 'cloned' : 'library');
+                }
+
+                // Set avatar tab based on type
+                if (configData.avatar_type === 'talking_photo') {
+                    setAvatarTab('photo');
+                } else if (configData.avatar_type === 'custom_photo' || (configData.image_url && configData.avatar_id === 'static_image')) {
+                    setAvatarTab('upload');
                 }
             }
         } catch (error) {
@@ -68,18 +174,73 @@ const Character = () => {
         }
     };
 
+    // Load avatars when tab changes
+    useEffect(() => {
+        if (avatarTab === 'video' && videoAvatars.length === 0) {
+            loadAvatars('video', 1, avatarSearch, false);
+        } else if (avatarTab === 'photo' && talkingPhotos.length === 0) {
+            loadAvatars('photo', 1, avatarSearch, false);
+        }
+    }, [avatarTab, avatarSearch, loadAvatars, videoAvatars.length, talkingPhotos.length]);
+
     const handleSave = async () => {
         try {
             setIsSaving(true);
             await saveCharacterConfig(config);
-            // Optional: Show success toast
         } catch (error) {
             console.error("Failed to save", error);
+            alert("Failed to save configuration");
         } finally {
             setIsSaving(false);
         }
     };
 
+    // Avatar selection handlers
+    const selectVideoAvatar = (avatar) => {
+        setConfig({
+            ...config,
+            avatar_id: avatar.avatar_id,
+            avatar_name: avatar.avatar_name,
+            avatar_type: 'video_avatar',
+            image_url: avatar.preview_image_url
+        });
+    };
+
+    const selectTalkingPhoto = (avatar) => {
+        setConfig({
+            ...config,
+            avatar_id: avatar.avatar_id,
+            avatar_name: avatar.avatar_name,
+            avatar_type: 'talking_photo',
+            image_url: avatar.preview_image_url
+        });
+    };
+
+    const selectGalleryImage = (img) => {
+        let fullUrl = img.url;
+        if (fullUrl.startsWith('/')) {
+            fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
+        }
+        setConfig({
+            ...config,
+            avatar_id: 'static_image',
+            avatar_type: 'custom_photo',
+            image_url: fullUrl,
+            avatar_name: 'Custom Upload'
+        });
+    };
+
+    // Voice selection handlers
+    const selectVoice = (voice, isCloned) => {
+        setConfig({
+            ...config,
+            voice_id: voice.voice_id,
+            voice_name: voice.name,
+            is_cloned_voice: isCloned
+        });
+    };
+
+    // AI Generation
     const handleGenerateAvatar = async () => {
         try {
             setIsGenerating(true);
@@ -90,7 +251,6 @@ const Character = () => {
                     fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
                 }
                 setGeneratedImage(fullUrl);
-                // Refresh list to incude new generated image
                 refreshImages();
             }
         } catch (error) {
@@ -101,6 +261,18 @@ const Character = () => {
         }
     };
 
+    const confirmGeneratedAvatar = () => {
+        setConfig({
+            ...config,
+            avatar_id: 'static_image',
+            avatar_type: 'custom_photo',
+            image_url: generatedImage,
+            avatar_name: 'AI Generated Avatar'
+        });
+        setGeneratedImage(null);
+    };
+
+    // Upload handling
     const handleUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -113,17 +285,13 @@ const Character = () => {
                 if (fullUrl.startsWith('/')) {
                     fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
                 }
-
-                // Auto-select uploaded image
                 setConfig({
                     ...config,
                     avatar_id: 'static_image',
-                    avatar_type: 'talking_photo', // Use talking_photo for custom uploads
+                    avatar_type: 'custom_photo',
                     image_url: fullUrl,
                     avatar_name: 'Custom Upload'
                 });
-
-                // Refresh gallery
                 refreshImages();
             }
         } catch (error) {
@@ -143,200 +311,233 @@ const Character = () => {
         }
     };
 
-    const confirmGeneratedAvatar = () => {
-        setConfig({
-            ...config,
-            avatar_id: 'static_image',
-            avatar_type: 'talking_photo',
-            image_url: generatedImage,
-            avatar_name: 'AI Generated Avatar'
-        });
-        setGeneratedImage(null); // Clear preview, it's now selected
-    };
-
-    const selectGalleryImage = (img) => {
-        // Construct full URL if relative
-        let fullUrl = img.url;
-        if (fullUrl.startsWith('/')) {
-            fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
-        }
-
-        setConfig({
-            ...config,
-            avatar_id: 'static_image',
-            avatar_type: 'talking_photo',
-            image_url: fullUrl,
-            avatar_name: 'Custom Avatar'
+    // Filter voices
+    const filterVoices = (voices) => {
+        return voices.filter(v => {
+            const matchesSearch = v.name.toLowerCase().includes(voiceSearch.toLowerCase());
+            const gender = v.labels?.gender || 'unknown';
+            const matchesGender = voiceGender === 'all' || gender === voiceGender;
+            return matchesSearch && matchesGender;
         });
     };
 
-    const filteredVoices = voices.filter(v => {
-        const matchesSearch = v.name.toLowerCase().includes(voiceSearch.toLowerCase());
-        const gender = v.labels?.gender || 'unknown';
-        const matchesGender = voiceGender === 'all' || gender === voiceGender;
-        return matchesSearch && matchesGender;
-    });
+    const filteredClonedVoices = filterVoices(clonedVoices);
+    const filteredLibraryVoices = filterVoices(libraryVoices);
+
+    if (isLoading) {
+        return (
+            <div className="character-page">
+                <div className="loading-state">Loading character configuration...</div>
+            </div>
+        );
+    }
 
     return (
-        <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto', color: 'var(--text-primary)' }}>
-            <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="character-page">
+            {/* Header */}
+            <header className="character-header">
                 <div>
-                    <h1 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>AI Character Setup</h1>
-                    <p style={{ color: 'var(--text-secondary)' }}>Configure your pipeline's persona and voice.</p>
+                    <h1>AI Character Setup</h1>
+                    <p>Configure your pipeline's persona and voice</p>
                 </div>
                 <button
                     onClick={handleSave}
                     disabled={isSaving}
-                    style={{
-                        padding: '0.75rem 1.5rem',
-                        backgroundColor: 'var(--accent-primary)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: isSaving ? 'wait' : 'pointer',
-                        fontWeight: 'bold'
-                    }}
+                    className="save-btn"
                 >
                     {isSaving ? 'Saving...' : 'Save Configuration'}
                 </button>
             </header>
 
-            {isLoading ? <div style={{ textAlign: 'center', padding: '2rem' }}>Loading assets...</div> : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+            {/* Preview Card */}
+            <div className="preview-card">
+                {config.image_url ? (
+                    <img src={config.image_url} alt="Selected Avatar" className="preview-avatar" />
+                ) : (
+                    <div className="preview-avatar-placeholder">?</div>
+                )}
+                <div className="preview-info">
+                    <h3>{config.avatar_name || 'No Avatar Selected'}</h3>
+                    <div>
+                        <span className="type-badge">{config.avatar_type?.replace(/_/g, ' ')}</span>
+                        {config.is_cloned_voice && <span className="cloned-badge">Cloned Voice</span>}
+                    </div>
+                    <p className="preview-voice">
+                        Voice: {config.voice_name || 'None selected'}
+                    </p>
+                </div>
+            </div>
 
-                    {/* LEFT: AVATAR SECTION */}
-                    <section className="card">
-                        <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                            1. Choose Avatar
-                        </h2>
+            {/* Main Grid */}
+            <div className="character-grid">
+                {/* Avatar Section */}
+                <section className="section-card">
+                    <h2>
+                        <span className="step-number">1</span>
+                        Choose Avatar
+                    </h2>
 
-                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                            <button
-                                onClick={() => setActiveTab('pretrained')}
-                                style={{
-                                    padding: '0.5rem 1rem',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    backgroundColor: activeTab === 'pretrained' ? 'var(--bg-tertiary)' : 'transparent',
-                                    color: activeTab === 'pretrained' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    fontWeight: 'bold'
-                                }}
-                            >
-                                Pre-trained
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('ai_gen')}
-                                style={{
-                                    padding: '0.5rem 1rem',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    backgroundColor: activeTab === 'ai_gen' ? 'var(--bg-tertiary)' : 'transparent',
-                                    color: activeTab === 'ai_gen' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    fontWeight: 'bold'
-                                }}
-                            >
-                                AI Generator
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('upload')}
-                                style={{
-                                    padding: '0.5rem 1rem',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    backgroundColor: activeTab === 'upload' ? 'var(--bg-tertiary)' : 'transparent',
-                                    color: activeTab === 'upload' ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    fontWeight: 'bold'
-                                }}
-                            >
-                                Upload
-                            </button>
+                    {/* Avatar Tabs */}
+                    <div className="tabs">
+                        <button
+                            className={`tab-btn ${avatarTab === 'video' ? 'active' : ''}`}
+                            onClick={() => setAvatarTab('video')}
+                        >
+                            Video Avatars
+                            <span className="count">{videoTotal || videoAvatars.length}</span>
+                        </button>
+                        <button
+                            className={`tab-btn ${avatarTab === 'photo' ? 'active' : ''}`}
+                            onClick={() => setAvatarTab('photo')}
+                        >
+                            Talking Photos
+                            <span className="count">{photoTotal || talkingPhotos.length}</span>
+                        </button>
+                        <button
+                            className={`tab-btn ${avatarTab === 'upload' ? 'active' : ''}`}
+                            onClick={() => setAvatarTab('upload')}
+                        >
+                            Upload / AI Gen
+                        </button>
+                    </div>
+
+                    {/* Search bar for avatars */}
+                    {(avatarTab === 'video' || avatarTab === 'photo') && (
+                        <div className="avatar-search">
+                            <input
+                                type="text"
+                                placeholder="Search avatars..."
+                                value={avatarSearch}
+                                onChange={(e) => handleAvatarSearch(e.target.value)}
+                                className="avatar-search-input"
+                            />
                         </div>
+                    )}
 
-                        {activeTab === 'pretrained' && (
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
-                                gap: '1rem',
-                                maxHeight: '500px',
-                                overflowY: 'auto',
-                                paddingRight: '0.5rem'
-                            }}>
-                                {avatars.map(avatar => (
-                                    <div
-                                        key={avatar.avatar_id}
-                                        onClick={() => setConfig({ ...config, avatar_id: avatar.avatar_id, avatar_name: avatar.name, avatar_type: 'pretrained', image_url: avatar.preview_image_url })}
-                                        style={{
-                                            cursor: 'pointer',
-                                            border: config.avatar_id === avatar.avatar_id ? '2px solid var(--accent-primary)' : '2px solid transparent',
-                                            borderRadius: '8px',
-                                            overflow: 'hidden',
-                                            position: 'relative'
-                                        }}
-                                    >
-                                        <img
-                                            src={avatar.preview_image_url || avatar.preview_url}
-                                            alt={avatar.name}
-                                            style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }}
-                                            onError={(e) => {
-                                                e.target.onerror = null;
-                                                e.target.src = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(avatar.name) + '&background=random';
-                                            }}
-                                        />
-                                        <div style={{
-                                            position: 'absolute', bottom: 0, left: 0, right: 0,
-                                            background: 'rgba(0,0,0,0.7)', padding: '4px', fontSize: '0.75rem', textAlign: 'center'
-                                        }}>
-                                            {avatar.name}
-                                        </div>
+                    {/* Video Avatars Tab */}
+                    {avatarTab === 'video' && (
+                        <div
+                            className="avatar-grid-container"
+                            ref={videoGridRef}
+                            onScroll={(e) => handleScroll(e, 'video')}
+                        >
+                            <div className="avatar-grid">
+                                {videoAvatars.length === 0 && !isLoading ? (
+                                    <div className="empty-state">
+                                        <p>No video avatars found</p>
+                                        <p>{avatarSearch ? 'Try a different search' : 'Check your HeyGen account'}</p>
                                     </div>
-                                ))}
+                                ) : (
+                                    videoAvatars.map(avatar => (
+                                        <div
+                                            key={avatar.avatar_id}
+                                            className={`avatar-card ${config.avatar_id === avatar.avatar_id ? 'selected' : ''}`}
+                                            onClick={() => selectVideoAvatar(avatar)}
+                                        >
+                                            <img
+                                                src={avatar.preview_image_url}
+                                                alt={avatar.avatar_name}
+                                                loading="lazy"
+                                                onError={(e) => {
+                                                    e.target.onerror = null;
+                                                    e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(avatar.avatar_name)}&background=random`;
+                                                }}
+                                            />
+                                            <span className="avatar-name">{avatar.avatar_name}</span>
+                                            {avatar.preview_video_url && <span className="video-badge">VIDEO</span>}
+                                        </div>
+                                    ))
+                                )}
                             </div>
-                        )}
+                            {isLoadingMore && (
+                                <div className="loading-more">Loading more avatars...</div>
+                            )}
+                            {!videoHasMore && videoAvatars.length > 0 && (
+                                <div className="end-of-list">All {videoTotal} avatars loaded</div>
+                            )}
+                        </div>
+                    )}
 
-                        {activeTab === 'ai_gen' && (
-                            <div style={{ textAlign: 'center', padding: '2rem', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
-                                <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
-                                    Generate a unique AI avatar seeded with extensive movement prompts.
-                                </p>
+                    {/* Talking Photos Tab */}
+                    {avatarTab === 'photo' && (
+                        <div
+                            className="avatar-grid-container"
+                            ref={photoGridRef}
+                            onScroll={(e) => handleScroll(e, 'photo')}
+                        >
+                            <div className="avatar-grid">
+                                {talkingPhotos.length === 0 && !isLoading ? (
+                                    <div className="empty-state">
+                                        <p>No talking photos found</p>
+                                        <p>{avatarSearch ? 'Try a different search' : 'Upload a photo or use the AI generator'}</p>
+                                    </div>
+                                ) : (
+                                    talkingPhotos.map(avatar => (
+                                        <div
+                                            key={avatar.avatar_id}
+                                            className={`avatar-card ${config.avatar_id === avatar.avatar_id ? 'selected' : ''}`}
+                                            onClick={() => selectTalkingPhoto(avatar)}
+                                        >
+                                            <img
+                                                src={avatar.preview_image_url}
+                                                alt={avatar.avatar_name}
+                                                loading="lazy"
+                                                onError={(e) => {
+                                                    e.target.onerror = null;
+                                                    e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(avatar.avatar_name)}&background=random`;
+                                                }}
+                                            />
+                                            <span className="avatar-name">{avatar.avatar_name}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                            {isLoadingMore && (
+                                <div className="loading-more">Loading more photos...</div>
+                            )}
+                            {!photoHasMore && talkingPhotos.length > 0 && (
+                                <div className="end-of-list">All {photoTotal} photos loaded</div>
+                            )}
+                        </div>
+                    )}
 
-                                <div style={{ marginBottom: '1.5rem', textAlign: 'left' }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                        Generation Prompt
-                                    </label>
-                                    <textarea
-                                        value={avatarPrompt}
-                                        onChange={(e) => setAvatarPrompt(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            minHeight: '120px',
-                                            padding: '0.75rem',
-                                            borderRadius: '8px',
-                                            border: '1px solid var(--border-color)',
-                                            background: 'var(--bg-secondary)',
-                                            color: 'white',
-                                            lineHeight: '1.5',
-                                            resize: 'vertical'
-                                        }}
-                                    />
-                                </div>
+                    {/* Upload / AI Gen Tab */}
+                    {avatarTab === 'upload' && (
+                        <div className="upload-zone">
+                            {/* Upload Section */}
+                            <div className="upload-dropzone">
+                                <p>Upload a photo to create a talking avatar</p>
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleUpload}
+                                    disabled={isUploading}
+                                    className="upload-input"
+                                    id="avatar-upload-input"
+                                />
+                                <label htmlFor="avatar-upload-input" className="upload-btn">
+                                    {isUploading ? 'Uploading...' : 'Select Image'}
+                                </label>
+                            </div>
+
+                            {/* AI Generator */}
+                            <div className="ai-gen-section">
+                                <p>Or generate an AI avatar with a prompt</p>
+                                <label className="prompt-label">Generation Prompt</label>
+                                <textarea
+                                    value={avatarPrompt}
+                                    onChange={(e) => setAvatarPrompt(e.target.value)}
+                                    className="prompt-textarea"
+                                />
 
                                 {generatedImage ? (
-                                    <div style={{ marginBottom: '1.5rem' }}>
-                                        <img src={generatedImage} alt="Generated" style={{ maxWidth: '100%', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }} />
-                                        <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                                            <button
-                                                onClick={confirmGeneratedAvatar}
-                                                style={{ padding: '0.5rem 1rem', background: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                                            >
+                                    <div className="generated-preview">
+                                        <img src={generatedImage} alt="Generated" />
+                                        <div className="generated-actions">
+                                            <button onClick={confirmGeneratedAvatar} className="use-btn">
                                                 Use This Avatar
                                             </button>
-                                            <button
-                                                onClick={() => setGeneratedImage(null)}
-                                                style={{ padding: '0.5rem 1rem', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer' }}
-                                            >
+                                            <button onClick={() => setGeneratedImage(null)} className="discard-btn">
                                                 Discard
                                             </button>
                                         </div>
@@ -345,200 +546,157 @@ const Character = () => {
                                     <button
                                         onClick={handleGenerateAvatar}
                                         disabled={isGenerating}
-                                        style={{
-                                            padding: '1rem 2rem',
-                                            fontSize: '1.1rem',
-                                            background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
-                                            color: 'white',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            cursor: isGenerating ? 'wait' : 'pointer'
-                                        }}
+                                        className="generate-btn"
                                     >
-                                        {isGenerating ? 'Generating Magic...' : 'Generate AI Avatar'}
+                                        {isGenerating ? 'Generating...' : 'Generate AI Avatar'}
                                     </button>
                                 )}
                             </div>
-                        )}
 
-                        {activeTab === 'upload' && (
-                            <div style={{ padding: '2rem', background: 'var(--bg-tertiary)', borderRadius: '8px', textAlign: 'center' }}>
-                                <div style={{ border: '2px dashed var(--border-color)', borderRadius: '8px', padding: '2rem', marginBottom: '1rem' }}>
-                                    <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Upload your own photo to use as a dynamic Talking Photo.</p>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={handleUpload}
-                                        disabled={isUploading}
-                                        style={{ display: 'none' }}
-                                        id="avatar-upload-input"
-                                    />
-                                    <label
-                                        htmlFor="avatar-upload-input"
-                                        style={{
-                                            display: 'inline-block',
-                                            padding: '0.75rem 1.5rem',
-                                            backgroundColor: 'var(--accent-primary)',
-                                            color: 'white',
-                                            borderRadius: '6px',
-                                            cursor: isUploading ? 'wait' : 'pointer',
-                                            fontWeight: 'bold'
-                                        }}
-                                    >
-                                        {isUploading ? 'Uploading...' : 'Select Image File'}
-                                    </label>
-                                </div>
-                            </div>
-                        )}
-                    </section>
-
-                    {/* RIGHT: VOICE SECTION */}
-                    <section className="card">
-                        <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                            2. Choose Voice
-                        </h2>
-                        {/* No changes to voice section */}
-                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                            <input
-                                type="text"
-                                placeholder="Search voices..."
-                                value={voiceSearch}
-                                onChange={(e) => setVoiceSearch(e.target.value)}
-                                style={{
-                                    flex: 1,
-                                    padding: '0.5rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'var(--bg-tertiary)',
-                                    color: 'white'
-                                }}
-                            />
-                            <select
-                                value={voiceGender}
-                                onChange={(e) => setVoiceGender(e.target.value)}
-                                style={{
-                                    padding: '0.5rem',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-color)',
-                                    background: 'var(--bg-tertiary)',
-                                    color: 'white'
-                                }}
-                            >
-                                <option value="all">All Genders</option>
-                                <option value="male">Male</option>
-                                <option value="female">Female</option>
-                            </select>
-                        </div>
-
-                        <div style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '0.5rem',
-                            maxHeight: '500px',
-                            overflowY: 'auto'
-                        }}>
-                            {filteredVoices.map(voice => (
-                                <div
-                                    key={voice.voice_id}
-                                    onClick={() => setConfig({ ...config, voice_id: voice.voice_id, voice_name: voice.name })}
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        padding: '0.75rem',
-                                        borderRadius: '6px',
-                                        background: config.voice_id === voice.voice_id ? 'rgba(74, 222, 128, 0.1)' : 'var(--bg-tertiary)',
-                                        border: config.voice_id === voice.voice_id ? '1px solid var(--accent-primary)' : '1px solid transparent',
-                                        cursor: 'pointer'
-                                    }}
-                                >
-                                    <div>
-                                        <div style={{ fontWeight: 'bold' }}>{voice.name}</div>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                            {voice.category} • {voice.labels?.gender || 'Unknown'} • {voice.labels?.accent || 'US'}
-                                        </div>
+                            {/* Uploaded Images Gallery */}
+                            {uploadedImages.length > 0 && (
+                                <div className="gallery-section">
+                                    <h3>My Uploaded Images</h3>
+                                    <div className="gallery-grid">
+                                        {uploadedImages.map((img, idx) => {
+                                            let fullUrl = img.url;
+                                            if (fullUrl.startsWith('/')) {
+                                                fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
+                                            }
+                                            const isSelected = config.image_url === fullUrl;
+                                            return (
+                                                <div
+                                                    key={idx}
+                                                    className={`gallery-item ${isSelected ? 'selected' : ''}`}
+                                                    onClick={() => selectGalleryImage(img)}
+                                                >
+                                                    <img src={fullUrl} alt={img.name} />
+                                                </div>
+                                            );
+                                        })}
                                     </div>
-                                    {voice.preview_url && (
-                                        <audio
-                                            controls
-                                            src={voice.preview_url}
-                                            style={{ height: '30px', maxWidth: '100px' }}
-                                            onClick={(e) => e.stopPropagation()}
-                                        />
-                                    )}
                                 </div>
-                            ))}
+                            )}
                         </div>
-                    </section>
+                    )}
+                </section>
 
-                </div>
-            )}
+                {/* Voice Section */}
+                <section className="section-card">
+                    <h2>
+                        <span className="step-number">2</span>
+                        Choose Voice
+                    </h2>
 
-            {/* Current Selection Bar */}
-            <div style={{
-                marginTop: '2rem',
-                padding: '1.5rem',
-                background: 'var(--bg-secondary)',
-                borderRadius: '8px',
-                border: '1px solid var(--border-color)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '2rem'
-            }}>
-                <div>
-                    <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Selected Persona</h3>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>
-                        {config.avatar_name || 'None'} <span style={{ color: 'var(--text-secondary)' }}>+</span> {config.voice_name || 'None'}
+                    {/* Voice Tabs */}
+                    <div className="tabs">
+                        <button
+                            className={`tab-btn ${voiceTab === 'cloned' ? 'active' : ''}`}
+                            onClick={() => setVoiceTab('cloned')}
+                        >
+                            My Voices
+                            <span className="count">{clonedVoices.length}</span>
+                        </button>
+                        <button
+                            className={`tab-btn ${voiceTab === 'library' ? 'active' : ''}`}
+                            onClick={() => setVoiceTab('library')}
+                        >
+                            Library
+                            <span className="count">{libraryVoices.length}</span>
+                        </button>
                     </div>
-                </div>
-                {config.image_url && (
-                    <img src={config.image_url} alt="Selected Avatar" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover' }} />
-                )}
-            </div>
 
-            {/* New Image Gallery Collage */}
-            {uploadedImages.length > 0 && (
-                <div style={{ marginTop: '2rem' }}>
-                    <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>My Avatar Gallery</h3>
-                    <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
-                        gap: '1rem'
-                    }}>
-                        {uploadedImages.map((img, idx) => {
-                            let fullUrl = img.url;
-                            if (fullUrl.startsWith('/')) {
-                                fullUrl = `http://${window.location.hostname}:8000${fullUrl}`;
-                            }
-                            const isSelected = config.image_url === fullUrl;
+                    {/* Voice Filters */}
+                    <div className="voice-filters">
+                        <input
+                            type="text"
+                            placeholder="Search voices..."
+                            value={voiceSearch}
+                            onChange={(e) => setVoiceSearch(e.target.value)}
+                            className="voice-search"
+                        />
+                        <select
+                            value={voiceGender}
+                            onChange={(e) => setVoiceGender(e.target.value)}
+                            className="voice-gender-filter"
+                        >
+                            <option value="all">All Genders</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                        </select>
+                    </div>
 
-                            return (
-                                <div
-                                    key={idx}
-                                    onClick={() => selectGalleryImage(img)}
-                                    style={{
-                                        cursor: 'pointer',
-                                        borderRadius: '8px',
-                                        overflow: 'hidden',
-                                        border: isSelected ? '2px solid var(--accent-primary)' : '2px solid transparent',
-                                        position: 'relative',
-                                        aspectRatio: '1',
-                                        transition: 'transform 0.2s',
-                                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                                    }}
-                                    className="gallery-item"
-                                >
-                                    <img
-                                        src={fullUrl}
-                                        alt={img.name}
-                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                    />
+                    {/* Cloned Voices */}
+                    {voiceTab === 'cloned' && (
+                        <div className="voice-list">
+                            {filteredClonedVoices.length === 0 ? (
+                                <div className="empty-state">
+                                    <p>No cloned voices found</p>
+                                    <p>Clone a voice in ElevenLabs to see it here</p>
                                 </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
+                            ) : (
+                                filteredClonedVoices.map(voice => (
+                                    <div
+                                        key={voice.voice_id}
+                                        className={`voice-item ${config.voice_id === voice.voice_id ? 'selected' : ''}`}
+                                        onClick={() => selectVoice(voice, true)}
+                                    >
+                                        <div className="voice-info">
+                                            <span className="star-icon">&#11088;</span>
+                                            <span className="voice-name">{voice.name}</span>
+                                            <span className="voice-meta">
+                                                {voice.labels?.accent || 'Unknown'} {voice.labels?.gender || ''}
+                                            </span>
+                                        </div>
+                                        {voice.preview_url && (
+                                            <audio
+                                                controls
+                                                src={voice.preview_url}
+                                                className="voice-preview"
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+
+                    {/* Library Voices */}
+                    {voiceTab === 'library' && (
+                        <div className="voice-list">
+                            {filteredLibraryVoices.length === 0 ? (
+                                <div className="empty-state">
+                                    <p>No voices match your search</p>
+                                </div>
+                            ) : (
+                                filteredLibraryVoices.map(voice => (
+                                    <div
+                                        key={voice.voice_id}
+                                        className={`voice-item ${config.voice_id === voice.voice_id ? 'selected' : ''}`}
+                                        onClick={() => selectVoice(voice, false)}
+                                    >
+                                        <div className="voice-info">
+                                            <span className="voice-name">{voice.name}</span>
+                                            <span className="voice-meta">
+                                                {voice.category} {voice.labels?.accent || ''} {voice.labels?.gender || ''}
+                                            </span>
+                                        </div>
+                                        {voice.preview_url && (
+                                            <audio
+                                                controls
+                                                src={voice.preview_url}
+                                                className="voice-preview"
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </section>
+            </div>
         </div>
     );
 };

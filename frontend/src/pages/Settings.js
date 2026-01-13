@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   getAudioSettings, updateAudioSettings,
   getVideoSettings, updateVideoSettings,
-  getLLMSettings, updateLLMSetting
+  getLLMSettings, updateLLMSetting,
+  getBrandPersona, updateBrandPersona
 } from '../api';
 
 export default function Settings() {
@@ -10,9 +11,11 @@ export default function Settings() {
   const [audio, setAudio] = useState({
     original_volume: 0.7,
     avatar_volume: 1.0,
+    music_volume: 0.3,
     ducking_enabled: true,
     avatar_delay_seconds: 3.0,
-    duck_to_percent: 0.5
+    duck_to_percent: 0.5,
+    music_autoduck: true
   });
 
   // Video settings state
@@ -22,13 +25,47 @@ export default function Settings() {
     crf: 18,
     preset: 'slow',
     greenscreen_enabled: true,
-    greenscreen_color: '#00FF00'
+    greenscreen_color: '#00FF00',
+    // Avatar composition
+    avatar_position: 'bottom-left',
+    avatar_scale: 0.8,
+    avatar_offset_x: -200,
+    avatar_offset_y: 500,
+    // Caption settings
+    caption_style: 'karaoke',
+    caption_font_size: 96,
+    caption_font: 'Arial',
+    caption_color: '#FFFFFF',
+    caption_highlight_color: '#FFFF00',
+    caption_outline_color: '#000000',
+    caption_outline_width: 5,
+    caption_position_y: 850
   });
 
   // LLM settings state
   const [llmPrompts, setLlmPrompts] = useState([]);
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [editValue, setEditValue] = useState('');
+
+  // Brand Persona state
+  const [persona, setPersona] = useState({
+    name: '',
+    title: '',
+    location: '',
+    bio: '',
+    tone: 'professional',
+    energy_level: 'warm',
+    humor_style: 'light',
+    core_values: [],
+    content_boundaries: [],
+    response_style: '',
+    signature_intro: '',
+    signature_cta: '',
+    hashtags: []
+  });
+  const [newValue, setNewValue] = useState('');
+  const [newBoundary, setNewBoundary] = useState('');
+  const [newHashtag, setNewHashtag] = useState('');
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -42,14 +79,18 @@ export default function Settings() {
   const loadAllSettings = async () => {
     setLoading(true);
     try {
-      const [audioData, videoData, llmData] = await Promise.all([
+      const [audioData, videoData, llmData, personaData] = await Promise.all([
         getAudioSettings(),
         getVideoSettings(),
-        getLLMSettings()
+        getLLMSettings(),
+        getBrandPersona()
       ]);
       setAudio(audioData);
       setVideo(videoData);
       setLlmPrompts(llmData);
+      if (personaData) {
+        setPersona(personaData);
+      }
     } catch (err) {
       console.error('Failed to load settings:', err);
       showMessage('Failed to load settings', 'error');
@@ -97,6 +138,31 @@ export default function Settings() {
     setSaving(false);
   };
 
+  const savePersonaSettings = async () => {
+    setSaving(true);
+    try {
+      await updateBrandPersona(persona);
+      showMessage('Brand persona saved!', 'success');
+    } catch (err) {
+      showMessage('Error saving brand persona', 'error');
+    }
+    setSaving(false);
+  };
+
+  // Helpers for array fields
+  const addToArray = (field, value, setter) => {
+    if (value.trim()) {
+      setPersona({ ...persona, [field]: [...(persona[field] || []), value.trim()] });
+      setter('');
+    }
+  };
+
+  const removeFromArray = (field, index) => {
+    const updated = [...persona[field]];
+    updated.splice(index, 1);
+    setPersona({ ...persona, [field]: updated });
+  };
+
   if (loading) {
     return (
       <div className="page-container">
@@ -115,6 +181,265 @@ export default function Settings() {
           {message.text}
         </div>
       )}
+
+      {/* BRAND PERSONA SETTINGS */}
+      <div className="settings-section persona-section">
+        <h2>Brand Persona</h2>
+        <p className="section-description">
+          Define your brand identity. This tells the AI who you are, your tone, values, and what kind of content you will or won't create.
+          The AI uses this to generate scripts that sound authentically like you.
+        </p>
+
+        <div className="settings-grid">
+          {/* Identity Section */}
+          <div className="persona-subsection">
+            <h3>Identity</h3>
+
+            <div className="setting-item">
+              <label>Name</label>
+              <input
+                type="text"
+                value={persona.name}
+                onChange={(e) => setPersona({...persona, name: e.target.value})}
+                className="text-input"
+                placeholder="Your name or brand name"
+              />
+            </div>
+
+            <div className="setting-item">
+              <label>Title / Role</label>
+              <input
+                type="text"
+                value={persona.title}
+                onChange={(e) => setPersona({...persona, title: e.target.value})}
+                className="text-input"
+                placeholder="e.g., Real Estate Expert, Fitness Coach"
+              />
+            </div>
+
+            <div className="setting-item">
+              <label>Location</label>
+              <input
+                type="text"
+                value={persona.location}
+                onChange={(e) => setPersona({...persona, location: e.target.value})}
+                className="text-input"
+                placeholder="e.g., Austin, Texas"
+              />
+            </div>
+
+            <div className="setting-item">
+              <label>Bio / Background</label>
+              <textarea
+                value={persona.bio}
+                onChange={(e) => setPersona({...persona, bio: e.target.value})}
+                className="textarea-input"
+                rows={3}
+                placeholder="Brief background that helps the AI understand who you are..."
+              />
+              <span className="slider-hint">This context helps the AI write scripts that sound authentically like you</span>
+            </div>
+          </div>
+
+          {/* Tone & Voice Section */}
+          <div className="persona-subsection">
+            <h3>Tone & Voice</h3>
+
+            <div className="setting-item">
+              <label>Communication Tone</label>
+              <select
+                value={persona.tone}
+                onChange={(e) => setPersona({...persona, tone: e.target.value})}
+                className="select-input"
+              >
+                <option value="professional">Professional - Business-like, polished</option>
+                <option value="casual">Casual - Relaxed, conversational</option>
+                <option value="warm">Warm - Friendly, approachable</option>
+                <option value="energetic">Energetic - Enthusiastic, upbeat</option>
+                <option value="authoritative">Authoritative - Expert, confident</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Energy Level</label>
+              <select
+                value={persona.energy_level}
+                onChange={(e) => setPersona({...persona, energy_level: e.target.value})}
+                className="select-input"
+              >
+                <option value="calm">Calm - Relaxed, measured pace</option>
+                <option value="warm">Warm - Comfortable, inviting energy</option>
+                <option value="energetic">Energetic - Upbeat, positive</option>
+                <option value="high-energy">High Energy - Exciting, dynamic</option>
+              </select>
+            </div>
+
+            <div className="setting-item">
+              <label>Humor Style</label>
+              <select
+                value={persona.humor_style}
+                onChange={(e) => setPersona({...persona, humor_style: e.target.value})}
+                className="select-input"
+              >
+                <option value="none">None - Serious, straightforward</option>
+                <option value="light">Light - Occasional smile-worthy moments</option>
+                <option value="playful">Playful - Fun, engaging humor</option>
+                <option value="witty">Witty - Clever, quick remarks</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Signature Elements */}
+          <div className="persona-subsection">
+            <h3>Signature Elements</h3>
+
+            <div className="setting-item">
+              <label>Opening Greeting</label>
+              <input
+                type="text"
+                value={persona.signature_intro}
+                onChange={(e) => setPersona({...persona, signature_intro: e.target.value})}
+                className="text-input"
+                placeholder="e.g., Hey neighbors!, What's up everyone?"
+              />
+              <span className="slider-hint">How you typically start your videos</span>
+            </div>
+
+            <div className="setting-item">
+              <label>Call-to-Action</label>
+              <input
+                type="text"
+                value={persona.signature_cta}
+                onChange={(e) => setPersona({...persona, signature_cta: e.target.value})}
+                className="text-input"
+                placeholder="e.g., DM me to chat!, Follow for more tips!"
+              />
+              <span className="slider-hint">Use {'{location}'} to auto-insert your location</span>
+            </div>
+
+            {/* Hashtags */}
+            <div className="setting-item">
+              <label>Default Hashtags</label>
+              <div className="tag-list">
+                {(persona.hashtags || []).map((tag, i) => (
+                  <span key={i} className="tag">
+                    #{tag}
+                    <button onClick={() => removeFromArray('hashtags', i)} className="tag-remove">×</button>
+                  </span>
+                ))}
+              </div>
+              <div className="add-tag-row">
+                <input
+                  type="text"
+                  value={newHashtag}
+                  onChange={(e) => setNewHashtag(e.target.value.replace('#', ''))}
+                  onKeyPress={(e) => e.key === 'Enter' && addToArray('hashtags', newHashtag, setNewHashtag)}
+                  className="text-input"
+                  placeholder="Add hashtag (without #)"
+                />
+                <button
+                  onClick={() => addToArray('hashtags', newHashtag, setNewHashtag)}
+                  className="add-button"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Core Values */}
+          <div className="persona-subsection">
+            <h3>Core Values</h3>
+            <p className="subsection-hint">What you stand for - the AI will reflect these in your content</p>
+
+            <div className="tag-list vertical">
+              {(persona.core_values || []).map((value, i) => (
+                <div key={i} className="value-item">
+                  <span>{value}</span>
+                  <button onClick={() => removeFromArray('core_values', i)} className="remove-button">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="add-tag-row">
+              <input
+                type="text"
+                value={newValue}
+                onChange={(e) => setNewValue(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && addToArray('core_values', newValue, setNewValue)}
+                className="text-input flex-grow"
+                placeholder="e.g., Honesty and transparency"
+              />
+              <button
+                onClick={() => addToArray('core_values', newValue, setNewValue)}
+                className="add-button"
+              >
+                Add Value
+              </button>
+            </div>
+          </div>
+
+          {/* Content Boundaries */}
+          <div className="persona-subsection boundaries-section">
+            <h3>Content Boundaries</h3>
+            <p className="subsection-hint">
+              What you will NEVER do - helps the AI avoid content that doesn't match your brand.
+              For example, if a viral video shows unprofessional behavior, the AI will acknowledge it but pivot to your professional approach.
+            </p>
+
+            <div className="tag-list vertical">
+              {(persona.content_boundaries || []).map((boundary, i) => (
+                <div key={i} className="boundary-item">
+                  <span>{boundary}</span>
+                  <button onClick={() => removeFromArray('content_boundaries', i)} className="remove-button">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="add-tag-row">
+              <input
+                type="text"
+                value={newBoundary}
+                onChange={(e) => setNewBoundary(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && addToArray('content_boundaries', newBoundary, setNewBoundary)}
+                className="text-input flex-grow"
+                placeholder="e.g., No dancing or inappropriate behavior"
+              />
+              <button
+                onClick={() => addToArray('content_boundaries', newBoundary, setNewBoundary)}
+                className="add-button"
+              >
+                Add Boundary
+              </button>
+            </div>
+          </div>
+
+          {/* Response Style */}
+          <div className="persona-subsection">
+            <h3>Response Style Guidelines</h3>
+            <p className="subsection-hint">How should the AI handle different types of viral content?</p>
+
+            <div className="setting-item">
+              <textarea
+                value={persona.response_style}
+                onChange={(e) => setPersona({...persona, response_style: e.target.value})}
+                className="textarea-input"
+                rows={6}
+                placeholder="When reviewing viral content:
+- If professional: Praise it and add insights
+- If unprofessional: Acknowledge entertainment but show professional approach
+- If misinformation: Gently correct while being respectful..."
+              />
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={savePersonaSettings}
+          disabled={saving}
+          className="save-button"
+        >
+          {saving ? 'Saving...' : 'Save Brand Persona'}
+        </button>
+      </div>
 
       {/* AUDIO SETTINGS */}
       <div className="settings-section">
@@ -152,6 +477,35 @@ export default function Settings() {
               className="slider"
             />
             <span className="slider-hint">Volume of the AI avatar's voiceover</span>
+          </div>
+
+          {/* Music Volume */}
+          <div className="setting-item">
+            <label>
+              Background Music Volume: <strong>{Math.round((audio.music_volume ?? 0.3) * 100)}%</strong>
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={(audio.music_volume ?? 0.3) * 100}
+              onChange={(e) => setAudio({...audio, music_volume: e.target.value / 100})}
+              className="slider"
+            />
+            <span className="slider-hint">Volume of the background music track (if enabled)</span>
+          </div>
+
+          {/* Music Auto-Duck Toggle */}
+          <div className="setting-item checkbox-item">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={audio.music_autoduck ?? true}
+                onChange={(e) => setAudio({...audio, music_autoduck: e.target.checked})}
+              />
+              <span>Auto-Duck Music When Speaking</span>
+            </label>
+            <span className="slider-hint">Automatically lower music volume when the avatar is speaking (sidechain compression)</span>
           </div>
 
           {/* Ducking Toggle */}
@@ -337,13 +691,274 @@ export default function Settings() {
         </button>
       </div>
 
+      {/* AVATAR COMPOSITION SETTINGS */}
+      <div className="settings-section">
+        <h2>Avatar Composition</h2>
+        <p className="section-description">Configure how the avatar is positioned and sized in the final video.</p>
+
+        <div className="settings-grid">
+          {/* Avatar Position */}
+          <div className="setting-item">
+            <label>Avatar Position</label>
+            <div className="radio-group horizontal">
+              <label className="radio-label">
+                <input
+                  type="radio"
+                  name="avatar_position"
+                  checked={video.avatar_position === 'bottom-left'}
+                  onChange={() => setVideo({...video, avatar_position: 'bottom-left'})}
+                />
+                <span>Bottom Left</span>
+              </label>
+              <label className="radio-label">
+                <input
+                  type="radio"
+                  name="avatar_position"
+                  checked={video.avatar_position === 'bottom-center'}
+                  onChange={() => setVideo({...video, avatar_position: 'bottom-center'})}
+                />
+                <span>Bottom Center</span>
+              </label>
+              <label className="radio-label">
+                <input
+                  type="radio"
+                  name="avatar_position"
+                  checked={video.avatar_position === 'bottom-right'}
+                  onChange={() => setVideo({...video, avatar_position: 'bottom-right'})}
+                />
+                <span>Bottom Right</span>
+              </label>
+            </div>
+            <span className="slider-hint">Where the avatar appears on screen</span>
+          </div>
+
+          {/* Avatar Scale */}
+          <div className="setting-item">
+            <label>
+              Avatar Size: <strong>{Math.round((video.avatar_scale || 0.8) * 100)}%</strong>
+            </label>
+            <input
+              type="range"
+              min="30"
+              max="100"
+              value={(video.avatar_scale || 0.8) * 100}
+              onChange={(e) => setVideo({...video, avatar_scale: e.target.value / 100})}
+              className="slider"
+            />
+            <span className="slider-hint">Size of the avatar relative to screen width (80% recommended for TikTok)</span>
+          </div>
+
+          {/* Avatar Offsets */}
+          <div className="setting-item">
+            <label>
+              Horizontal Offset: <strong>{video.avatar_offset_x ?? -200}px</strong>
+            </label>
+            <input
+              type="range"
+              min="-500"
+              max="500"
+              value={video.avatar_offset_x ?? -200}
+              onChange={(e) => setVideo({...video, avatar_offset_x: parseInt(e.target.value)})}
+              className="slider"
+            />
+            <span className="slider-hint">Horizontal shift (negative = left, positive = right). Default: -200</span>
+          </div>
+
+          <div className="setting-item">
+            <label>
+              Vertical Offset: <strong>{video.avatar_offset_y ?? 500}px</strong>
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="1000"
+              value={video.avatar_offset_y ?? 500}
+              onChange={(e) => setVideo({...video, avatar_offset_y: parseInt(e.target.value)})}
+              className="slider"
+            />
+            <span className="slider-hint">Push avatar down to hide transparent space above (higher = lower on screen). Default: 500</span>
+          </div>
+        </div>
+
+        <button
+          onClick={saveVideoSettings}
+          disabled={saving}
+          className="save-button"
+        >
+          {saving ? 'Saving...' : 'Save Avatar Settings'}
+        </button>
+      </div>
+
+      {/* CAPTION SETTINGS */}
+      <div className="settings-section">
+        <h2>Caption Settings</h2>
+        <p className="section-description">Configure TikTok-style karaoke captions with word-by-word highlighting.</p>
+
+        <div className="settings-grid">
+          {/* Caption Style */}
+          <div className="setting-item">
+            <label>Caption Style</label>
+            <div className="radio-group horizontal">
+              <label className="radio-label">
+                <input
+                  type="radio"
+                  name="caption_style"
+                  checked={video.caption_style === 'karaoke'}
+                  onChange={() => setVideo({...video, caption_style: 'karaoke'})}
+                />
+                <span>Karaoke (word highlight)</span>
+              </label>
+              <label className="radio-label">
+                <input
+                  type="radio"
+                  name="caption_style"
+                  checked={video.caption_style === 'static'}
+                  onChange={() => setVideo({...video, caption_style: 'static'})}
+                />
+                <span>Static (standard subtitles)</span>
+              </label>
+              <label className="radio-label">
+                <input
+                  type="radio"
+                  name="caption_style"
+                  checked={video.caption_style === 'none'}
+                  onChange={() => setVideo({...video, caption_style: 'none'})}
+                />
+                <span>None</span>
+              </label>
+            </div>
+          </div>
+
+          {video.caption_style !== 'none' && (
+            <>
+              {/* Font Size */}
+              <div className="setting-item">
+                <label>
+                  Font Size: <strong>{video.caption_font_size || 96}pt</strong>
+                </label>
+                <input
+                  type="range"
+                  min="48"
+                  max="144"
+                  value={video.caption_font_size || 96}
+                  onChange={(e) => setVideo({...video, caption_font_size: parseInt(e.target.value)})}
+                  className="slider"
+                />
+                <span className="slider-hint">Text size for captions (96pt recommended)</span>
+              </div>
+
+              {/* Caption Colors */}
+              <div className="setting-item">
+                <label>Caption Colors</label>
+                <div className="color-grid">
+                  <div className="color-item">
+                    <span>Text Color</span>
+                    <div className="color-picker-row">
+                      <input
+                        type="color"
+                        value={video.caption_color || '#FFFFFF'}
+                        onChange={(e) => setVideo({...video, caption_color: e.target.value})}
+                        className="color-picker"
+                      />
+                      <input
+                        type="text"
+                        value={video.caption_color || '#FFFFFF'}
+                        onChange={(e) => setVideo({...video, caption_color: e.target.value})}
+                        className="color-input"
+                      />
+                    </div>
+                  </div>
+
+                  {video.caption_style === 'karaoke' && (
+                    <div className="color-item">
+                      <span>Highlight Color</span>
+                      <div className="color-picker-row">
+                        <input
+                          type="color"
+                          value={video.caption_highlight_color || '#FFFF00'}
+                          onChange={(e) => setVideo({...video, caption_highlight_color: e.target.value})}
+                          className="color-picker"
+                        />
+                        <input
+                          type="text"
+                          value={video.caption_highlight_color || '#FFFF00'}
+                          onChange={(e) => setVideo({...video, caption_highlight_color: e.target.value})}
+                          className="color-input"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="color-item">
+                    <span>Outline Color</span>
+                    <div className="color-picker-row">
+                      <input
+                        type="color"
+                        value={video.caption_outline_color || '#000000'}
+                        onChange={(e) => setVideo({...video, caption_outline_color: e.target.value})}
+                        className="color-picker"
+                      />
+                      <input
+                        type="text"
+                        value={video.caption_outline_color || '#000000'}
+                        onChange={(e) => setVideo({...video, caption_outline_color: e.target.value})}
+                        className="color-input"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Outline Width */}
+              <div className="setting-item">
+                <label>
+                  Outline Width: <strong>{video.caption_outline_width || 5}px</strong>
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  value={video.caption_outline_width || 5}
+                  onChange={(e) => setVideo({...video, caption_outline_width: parseInt(e.target.value)})}
+                  className="slider"
+                />
+              </div>
+
+              {/* Caption Position */}
+              <div className="setting-item">
+                <label>
+                  Vertical Position: <strong>{video.caption_position_y || 850}</strong>
+                </label>
+                <input
+                  type="range"
+                  min="400"
+                  max="1200"
+                  value={video.caption_position_y || 850}
+                  onChange={(e) => setVideo({...video, caption_position_y: parseInt(e.target.value)})}
+                  className="slider"
+                />
+                <span className="slider-hint">Distance from bottom (higher = closer to center)</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        <button
+          onClick={saveVideoSettings}
+          disabled={saving}
+          className="save-button"
+        >
+          {saving ? 'Saving...' : 'Save Caption Settings'}
+        </button>
+      </div>
+
       {/* LLM PROMPT SETTINGS */}
       <div className="settings-section">
         <h2>LLM Prompt Settings</h2>
         <p className="section-description">Customize the prompts used for AI script generation and analysis.</p>
 
         <div className="llm-prompts">
-          {llmPrompts.map(prompt => (
+          {llmPrompts.filter(p => p.key !== 'character_persona').map(prompt => (
             <div key={prompt.key} className="prompt-item">
               <div className="prompt-header">
                 <h3>{prompt.key.replace(/_/g, ' ').toUpperCase()}</h3>
@@ -562,6 +1177,29 @@ export default function Settings() {
           gap: 10px;
         }
 
+        .radio-group.horizontal {
+          flex-direction: row;
+          flex-wrap: wrap;
+          gap: 16px;
+        }
+
+        .color-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 16px;
+        }
+
+        .color-item {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .color-item span {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+        }
+
         .radio-label {
           display: flex;
           align-items: center;
@@ -710,6 +1348,170 @@ export default function Settings() {
           padding: 40px;
           text-align: center;
           color: var(--text-secondary);
+        }
+
+        /* Brand Persona Styles */
+        .persona-section {
+          border-left: 4px solid var(--accent-primary);
+        }
+
+        .persona-subsection {
+          background: var(--bg-tertiary);
+          padding: 16px;
+          border-radius: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .persona-subsection h3 {
+          margin: 0;
+          font-size: 1rem;
+          color: var(--text-primary);
+          border-bottom: 1px solid var(--border);
+          padding-bottom: 8px;
+        }
+
+        .subsection-hint {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          margin: 0;
+        }
+
+        .boundaries-section {
+          border-left: 3px solid #ef4444;
+        }
+
+        .text-input {
+          padding: 10px 12px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          font-size: 0.95rem;
+          background: var(--bg-primary);
+          color: var(--text-primary);
+          width: 100%;
+          max-width: 500px;
+        }
+
+        .text-input:focus {
+          outline: none;
+          border-color: var(--accent-primary);
+        }
+
+        .text-input.flex-grow {
+          flex: 1;
+          max-width: none;
+        }
+
+        .textarea-input {
+          padding: 12px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          font-size: 0.95rem;
+          background: var(--bg-primary);
+          color: var(--text-primary);
+          width: 100%;
+          resize: vertical;
+          font-family: inherit;
+        }
+
+        .textarea-input:focus {
+          outline: none;
+          border-color: var(--accent-primary);
+        }
+
+        .tag-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          min-height: 32px;
+        }
+
+        .tag-list.vertical {
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .tag {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: var(--accent-primary);
+          color: white;
+          padding: 4px 10px;
+          border-radius: 16px;
+          font-size: 0.85rem;
+        }
+
+        .tag-remove {
+          background: none;
+          border: none;
+          color: white;
+          cursor: pointer;
+          padding: 0;
+          font-size: 1rem;
+          line-height: 1;
+          opacity: 0.8;
+        }
+
+        .tag-remove:hover {
+          opacity: 1;
+        }
+
+        .value-item, .boundary-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: var(--bg-primary);
+          padding: 8px 12px;
+          border-radius: 6px;
+          border: 1px solid var(--border);
+        }
+
+        .value-item span, .boundary-item span {
+          flex: 1;
+          color: var(--text-primary);
+        }
+
+        .boundary-item {
+          border-left: 3px solid #ef4444;
+        }
+
+        .remove-button {
+          background: none;
+          border: 1px solid var(--border);
+          color: var(--text-secondary);
+          padding: 4px 10px;
+          border-radius: 4px;
+          font-size: 0.8rem;
+          cursor: pointer;
+        }
+
+        .remove-button:hover {
+          background: #ef4444;
+          color: white;
+          border-color: #ef4444;
+        }
+
+        .add-tag-row {
+          display: flex;
+          gap: 8px;
+          margin-top: 8px;
+        }
+
+        .add-button {
+          padding: 10px 16px;
+          background: var(--accent-primary);
+          color: white;
+          border: none;
+          border-radius: 6px;
+          font-size: 0.9rem;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .add-button:hover {
+          background: var(--accent-secondary);
         }
       `}</style>
     </div>

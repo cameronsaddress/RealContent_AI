@@ -1,14 +1,10 @@
 {
   "mcpServers": {
-    "n8n": {
-      "command": "npx",
-      "args": ["-y", "n8n-mcp@latest"],
+    "HeyGen": {
+      "command": "uvx",
+      "args": ["heygen-mcp"],
       "env": {
-        "MCP_MODE": "stdio",
-        "LOG_LEVEL": "error",
-        "DISABLE_CONSOLE_OUTPUT": "true",
-        "N8N_API_URL": "http://100.83.153.43:5678",
-        "N8N_API_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhMDc3M2M4MS1hZTg4LTQ5ZDAtYjQ5MC02YmQyN2U4Yzc0MDUiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzY3ODg5ODk4fQ.1A9fZoMbgHGaQk8k57cCMs4qB-n_SvR12ujDku_W8Ro"
+        "HEYGEN_API_KEY": "HEYGEN_API_KEY_REDACTED"
       }
     }
   }

@@ -15,6 +15,14 @@ import httpx
 import shutil
 import json
 from pathlib import Path
+
+# Import the new pipeline router (n8n replacement)
+from routers.pipeline import router as pipeline_router
+
+# Import Celery tasks for direct triggering (replacing n8n webhooks)
+from tasks.pipeline import run_pipeline
+from tasks.scrape import run_scrape as run_scrape_task
+
 from models import (
     get_db, ContentIdea as ContentIdeaModel, Script as ScriptModel,
     Asset as AssetModel, Published as PublishedModel, Analytics as AnalyticsModel,
@@ -61,6 +69,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include the pipeline router (replaces n8n webhooks)
+app.include_router(pipeline_router)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -140,19 +151,13 @@ async def update_content_idea(idea_id: int, idea: ContentIdeaUpdate, db: Session
         status_changed_to_approved = True
 
     if status_changed_to_approved:
-        # Trigger n8n pipeline
-        N8N_PIPELINE_WEBHOOK_URL = os.getenv("N8N_PIPELINE_WEBHOOK_URL", "http://n8n:5678/webhook/trigger-pipeline")
-        print(f"DEBUG: Status changed to approved. Triggering webhook at {N8N_PIPELINE_WEBHOOK_URL}")
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    N8N_PIPELINE_WEBHOOK_URL,
-                    json={"content_idea_id": idea_id},
-                    timeout=5.0
-                )
-                print(f"DEBUG: Webhook response: {response.status_code} - {response.text}")
-            except Exception as e:
-                print(f"ERROR: Failed to trigger pipeline for idea {idea_id}: {e}")
+        # Trigger pipeline via Celery task (replaces n8n webhook)
+        print(f"DEBUG: Status changed to approved. Triggering Celery pipeline task for idea {idea_id}")
+        try:
+            task = run_pipeline.delay(idea_id)
+            print(f"DEBUG: Pipeline task queued with ID: {task.id}")
+        except Exception as e:
+            print(f"ERROR: Failed to queue pipeline task for idea {idea_id}: {e}")
 
     return db_idea
 
@@ -481,29 +486,23 @@ def get_pipeline_stats(db: Session = Depends(get_db)):
 # ==================== Bulk Operations ====================
 
 @app.post("/api/content-ideas/bulk-approve")
-async def bulk_approve_ideas(idea_ids: List[int], db: Session = Depends(get_db)):
+def bulk_approve_ideas(idea_ids: List[int], db: Session = Depends(get_db)):
     updated = db.query(ContentIdeaModel).filter(
         ContentIdeaModel.id.in_(idea_ids),
         ContentIdeaModel.status == "pending"
     ).update({"status": "approved"}, synchronize_session=False)
     db.commit()
 
-    # Trigger n8n pipeline for each approved idea
-    N8N_PIPELINE_WEBHOOK_URL = os.getenv("N8N_PIPELINE_WEBHOOK_URL", "http://n8n:5678/webhook/trigger-pipeline")
-    
-    async with httpx.AsyncClient() as client:
-        for idea_id in idea_ids:
-            try:
-                # We fire the webhook to start script generation
-                await client.post(
-                    N8N_PIPELINE_WEBHOOK_URL,
-                    json={"content_idea_id": idea_id},
-                    timeout=5.0
-                )
-            except Exception as e:
-                print(f"Failed to trigger pipeline for idea {idea_id}: {e}")
+    # Trigger pipeline via Celery tasks (replaces n8n webhooks)
+    task_ids = []
+    for idea_id in idea_ids:
+        try:
+            task = run_pipeline.delay(idea_id)
+            task_ids.append({"idea_id": idea_id, "task_id": task.id})
+        except Exception as e:
+            print(f"Failed to queue pipeline task for idea {idea_id}: {e}")
 
-    return {"message": f"Approved {updated} ideas"}
+    return {"message": f"Approved {updated} ideas", "tasks": task_ids}
 
 
 @app.post("/api/content-ideas/bulk-reject")
@@ -518,12 +517,9 @@ def bulk_reject_ideas(idea_ids: List[int], db: Session = Depends(get_db)):
 
 # ==================== Trend Scraping ====================
 
-N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://n8n:5678/webhook/scrape-trends")
-
-
 @app.post("/api/scrape/run", response_model=ScrapeResponse)
-async def run_scrape(scrape_request: ScrapeRunCreate, db: Session = Depends(get_db)):
-    """Trigger a trend scrape with niche targeting"""
+def run_scrape_endpoint(scrape_request: ScrapeRunCreate, db: Session = Depends(get_db)):
+    """Trigger a trend scrape with niche targeting via Celery task"""
     # Create scrape run record
     db_run = ScrapeRunModel(
         niche=scrape_request.niche,
@@ -542,30 +538,31 @@ async def run_scrape(scrape_request: ScrapeRunCreate, db: Session = Depends(get_
         niche_words = scrape_request.niche.lower().replace(',', ' ').split()
         hashtags = [w.strip() for w in niche_words if len(w.strip()) > 2]
 
-    # Call n8n webhook
+    # Queue Celery scrape task (replaces n8n webhook)
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(
-                N8N_WEBHOOK_URL,
-                json={
-                    "niche": scrape_request.niche,
-                    "hashtags": hashtags,
-                    "platforms": scrape_request.platforms or ["tiktok", "instagram"],
-                    "results_per_platform": 20
-                }
-            )
-            result = response.json()
+        task_params = {
+            "niche": scrape_request.niche,
+            "hashtags": hashtags,
+            "platforms": scrape_request.platforms or ["tiktok", "instagram"],
+            "results_per_platform": 20,
+            "scrape_run_id": db_run.id
+        }
 
-        # Update scrape run with results
-        db_run.status = DBScrapeRunStatus.completed if result.get("success") else DBScrapeRunStatus.failed
-        db_run.results_count = result.get("analyzedCount", 0)
-        db_run.results_data = result
-        db_run.completed_at = func.now()
-        if not result.get("success"):
-            db_run.error_message = result.get("error", "Unknown error")
-        db.commit()
+        # Add discovery mode parameters if enabled
+        if scrape_request.discover_hashtags and scrape_request.seed_keyword:
+            task_params["discover_hashtags"] = True
+            task_params["seed_keyword"] = scrape_request.seed_keyword
 
-        return ScrapeResponse(**result)
+        task = run_scrape_task.delay(task_params)
+
+        return ScrapeResponse(
+            success=True,
+            message=f"Scrape task queued with ID: {task.id}",
+            ideas_created=0,
+            analyzed_count=0,
+            task_id=task.id,
+            scrape_run_id=db_run.id
+        )
 
     except Exception as e:
         db_run.status = DBScrapeRunStatus.failed
@@ -726,6 +723,234 @@ async def get_heygen_avatars():
                 {"avatar_id": "Angela-in-T-shirt-20220819", "name": "Angela", "preview_image_url": "https://files.heygen.ai/avatar/v3/Angela-in-T-shirt-20220819/full/preview_target.webp"},
                 {"avatar_id": "Anna_public_3_20240108", "name": "Anna", "preview_image_url": "https://files.heygen.ai/avatar/v3/Anna_public_3_20240108/full/preview_target.webp"},
             ]}
+
+
+# Cache for HeyGen avatars (refresh every 10 minutes)
+_heygen_avatar_cache = {
+    "video_avatars": [],
+    "talking_photos": [],
+    "last_fetched": None
+}
+HEYGEN_CACHE_TTL = 600  # 10 minutes
+
+
+async def _fetch_heygen_avatars():
+    """Fetch all avatars from HeyGen API and cache them."""
+    import time
+
+    # Check cache validity
+    if (_heygen_avatar_cache["last_fetched"] and
+        time.time() - _heygen_avatar_cache["last_fetched"] < HEYGEN_CACHE_TTL and
+        _heygen_avatar_cache["video_avatars"]):
+        return _heygen_avatar_cache
+
+    api_key = os.getenv("HEYGEN_API_KEY")
+    if not api_key:
+        return {
+            "video_avatars": [
+                {"avatar_id": "Angela-in-T-shirt-20220819", "avatar_name": "Angela", "preview_image_url": "https://files.heygen.ai/avatar/v3/Angela-in-T-shirt-20220819/full/preview_target.webp", "avatar_type": "video"},
+                {"avatar_id": "Anna_public_3_20240108", "avatar_name": "Anna", "preview_image_url": "https://files.heygen.ai/avatar/v3/Anna_public_3_20240108/full/preview_target.webp", "avatar_type": "video"},
+            ],
+            "talking_photos": [],
+            "last_fetched": time.time()
+        }
+
+    video_avatars = []
+    talking_photos = []
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        headers = {"X-Api-Key": api_key, "Accept": "application/json"}
+
+        # Fetch all avatars from HeyGen v2 API
+        try:
+            avatar_response = await client.get(
+                "https://api.heygen.com/v2/avatars",
+                headers=headers
+            )
+            if avatar_response.status_code == 200:
+                avatar_data = avatar_response.json()
+                data = avatar_data.get("data", {})
+
+                # Process video avatars from the "avatars" array
+                avatars = data.get("avatars", [])
+                for avatar in avatars:
+                    video_avatars.append({
+                        "avatar_id": avatar.get("avatar_id"),
+                        "avatar_name": avatar.get("avatar_name", "Unknown"),
+                        "preview_image_url": avatar.get("preview_image_url", ""),
+                        "preview_video_url": avatar.get("preview_video_url", ""),
+                        "gender": avatar.get("gender", ""),
+                        "avatar_type": "video",
+                        "premium": avatar.get("premium", False),
+                    })
+
+                # Process talking photos from the "talking_photos" array
+                photos = data.get("talking_photos", [])
+                for photo in photos:
+                    talking_photos.append({
+                        "avatar_id": photo.get("talking_photo_id"),
+                        "avatar_name": photo.get("talking_photo_name", "Unknown"),
+                        "preview_image_url": photo.get("preview_image_url", ""),
+                        "avatar_type": "talking_photo",
+                    })
+
+                print(f"HeyGen v2 API: Cached {len(video_avatars)} video avatars, {len(talking_photos)} talking photos")
+            else:
+                print(f"HeyGen v2/avatars failed with status {avatar_response.status_code}: {avatar_response.text}")
+        except Exception as e:
+            import traceback
+            print(f"HeyGen v2/avatars error: {e}")
+            traceback.print_exc()
+
+        # Fetch talking photos from v1 endpoint only if v2 didn't return any
+        if not talking_photos:
+            try:
+                tp_response = await client.get(
+                    "https://api.heygen.com/v1/talking_photo.list",
+                    headers={"X-Api-Key": api_key, "Content-Type": "application/json"}
+                )
+                if tp_response.status_code == 200:
+                    tp_data = tp_response.json()
+                    photos = tp_data.get("data", [])
+
+                    for photo in photos:
+                        photo_id = photo.get("id")
+                        if photo_id:
+                            talking_photos.append({
+                                "avatar_id": photo_id,
+                                "avatar_name": photo.get("name") or f"Photo {photo_id[:8]}...",
+                                "preview_image_url": photo.get("image_url", ""),
+                                "avatar_type": "talking_photo",
+                                "is_preset": photo.get("is_preset", False)
+                            })
+                    print(f"HeyGen v1 talking_photo.list fallback: Added {len(photos)} photos")
+            except Exception as e:
+                print(f"HeyGen talking_photo.list error: {e}")
+
+    # If no video avatars from API, fall back to known public avatars
+    if not video_avatars:
+        print("No video avatars from API, using fallback list")
+        video_avatars = [
+            {"avatar_id": "Angela-in-T-shirt-20220819", "avatar_name": "Angela", "preview_image_url": "https://files.heygen.ai/avatar/v3/Angela-in-T-shirt-20220819/full/preview_target.webp", "avatar_type": "video"},
+            {"avatar_id": "Anna_public_3_20240108", "avatar_name": "Anna", "preview_image_url": "https://files.heygen.ai/avatar/v3/Anna_public_3_20240108/full/preview_target.webp", "avatar_type": "video"},
+            {"avatar_id": "Kristin_pubblic_3_20240108", "avatar_name": "Kristin", "preview_image_url": "https://files.heygen.ai/avatar/v3/Kristin_pubblic_3_20240108/full/preview_target.webp", "avatar_type": "video"},
+            {"avatar_id": "josh_lite3_20230714", "avatar_name": "Josh", "preview_image_url": "https://files.heygen.ai/avatar/v3/josh_lite3_20230714/full/preview_target.webp", "avatar_type": "video"},
+            {"avatar_id": "Kayla-incasualsuit-20220818", "avatar_name": "Kayla", "preview_image_url": "https://files.heygen.ai/avatar/v3/Kayla-incasualsuit-20220818/full/preview_target.webp", "avatar_type": "video"},
+            {"avatar_id": "Briana_expressive_public_20240426", "avatar_name": "Briana", "preview_image_url": "https://files.heygen.ai/avatar/v3/Briana_expressive_public_20240426/full/preview_target.webp", "avatar_type": "video"},
+        ]
+
+    # Update cache
+    _heygen_avatar_cache["video_avatars"] = video_avatars
+    _heygen_avatar_cache["talking_photos"] = talking_photos
+    _heygen_avatar_cache["last_fetched"] = time.time()
+
+    return _heygen_avatar_cache
+
+
+@app.get("/api/settings/heygen-avatars")
+async def get_heygen_avatars_categorized(
+    avatar_type: str = "video",
+    page: int = 1,
+    limit: int = 24,
+    search: str = None
+):
+    """Fetch avatars from HeyGen API with pagination.
+
+    Args:
+        avatar_type: "video" or "talking_photo"
+        page: Page number (1-indexed)
+        limit: Items per page (default 24)
+        search: Optional search term to filter by name
+    """
+    cache = await _fetch_heygen_avatars()
+
+    # Select the right list based on type
+    if avatar_type == "talking_photo":
+        all_items = cache["talking_photos"]
+    else:
+        all_items = cache["video_avatars"]
+
+    # Apply search filter if provided
+    if search:
+        search_lower = search.lower()
+        all_items = [a for a in all_items if search_lower in a.get("avatar_name", "").lower()]
+
+    # Calculate pagination
+    total = len(all_items)
+    total_pages = (total + limit - 1) // limit
+    start = (page - 1) * limit
+    end = start + limit
+
+    items = all_items[start:end]
+
+    return {
+        "items": items,
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": total_pages,
+        "has_more": page < total_pages,
+        # Include totals for tab counts
+        "video_avatars_total": len(cache["video_avatars"]),
+        "talking_photos_total": len(cache["talking_photos"])
+    }
+
+
+@app.get("/api/settings/elevenlabs-voices")
+async def get_elevenlabs_voices_categorized():
+    """Fetch voices from ElevenLabs API, separating cloned voices from library voices."""
+    api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not api_key:
+        return {
+            "cloned_voices": [],
+            "library_voices": [
+                {"voice_id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "category": "premade", "preview_url": "", "labels": {"gender": "female", "accent": "american"}},
+                {"voice_id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi", "category": "premade", "preview_url": "", "labels": {"gender": "female", "accent": "american"}},
+                {"voice_id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella", "category": "premade", "preview_url": "", "labels": {"gender": "female", "accent": "american"}},
+            ]
+        }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": api_key}
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            cloned_voices = []
+            library_voices = []
+
+            for v in data.get("voices", []):
+                voice_data = {
+                    "voice_id": v["voice_id"],
+                    "name": v["name"],
+                    "category": v.get("category", "premade"),
+                    "preview_url": v.get("preview_url", ""),
+                    "labels": v.get("labels", {}),
+                    "description": v.get("description", ""),
+                    "sharing": v.get("sharing")
+                }
+
+                # Cloned voices have category "cloned" or are user-created
+                if v.get("category") == "cloned" or v.get("category") == "professional":
+                    cloned_voices.append(voice_data)
+                else:
+                    library_voices.append(voice_data)
+
+            return {
+                "cloned_voices": cloned_voices,
+                "library_voices": library_voices
+            }
+        except Exception as e:
+            print(f"ElevenLabs API Error: {e}")
+            return {
+                "cloned_voices": [],
+                "library_voices": [
+                    {"voice_id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "category": "premade", "preview_url": "", "labels": {"gender": "female", "accent": "american"}},
+                ]
+            }
 
 
 @app.get("/api/config/character", response_model=CharacterConfig)
@@ -1131,9 +1356,11 @@ def get_all_settings(db: Session = Depends(get_db)):
         "audio": {
             "original_volume": audio.original_volume if audio else 0.7,
             "avatar_volume": audio.avatar_volume if audio else 1.0,
+            "music_volume": getattr(audio, 'music_volume', 0.3) if audio else 0.3,
             "ducking_enabled": audio.ducking_enabled if audio else True,
             "avatar_delay_seconds": audio.avatar_delay_seconds if audio else 3.0,
-            "duck_to_percent": audio.duck_to_percent if audio else 0.5
+            "duck_to_percent": audio.duck_to_percent if audio else 0.5,
+            "music_autoduck": getattr(audio, 'music_autoduck', True) if audio else True
         },
         "video": {
             "output_width": video.output_width if video else 1080,
@@ -1145,3 +1372,184 @@ def get_all_settings(db: Session = Depends(get_db)):
         },
         "llm": {s.key: s.value for s in llm}
     }
+
+
+# ==================== Brand Persona Settings ====================
+
+from models import BrandPersona as BrandPersonaModel
+from schemas import BrandPersonaBase, BrandPersonaUpdate, BrandPersonaResponse
+
+@app.get("/api/settings/persona", response_model=BrandPersonaResponse)
+def get_brand_persona(db: Session = Depends(get_db)):
+    """Get brand persona settings"""
+    persona = db.query(BrandPersonaModel).filter(BrandPersonaModel.id == 1).first()
+    if not persona:
+        # Create default persona
+        persona = BrandPersonaModel(id=1)
+        db.add(persona)
+        db.commit()
+        db.refresh(persona)
+    return persona
+
+
+@app.put("/api/settings/persona", response_model=BrandPersonaResponse)
+def update_brand_persona(update: BrandPersonaUpdate, db: Session = Depends(get_db)):
+    """Update brand persona settings"""
+    persona = db.query(BrandPersonaModel).filter(BrandPersonaModel.id == 1).first()
+    if not persona:
+        persona = BrandPersonaModel(id=1)
+        db.add(persona)
+
+    # Update only provided fields
+    update_data = update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if value is not None:
+            setattr(persona, field, value)
+
+    db.commit()
+    db.refresh(persona)
+    return persona
+
+
+# ==================== API Credits / Usage ====================
+
+@app.get("/api/credits")
+async def get_api_credits():
+    """Fetch remaining credits/usage from all external API services."""
+    results = {}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # ElevenLabs - GET /v1/user/subscription
+        elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
+        if elevenlabs_key:
+            try:
+                resp = await client.get(
+                    "https://api.elevenlabs.io/v1/user/subscription",
+                    headers={"xi-api-key": elevenlabs_key}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results["elevenlabs"] = {
+                        "status": "ok",
+                        "character_count": data.get("character_count", 0),
+                        "character_limit": data.get("character_limit", 0),
+                        "remaining": data.get("character_limit", 0) - data.get("character_count", 0),
+                        "tier": data.get("tier", "unknown"),
+                        "next_reset": data.get("next_character_count_reset_unix")
+                    }
+                else:
+                    results["elevenlabs"] = {"status": "error", "message": f"HTTP {resp.status_code}"}
+            except Exception as e:
+                results["elevenlabs"] = {"status": "error", "message": str(e)}
+        else:
+            results["elevenlabs"] = {"status": "not_configured"}
+
+        # HeyGen - GET /v2/user/remaining_quota
+        heygen_key = os.getenv("HEYGEN_API_KEY")
+        if heygen_key:
+            try:
+                resp = await client.get(
+                    "https://api.heygen.com/v2/user/remaining_quota",
+                    headers={"X-Api-Key": heygen_key}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    quota = data.get("data", {}).get("remaining_quota", 0)
+                    # HeyGen quota is in seconds, divide by 60 for credits
+                    results["heygen"] = {
+                        "status": "ok",
+                        "remaining_quota_seconds": quota,
+                        "remaining_credits": round(quota / 60, 1) if quota else 0,
+                        "details": data.get("data", {}).get("details", {})
+                    }
+                else:
+                    results["heygen"] = {"status": "error", "message": f"HTTP {resp.status_code}"}
+            except Exception as e:
+                results["heygen"] = {"status": "error", "message": str(e)}
+        else:
+            results["heygen"] = {"status": "not_configured"}
+
+        # OpenRouter - GET /api/v1/auth/key (returns credits info)
+        openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        if openrouter_key:
+            try:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/auth/key",
+                    headers={"Authorization": f"Bearer {openrouter_key}"}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # OpenRouter returns usage and limit in USD
+                    key_data = data.get("data", {})
+                    results["openrouter"] = {
+                        "status": "ok",
+                        "usage_usd": key_data.get("usage", 0),
+                        "limit_usd": key_data.get("limit"),
+                        "remaining_usd": (key_data.get("limit") or 0) - (key_data.get("usage") or 0) if key_data.get("limit") else None,
+                        "is_free_tier": key_data.get("is_free_tier", False),
+                        "rate_limit": key_data.get("rate_limit", {})
+                    }
+                else:
+                    results["openrouter"] = {"status": "error", "message": f"HTTP {resp.status_code}"}
+            except Exception as e:
+                results["openrouter"] = {"status": "error", "message": str(e)}
+        else:
+            results["openrouter"] = {"status": "not_configured"}
+
+        # Blotato - GET /v2/users/me (no credits endpoint available)
+        blotato_key = os.getenv("BLOTATO_API_KEY")
+        if blotato_key:
+            try:
+                resp = await client.get(
+                    "https://backend.blotato.com/v2/users/me",
+                    headers={"blotato-api-key": blotato_key}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results["blotato"] = {
+                        "status": "ok",
+                        "subscription_status": data.get("subscriptionStatus", "unknown"),
+                        "message": "Credits visible in Blotato dashboard only"
+                    }
+                else:
+                    results["blotato"] = {"status": "error", "message": f"HTTP {resp.status_code}"}
+            except Exception as e:
+                results["blotato"] = {"status": "error", "message": str(e)}
+        else:
+            results["blotato"] = {"status": "not_configured"}
+
+        # OpenAI - No direct credits endpoint, but we can check billing via dashboard API
+        # Using the /v1/dashboard/billing/credit_grants endpoint (unofficial but commonly used)
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            try:
+                # Try the organization billing endpoint
+                resp = await client.get(
+                    "https://api.openai.com/v1/organization/usage",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    params={"date": datetime.now().strftime("%Y-%m-%d")}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results["openai"] = {
+                        "status": "ok",
+                        "message": "Usage tracking available via dashboard",
+                        "data": data
+                    }
+                else:
+                    # Fallback - just indicate it's configured
+                    results["openai"] = {
+                        "status": "ok",
+                        "message": "API key configured. Check usage at platform.openai.com/usage",
+                        "configured": True
+                    }
+            except Exception as e:
+                results["openai"] = {
+                    "status": "ok",
+                    "message": "API key configured. Check usage at platform.openai.com/usage",
+                    "configured": True
+                }
+        else:
+            results["openai"] = {"status": "not_configured"}
+
+    return {"credits": results, "fetched_at": datetime.now().isoformat()}

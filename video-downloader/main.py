@@ -55,16 +55,27 @@ class ComposeRequest(BaseModel):
     script_id: str
     avatar_path: str  # Path to avatar video (green screen)
     background_path: str  # Path to background/source video
+    audio_path: Optional[str] = None  # Optional separate audio track
     music_path: Optional[str] = None  # Optional background music
     output_filename: Optional[str] = None
     use_gpu: bool = True
+    # Avatar positioning settings
+    avatar_scale: float = 0.75  # Scale factor for avatar
+    avatar_offset_x: int = -250  # Horizontal offset (negative = left)
+    avatar_offset_y: int = 600  # Vertical offset from bottom
+    greenscreen_color: str = "0x00FF00"  # Chroma key color
+    # Audio mixing settings
+    original_volume: float = 0.7
+    avatar_volume: float = 1.0
+    music_volume: float = 0.3
 
 
 class CaptionRequest(BaseModel):
     """Request to burn captions onto video"""
     script_id: str
     video_path: str
-    srt_path: str  # Path to SRT subtitle file
+    srt_path: Optional[str] = None  # Path to SRT subtitle file
+    ass_path: Optional[str] = None  # Path to ASS subtitle file (for karaoke)
     output_filename: Optional[str] = None
     font_size: int = 48
     font_color: str = "white"
@@ -175,67 +186,165 @@ async def health_check():
 
 # ============ DOWNLOAD ENDPOINTS ============
 
-@app.post("/download", response_model=DownloadResponse)
-async def download_video(request: DownloadRequest):
+def detect_platform(url: str) -> str:
+    """Detect platform from URL"""
+    url_lower = url.lower()
+    if "tiktok.com" in url_lower:
+        return "tiktok"
+    elif "instagram.com" in url_lower:
+        return "instagram"
+    elif "youtube.com" in url_lower or "youtu.be" in url_lower:
+        return "youtube"
+    elif "twitter.com" in url_lower or "x.com" in url_lower:
+        return "twitter"
+    elif "reddit.com" in url_lower:
+        return "reddit"
+    elif "facebook.com" in url_lower or "fb.watch" in url_lower:
+        return "facebook"
+    return "unknown"
+
+
+def download_with_ytdlp(url: str, output_path: Path, platform: str) -> tuple[bool, str, dict]:
     """
-    Download a video from TikTok, Instagram, or YouTube using yt-dlp
+    Try downloading with yt-dlp using platform-specific settings.
+    Returns (success, error_message, metadata)
     """
-    base_filename = request.filename or str(uuid.uuid4())[:8]
-    output_path = DOWNLOAD_DIR / f"{base_filename}.{request.format}"
+    # Platform-specific options
+    platform_opts = []
+
+    if platform == "tiktok":
+        # TikTok needs impersonation to avoid IP blocks
+        platform_opts = [
+            "--impersonate", "chrome",
+            "--extractor-args", "tiktok:api_hostname=api22-normal-c-alisg.tiktokv.com"
+        ]
+    elif platform == "instagram":
+        # Instagram also benefits from impersonation
+        platform_opts = [
+            "--impersonate", "chrome"
+        ]
+    elif platform == "youtube":
+        # YouTube works but may need specific format selection
+        platform_opts = [
+            "--extractor-args", "youtube:player_client=web"
+        ]
+    elif platform == "twitter":
+        # Twitter/X - try guest token first
+        platform_opts = []
 
     cmd = [
         "yt-dlp",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "-o", str(output_path),
         "--no-playlist",
-        "--merge-output-format", request.format,
+        "--merge-output-format", "mp4",
         "--no-warnings",
         "--print-json",
-        request.url
+        *platform_opts,
+        url
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"yt-dlp failed: {result.stderr}")
+        if result.returncode == 0 and output_path.exists():
+            # Parse metadata from stdout
+            metadata = {}
+            try:
+                for line in result.stdout.strip().split('\n'):
+                    if line.startswith('{'):
+                        metadata = json.loads(line)
+                        break
+            except:
+                pass
+            return True, "", metadata
 
-        # Find the downloaded file
-        if not output_path.exists():
-            possible_files = list(DOWNLOAD_DIR.glob(f"{base_filename}.*"))
-            if possible_files:
-                output_path = possible_files[0]
-            else:
-                raise HTTPException(status_code=500, detail="Download completed but file not found")
-
-        file_size = output_path.stat().st_size
-
-        # Parse metadata
-        metadata = {}
-        try:
-            for line in result.stdout.strip().split('\n'):
-                if line.startswith('{'):
-                    metadata = json.loads(line)
-                    break
-        except:
-            pass
-
-        return DownloadResponse(
-            success=True,
-            filename=output_path.name,
-            path=str(output_path),
-            size=file_size,
-            duration=metadata.get("duration"),
-            title=metadata.get("title"),
-            platform=metadata.get("extractor_key")
-        )
-
+        return False, result.stderr, {}
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Download timed out")
-    except HTTPException:
-        raise
+        return False, "Download timed out", {}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+        return False, str(e), {}
+
+
+def download_with_ytdlp_fallback(url: str, output_path: Path, platform: str) -> tuple[bool, str, dict]:
+    """
+    Try alternative yt-dlp approaches if main method fails
+    """
+    # Try without impersonation but with cookies simulation
+    fallback_opts = [
+        ["--cookies-from-browser", "chrome"],  # Try browser cookies
+        ["--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"],  # Mobile UA
+        [],  # Plain attempt
+    ]
+
+    for opts in fallback_opts:
+        cmd = [
+            "yt-dlp",
+            "-f", "best[ext=mp4]/best",
+            "-o", str(output_path),
+            "--no-playlist",
+            "--merge-output-format", "mp4",
+            *opts,
+            url
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1000:
+                return True, "", {}
+        except:
+            continue
+
+    return False, "All fallback methods failed", {}
+
+
+@app.post("/download", response_model=DownloadResponse)
+async def download_video(request: DownloadRequest):
+    """
+    Download a video from TikTok, Instagram, YouTube, Twitter, etc.
+    Uses platform-specific strategies and fallbacks.
+    """
+    base_filename = request.filename or str(uuid.uuid4())[:8]
+    output_path = DOWNLOAD_DIR / f"{base_filename}.{request.format}"
+
+    # Remove existing file if present
+    if output_path.exists():
+        output_path.unlink()
+
+    platform = detect_platform(request.url)
+
+    # Try primary download method
+    success, error, metadata = download_with_ytdlp(request.url, output_path, platform)
+
+    # Try fallback if primary failed
+    if not success or not output_path.exists():
+        success, error, metadata = download_with_ytdlp_fallback(request.url, output_path, platform)
+
+    # Check for file
+    if not output_path.exists():
+        # Check for files with different extensions
+        possible_files = list(DOWNLOAD_DIR.glob(f"{base_filename}.*"))
+        if possible_files:
+            output_path = possible_files[0]
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Download failed for {platform}: {error}. The platform may be blocking server IPs."
+            )
+
+    file_size = output_path.stat().st_size
+    if file_size < 1000:
+        raise HTTPException(status_code=500, detail="Downloaded file is too small, likely failed")
+
+    return DownloadResponse(
+        success=True,
+        filename=output_path.name,
+        path=str(output_path),
+        size=file_size,
+        duration=metadata.get("duration"),
+        title=metadata.get("title"),
+        platform=platform
+    )
 
 
 # ============ VIDEO PROCESSING ENDPOINTS ============
@@ -247,7 +356,7 @@ async def compose_video(request: ComposeRequest):
 
     This creates TikTok-style video with:
     - Source video as background (scaled to 9:16)
-    - Avatar with chroma key removal overlaid at bottom
+    - Avatar with chroma key removal overlaid with configurable position
     - Optional background music mixed with avatar audio
     """
     output_filename = request.output_filename or f"{request.script_id}_combined.mp4"
@@ -258,8 +367,15 @@ async def compose_video(request: ComposeRequest):
 
     # Build FFmpeg filter complex
     filter_parts = []
-    inputs = ["-i", request.avatar_path, "-i", request.background_path]
+    inputs = ["-i", request.background_path, "-i", request.avatar_path]
     input_count = 2
+    audio_index = 1  # Avatar audio by default
+
+    # Add separate audio track if provided
+    if request.audio_path and Path(request.audio_path).exists():
+        inputs.extend(["-i", request.audio_path])
+        audio_index = input_count
+        input_count += 1
 
     # Add music if provided
     music_index = -1
@@ -269,20 +385,29 @@ async def compose_video(request: ComposeRequest):
         input_count += 1
 
     # Scale and crop background to 9:16 (1080x1920)
-    filter_parts.append("[1:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]")
+    filter_parts.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[bg]")
 
-    # Chroma key the avatar (green screen removal)
-    filter_parts.append("[0:v]chromakey=0x00FF00:0.1:0.2[avatar_keyed]")
+    # Chroma key and scale the avatar
+    filter_parts.append(
+        f"[1:v]chromakey={request.greenscreen_color}:0.1:0.2,"
+        f"scale=iw*{request.avatar_scale}:ih*{request.avatar_scale}[avatar_keyed]"
+    )
 
-    # Overlay avatar on background (centered at bottom with 100px margin)
-    filter_parts.append("[bg][avatar_keyed]overlay=(W-w)/2:H-h-100:shortest=1[outv]")
+    # Calculate overlay position (bottom-left with offsets)
+    # X: 10 + offset_x (negative offset moves left)
+    # Y: (H-h-10) + offset_y (positive offset moves down from bottom)
+    x_pos = f"(10+{request.avatar_offset_x})"
+    y_pos = f"((H-h-10)+{request.avatar_offset_y})"
+    filter_parts.append(f"[bg][avatar_keyed]overlay={x_pos}:{y_pos}:shortest=1[outv]")
 
     # Audio mixing
     if music_index >= 0:
-        filter_parts.append(f"[{music_index}:a]volume=0.1[music_low]")
-        filter_parts.append("[0:a][music_low]amix=inputs=2:duration=first[outa]")
+        # Mix avatar/voice audio with background music
+        filter_parts.append(f"[{audio_index}:a]volume={request.avatar_volume}[voice]")
+        filter_parts.append(f"[{music_index}:a]volume={request.music_volume}[music_low]")
+        filter_parts.append("[voice][music_low]amix=inputs=2:duration=first[outa]")
     else:
-        filter_parts.append("[0:a]aformat=channel_layouts=stereo[outa]")
+        filter_parts.append(f"[{audio_index}:a]volume={request.avatar_volume},aformat=channel_layouts=stereo[outa]")
 
     filter_complex = ";".join(filter_parts)
 
@@ -328,24 +453,32 @@ async def compose_video(request: ComposeRequest):
 @app.post("/caption")
 async def burn_captions(request: CaptionRequest):
     """
-    Burn SRT captions onto video (TikTok-style text overlay)
+    Burn SRT or ASS captions onto video (TikTok-style text overlay)
+    ASS files are used for karaoke-style word-by-word highlighting.
     """
-    output_filename = request.output_filename or f"{request.script_id}_captioned.mp4"
+    output_filename = request.output_filename or f"{request.script_id}_final.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     encoder, encoder_opts = get_gpu_encoder() if request.use_gpu else ("libx264", ["-preset", "fast", "-crf", "23"])
 
-    # Subtitle filter with styling
-    subtitle_filter = (
-        f"subtitles={request.srt_path}:force_style='"
-        f"FontSize={request.font_size},"
-        f"PrimaryColour=&H00FFFFFF,"  # White
-        f"OutlineColour=&H00000000,"  # Black outline
-        f"Outline=2,"
-        f"Shadow=1,"
-        f"Alignment=2,"  # Bottom center
-        f"MarginV=80'"  # Margin from bottom
-    )
+    # Use ASS if provided (for karaoke), otherwise SRT
+    if request.ass_path and Path(request.ass_path).exists():
+        # ASS has all styling built-in
+        subtitle_filter = f"ass={request.ass_path}"
+    elif request.srt_path:
+        # SRT with inline styling
+        subtitle_filter = (
+            f"subtitles={request.srt_path}:force_style='"
+            f"FontSize={request.font_size},"
+            f"PrimaryColour=&H00FFFFFF,"  # White
+            f"OutlineColour=&H00000000,"  # Black outline
+            f"Outline=2,"
+            f"Shadow=1,"
+            f"Alignment=2,"  # Bottom center
+            f"MarginV=80'"  # Margin from bottom
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Either srt_path or ass_path must be provided")
 
     cmd = [
         "ffmpeg", "-y",

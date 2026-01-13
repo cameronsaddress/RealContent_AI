@@ -145,6 +145,13 @@ class ContentIdeaBase(BaseModel):
     suggested_hook: Optional[str] = None
     status: ContentStatus = ContentStatus.pending
     error_message: Optional[str] = None
+    # Engagement metrics
+    views: Optional[int] = 0
+    likes: Optional[int] = 0
+    shares: Optional[int] = 0
+    comments: Optional[int] = 0
+    author: Optional[str] = None
+    author_followers: Optional[int] = 0
 
 
 class ContentIdeaCreate(ContentIdeaBase):
@@ -160,6 +167,12 @@ class ContentIdeaUpdate(BaseModel):
     suggested_hook: Optional[str] = None
     status: Optional[ContentStatus] = None
     error_message: Optional[str] = None
+    views: Optional[int] = None
+    likes: Optional[int] = None
+    shares: Optional[int] = None
+    comments: Optional[int] = None
+    author: Optional[str] = None
+    author_followers: Optional[int] = None
 
 
 class ContentIdea(ContentIdeaBase):
@@ -301,6 +314,10 @@ class ScrapeRunBase(BaseModel):
     niche: str
     hashtags: Optional[List[str]] = None
     platforms: Optional[List[str]] = ["tiktok", "instagram"]
+    # Enable 2-phase discovery: first find trending hashtags, then scrape
+    discover_hashtags: bool = False
+    # Seed keyword for hashtag discovery (e.g., "realtor")
+    seed_keyword: Optional[str] = None
 
 
 class ScrapeRunCreate(ScrapeRunBase):
@@ -335,12 +352,17 @@ class TrendItem(BaseModel):
 
 class ScrapeResponse(BaseModel):
     success: bool
-    niche: str
-    scrapedAt: str
-    totalScraped: int
-    analyzedCount: int
+    message: Optional[str] = None
+    niche: Optional[str] = None
+    scrapedAt: Optional[str] = None
+    totalScraped: Optional[int] = None
+    analyzedCount: Optional[int] = None
+    ideas_created: Optional[int] = None
+    analyzed_count: Optional[int] = None
     trends: Optional[List[TrendItem]] = None
     error: Optional[str] = None
+    task_id: Optional[str] = None
+    scrape_run_id: Optional[int] = None
 
 
 # ==================== NICHE PRESET SCHEMAS ====================
@@ -437,6 +459,20 @@ class VideoSettingsBase(BaseModel):
     preset: str = 'slow'
     greenscreen_enabled: bool = True
     greenscreen_color: str = '#00FF00'
+    # Avatar composition
+    avatar_position: str = 'bottom-left'
+    avatar_scale: float = 0.8
+    avatar_offset_x: int = -200
+    avatar_offset_y: int = 500
+    # Caption settings
+    caption_style: str = 'karaoke'
+    caption_font_size: int = 96
+    caption_font: str = 'Arial'
+    caption_color: str = '#FFFFFF'
+    caption_highlight_color: str = '#FFFF00'
+    caption_outline_color: str = '#000000'
+    caption_outline_width: int = 5
+    caption_position_y: int = 850
 
 
 class VideoSettingsUpdate(BaseModel):
@@ -448,9 +484,93 @@ class VideoSettingsUpdate(BaseModel):
     preset: Optional[str] = None
     greenscreen_enabled: Optional[bool] = None
     greenscreen_color: Optional[str] = None
+    # Avatar composition
+    avatar_position: Optional[str] = None
+    avatar_scale: Optional[float] = None
+    avatar_offset_x: Optional[int] = None
+    avatar_offset_y: Optional[int] = None
+    # Caption settings
+    caption_style: Optional[str] = None
+    caption_font_size: Optional[int] = None
+    caption_font: Optional[str] = None
+    caption_color: Optional[str] = None
+    caption_highlight_color: Optional[str] = None
+    caption_outline_color: Optional[str] = None
+    caption_outline_width: Optional[int] = None
+    caption_position_y: Optional[int] = None
 
 
 class VideoSettingsResponse(VideoSettingsBase):
+    id: int
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== BRAND PERSONA SCHEMAS ====================
+
+class BrandPersonaBase(BaseModel):
+    # Identity
+    name: str = "Beth Anderson"
+    title: str = "Real Estate Expert"
+    location: str = "North Idaho & Spokane area"
+    bio: str = "A knowledgeable and approachable real estate professional who helps first-time homebuyers and families find their dream homes in the beautiful Pacific Northwest."
+
+    # Tone & Voice
+    tone: str = "professional"  # professional, casual, energetic, warm, authoritative
+    energy_level: str = "warm"  # calm, warm, energetic, high-energy
+    humor_style: str = "light"  # none, light, playful, witty
+
+    # Values & Approach
+    core_values: List[str] = [
+        "Honesty and transparency",
+        "Client-first approach",
+        "Education over sales",
+        "Community connection",
+        "Professional excellence"
+    ]
+
+    # Content Boundaries
+    content_boundaries: List[str] = [
+        "No dancing or twerking - we maintain professional dignity",
+        "No clickbait or misleading claims",
+        "No putting down other realtors or competitors",
+        "No political or controversial topics",
+        "No inappropriate language or innuendo"
+    ]
+
+    # How we respond to different content
+    response_style: str = """When reviewing viral content:
+- If the content is professional and educational: Praise it, add our own insights, and connect it to our local market
+- If the content is entertaining but unprofessional: Acknowledge the entertainment value, then pivot to show a more professional approach
+- If the content has misinformation: Gently correct it while being respectful to the creator
+- If the content is cringe or inappropriate: Focus on the underlying topic, not the presentation style
+- Always provide genuine value - actionable tips, local insights, or helpful information"""
+
+    # Signature phrases
+    signature_intro: str = "Hey neighbors!"
+    signature_cta: str = "DM me to chat about your home journey in {location}"
+    hashtags: List[str] = ["CDAhomes", "LibertyLake", "NorthIdahoRealEstate", "PNWliving"]
+
+
+class BrandPersonaUpdate(BaseModel):
+    name: Optional[str] = None
+    title: Optional[str] = None
+    location: Optional[str] = None
+    bio: Optional[str] = None
+    tone: Optional[str] = None
+    energy_level: Optional[str] = None
+    humor_style: Optional[str] = None
+    core_values: Optional[List[str]] = None
+    content_boundaries: Optional[List[str]] = None
+    response_style: Optional[str] = None
+    signature_intro: Optional[str] = None
+    signature_cta: Optional[str] = None
+    hashtags: Optional[List[str]] = None
+
+
+class BrandPersonaResponse(BrandPersonaBase):
     id: int
     updated_at: datetime
 

@@ -1,48 +1,57 @@
-# AI Video Content Pipeline
+# SocialGen - AI Video Content Pipeline
 
-Automated video production system for real estate content creators. Discovers trending content, generates scripts, creates AI avatar videos with captions, and publishes to multiple social platforms - all autonomously.
+Automated video production system for real estate content creators. Discovers trending content, generates scripts, creates AI avatar videos with karaoke-style captions, and publishes to multiple social platforms - all autonomously.
 
-## Architecture Overview
+## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           COMPLETE PIPELINE                                  │
-│                                                                             │
-│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐       │
-│  │ SCRAPE  │ → │  AUTO   │ → │ SCRIPT  │ → │   GET   │ → │ CREATE  │       │
-│  │ TRENDS  │   │ TRIGGER │   │   GEN   │   │  VIDEO  │   │  VOICE  │       │
-│  └─────────┘   └─────────┘   └─────────┘   └─────────┘   └─────────┘       │
-│       │             │             │             │             │             │
-│       ▼             ▼             ▼             ▼             ▼             │
-│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐       │
-│  │ CREATE  │ ← │ COMBINE │ ← │ CAPTION │ ← │ PUBLISH │ ← │ANALYTICS│       │
-│  │ AVATAR  │   │  VIDS   │   │  (SRT)  │   │(Blotato)│   │ (Stats) │       │
-│  └─────────┘   └─────────┘   └─────────┘   └─────────┘   └─────────┘       │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+                            ┌─────────────────────────────────────────────────────────────────┐
+                            │                    SOCIALGEN PIPELINE                            │
+                            │                                                                  │
+┌──────────────┐           │  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐          │
+│   Frontend   │◄──────────┼──│ FastAPI │◄──│ Celery  │──►│  Redis  │◄──│  Beat   │          │
+│   React UI   │           │  │ Backend │   │ Worker  │   │  Queue  │   │Scheduler│          │
+└──────────────┘           │  └────┬────┘   └────┬────┘   └─────────┘   └─────────┘          │
+                            │       │            │                                             │
+                            │       ▼            │                                             │
+                            │  ┌─────────┐       │    ┌───────────────────────────────────┐   │
+                            │  │PostgreSQL│       │    │         GPU Video Processor       │   │
+                            │  │ Database │       └───►│  FFmpeg + NVENC (h264_nvenc)     │   │
+                            │  └─────────┘            │  - Chromakey composition          │   │
+                            │                          │  - Karaoke caption burning        │   │
+                            │                          └───────────────────────────────────┘   │
+                            │                                                                  │
+                            │  ┌─────────────────────────────────────────────────────────────┐ │
+                            │  │                    EXTERNAL SERVICES                         │ │
+                            │  │  Apify (Scraping) │ Grok 4.1 (LLM) │ ElevenLabs (TTS)       │ │
+                            │  │  HeyGen (Avatar)  │ Whisper (STT)  │ Blotato (Publishing)   │ │
+                            │  │  Dropbox (Storage)│ Pexels (B-Roll)                         │ │
+                            │  └─────────────────────────────────────────────────────────────┘ │
+                            └──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Workflow Engine | n8n | Orchestrates the entire pipeline |
-| Backend API | FastAPI + PostgreSQL | Data persistence & REST API |
-| Frontend | React | Dashboard for monitoring & control |
-| LLM | Grok 4.1 (OpenRouter) | Script generation & trend analysis |
-| Voice | ElevenLabs | Text-to-speech generation |
-| Avatar | HeyGen | AI avatar video creation |
-| B-Roll | Pexels | Stock video footage |
-| Captions | OpenAI Whisper | Automatic transcription |
-| Video Processing | FFmpeg | Compositing & caption burn |
-| Scraping | Apify | TikTok/Instagram trend discovery |
-| Publishing | Blotato | Multi-platform distribution |
+| **Orchestration** | Celery + Redis | Task queue and pipeline orchestration |
+| **Backend API** | FastAPI + PostgreSQL | REST API and data persistence |
+| **Frontend** | React | Dashboard for monitoring and control |
+| **GPU Processing** | FFmpeg + NVENC | Hardware-accelerated video encoding |
+| **LLM** | Grok 4.1 (OpenRouter) | Script generation and trend analysis |
+| **Voice** | ElevenLabs | Text-to-speech generation |
+| **Avatar** | HeyGen | AI avatar video creation (green screen) |
+| **Transcription** | OpenAI Whisper | Word-level timing for karaoke captions |
+| **Scraping** | Apify | TikTok/Instagram trend discovery |
+| **Publishing** | Blotato | Multi-platform distribution |
+| **Storage** | Dropbox | Video hosting for publishing |
 
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
-- API keys for: OpenRouter, ElevenLabs, HeyGen, Pexels, OpenAI, Apify, Blotato
+- Docker with NVIDIA GPU support (nvidia-container-toolkit)
+- NVIDIA GPU with NVENC support
+- API keys for external services
 
 ### 1. Clone and Configure
 
@@ -61,429 +70,374 @@ docker compose up -d
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| n8n | http://100.83.153.43:5678 | Workflow editor |
 | Frontend | http://100.83.153.43:3000 | Dashboard UI |
 | Backend API | http://100.83.153.43:8000 | REST API |
-| PostgreSQL | localhost:5433 | Database |
+| API Docs | http://100.83.153.43:8000/docs | Swagger documentation |
+| Video Processor | http://100.83.153.43:8080 | GPU encoding service |
 
-### 4. Import Workflow
-
-```bash
-docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
-```
-
-### 5. Import Credentials
+### 4. Run Your First Pipeline
 
 ```bash
-docker exec n8n n8n import:credentials --input=/home/node/workflows/credentials.json
+# Trigger pipeline for a content idea
+curl -X POST http://100.83.153.43:8000/api/pipeline/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"content_idea_id": 141}'
+
+# Check task status
+curl http://100.83.153.43:8000/api/pipeline/status/{task_id}
 ```
 
-### 6. Configure Credentials in n8n (Manual Method)
+## Pipeline Stages
 
-If import fails, navigate to Settings → Credentials and create:
+The pipeline processes content through 8 stages, with each stage checking for existing assets to avoid redundant API calls:
 
-Navigate to Settings → Credentials and create:
+### Stage 1: Content Retrieval
+- Fetches approved content idea from database
+- Extracts source URL, pillar, and metadata
 
-| Credential Name | Type | Configuration |
-|-----------------|------|---------------|
-| `openrouter` | HTTP Header Auth | Name: `Authorization`, Value: `Bearer sk-or-v1-...` |
-| `elevenlabs` | HTTP Header Auth | Name: `xi-api-key`, Value: `sk_...` |
-| `heygen` | HTTP Header Auth | Name: `X-Api-Key`, Value: `...` |
-| `pexels` | HTTP Header Auth | Name: `Authorization`, Value: `...` |
-| `openai` | HTTP Header Auth | Name: `Authorization`, Value: `Bearer sk-...` |
-| `apify` | HTTP Header Auth | Name: `Authorization`, Value: `Bearer apify_api_...` |
-| `blotato` | HTTP Header Auth | Name: `Authorization`, Value: `Bearer ...` |
+### Stage 2: Script Generation (Grok 4.1)
+- **Reuses existing:** Checks `scripts` table for `content_idea_id`
+- Generates hook, body, CTA, duration estimate
+- Creates platform-specific captions (TikTok, Instagram, YouTube, etc.)
+- Categorizes by content pillar:
+  - `market_intelligence` - Data, trends, analysis
+  - `educational_tips` - How-tos, tutorials
+  - `lifestyle_local` - Community content
+  - `brand_humanization` - Personal stories
 
-## Pipeline Sections
+### Stage 3: Voice Generation (ElevenLabs)
+- **Reuses existing:** Checks for `{script_id}_voice.mp3`
+- Generates TTS audio from full script
+- Saves to `/app/assets/audio/`
 
-### 1. SCRAPE - Trend Discovery
-**Triggers:** Daily at 6am UTC OR UI webhook
+### Stage 4: Avatar Generation (HeyGen)
+- **Reuses existing:** Checks for `{script_id}_avatar.mp4`
+- **Resume support:** Stores `heygen_video_id` in assets table
+- Uploads audio, creates video job, polls for completion
+- Downloads green screen avatar video to `/app/assets/avatar/`
 
-Discovers viral content from TikTok and Instagram using Apify scrapers. Analyzes with Grok 4.1 to score virality and categorize by content pillar.
+### Stage 5: Source Video Download (Apify)
+- **Reuses existing:** Checks for `{script_id}_source.mp4`
+- Downloads original TikTok/Instagram video via Apify
+- Handles watermark removal and CDN authentication
+- Saves to `/app/assets/videos/`
 
-```
-Webhook: POST /webhook/scrape-trends
-Body: {
-  "niche": "real estate",
-  "hashtags": ["realestate", "homebuying"],
-  "platforms": ["tiktok", "instagram"]
-}
-```
+### Stage 6: Video Composition (GPU FFmpeg)
+- **Reuses existing:** Checks for `{script_id}_combined.mp4`
+- Calls GPU video-processor service via HTTP
+- Chromakey removes green screen from avatar
+- Overlays avatar on source video with configurable position
+- Uses NVENC hardware encoding (h264_nvenc)
 
-### 2. AUTO TRIGGER - Pipeline Orchestrator
-**Triggers:** Every 15 minutes OR UI webhook
+### Stage 7: Caption Burning (GPU FFmpeg)
+- **Reuses existing:** Checks for `{script_id}_final.mp4`
+- Transcribes audio with Whisper (word-level timing)
+- Generates ASS file with karaoke effects (`\kf` tags)
+- Burns captions via GPU video-processor service
 
-Polls for approved content ideas and kicks off the full production pipeline.
+### Stage 8: Publishing
+- Uploads final video to Dropbox
+- Publishes to platforms via Blotato API
+- Records publish status in database
 
-```
-Webhook: POST /webhook/trigger-pipeline
-Body: { "content_idea_id": 123 }  // Optional - processes specific idea
-```
+## Asset Reuse Logic
 
-### 3. SCRIPT GEN - AI Scriptwriting
-**Input:** Approved content idea
-**Output:** Hook, body, CTA, duration estimate, suggested B-roll
+Each stage checks for existing assets before making expensive API calls:
 
-Uses Grok 4.1 to create viral scripts tailored to content pillars:
-- `market_intelligence` - Data, trends, market analysis
-- `educational_tips` - How-tos, tutorials, tips
-- `lifestyle_local` - Community, local content
-- `brand_humanization` - Personal stories, behind-the-scenes
+| Stage | Check Method | File Pattern |
+|-------|--------------|--------------|
+| Script | DB query `scripts.content_idea_id` | N/A |
+| Voice | `voice_exists(script_id)` | `audio/{script_id}_voice.mp3` |
+| Avatar | `avatar_exists(script_id)` | `avatar/{script_id}_avatar.mp4` |
+| Source | `source_video_exists(script_id)` | `videos/{script_id}_source.mp4` |
+| Combined | `combined_video_exists(script_id)` | `output/{script_id}_combined.mp4` |
+| Final | `final_video_exists(script_id)` | `output/{script_id}_final.mp4` |
 
-### 4. GET VIDEO - B-Roll Acquisition
-**Input:** Script with suggested scenes
-**Output:** Downloaded MP4 files
+**To force regeneration:** Delete the corresponding file before running the pipeline.
 
-Searches Pexels for portrait-orientation stock videos matching scene descriptions.
+## GPU Video Processing
 
-### 5. CREATE VOICE - TTS Generation
-**Input:** Full script text
-**Output:** MP3 voice file
+The video-processor container provides hardware-accelerated encoding:
 
-ElevenLabs text-to-speech with configurable voice ID and settings.
-
-### 6. CREATE AVATAR - AI Video
-**Input:** Audio file URL
-**Output:** Avatar video with green screen
-
-HeyGen generates lip-synced avatar video. Polls for completion then downloads.
-
-### 7. COMBINE VIDS - FFmpeg Compositing
-**Input:** Avatar video + B-roll clips
-**Output:** Combined video
-
-Chromakey removes green screen, overlays avatar on B-roll footage.
-
-### 8. CAPTION - Whisper + Burn
-**Input:** Combined video + audio
-**Output:** Final video with burned captions
-
-OpenAI Whisper generates SRT, FFmpeg burns styled subtitles.
-
-### 9. PUBLISH - Multi-Platform
-**Input:** Final video + generated captions
-**Output:** Published posts
-
-Blotato API distributes to TikTok, Instagram Reels, YouTube Shorts, etc.
-
-### 10. FILE SERVER - Asset Delivery
-Webhooks serve audio/video files to external APIs (HeyGen, Blotato):
-
-```
-GET /webhook/serve-audio/:script_id  → MP3
-GET /webhook/serve-video/:script_id  → MP4
-```
-
-## Database Schema
-
-### Core Tables
-
-```sql
-content_ideas     -- Scraped/imported content with status tracking
-scripts           -- Generated scripts linked to content ideas
-assets            -- Media files (audio, video, avatar)
-published         -- Published post records with platform URLs
-scrape_runs       -- Trend scrape history and results
-niche_presets     -- Saved niche configurations
-```
-
-### Status Flow
-
-```
-content_ideas: pending → approved → script_generating → script_ready → published
-scripts:       pending → script_ready → voice_generating → voice_ready
-assets:        pending → voice_ready → avatar_generating → avatar_ready → assembling → captioning → ready_to_publish → published
-```
-
-## API Reference
-
-### Content Ideas
-
+### Compose Endpoint
 ```bash
-# List ideas (with filters)
-GET /api/content-ideas?status=pending&pillar=educational_tips
-
-# Create idea
-POST /api/content-ideas
+POST http://video-processor:8080/compose
 {
-  "source_url": "https://tiktok.com/...",
-  "source_platform": "tiktok",
-  "original_text": "...",
-  "pillar": "educational_tips",
-  "viral_score": 8,
-  "suggested_hook": "...",
-  "status": "pending"
+  "script_id": "33",
+  "avatar_path": "/avatar/33_avatar.mp4",
+  "background_path": "/downloads/33_source.mp4",
+  "audio_path": "/audio/33_voice.mp3",
+  "avatar_scale": 0.75,
+  "avatar_offset_x": -250,
+  "avatar_offset_y": 600,
+  "greenscreen_color": "0x00FF00",
+  "use_gpu": true
 }
-
-# Update status
-PATCH /api/content-ideas/{id}
-{ "status": "approved" }
 ```
 
-### Scrape Operations
-
+### Caption Endpoint
 ```bash
-# Trigger scrape
-POST /api/scrape/run
+POST http://video-processor:8080/caption
 {
-  "niche": "real estate",
-  "hashtags": ["realestate", "homebuying"],
-  "platforms": ["tiktok", "instagram"]
-}
-
-# List scrape runs
-GET /api/scrape/runs
-
-# Get niche presets
-GET /api/niche-presets
-
-# Create preset
-POST /api/niche-presets
-{
-  "name": "Luxury Homes",
-  "keywords": ["luxury real estate", "million dollar homes"],
-  "hashtags": ["luxuryrealestate", "luxuryhomes"]
+  "script_id": "33",
+  "video_path": "/outputs/33_combined.mp4",
+  "ass_path": "/captions/33_captions.ass",
+  "use_gpu": true
 }
 ```
 
-### Pipeline Stats
+### Performance Comparison
+| Encoder | File Size | Encoding Time |
+|---------|-----------|---------------|
+| h264_nvenc (GPU) | ~14 MB | ~30 seconds |
+| libx264 (CPU) | ~200 MB | ~5 minutes |
 
+## Karaoke Caption System
+
+Captions use ASS format with karaoke fill effects:
+
+```ass
+[V4+ Styles]
+Style: Default,Arial,75,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,...
+
+[Events]
+Dialogue: 0,0:00:00.00,0:00:01.51,Default,,0,0,0,,{\kf30}Hey {\kf30}neighbors
+```
+
+- **Primary Color:** White (`&H00FFFFFF`)
+- **Secondary Color:** Yellow (`&H0000FFFF`) - fills as word is spoken
+- **Effect:** `\kf` (karaoke fill) with duration in centiseconds
+- **Words per line:** 5 (configurable)
+- **Position:** Center of screen (MarginV: 960 for 1920px height)
+
+## Settings Configuration
+
+Settings are stored in `system_settings` table and read by the pipeline:
+
+### Video Settings
+```json
+{
+  "avatar_scale": 0.75,
+  "avatar_offset_x": -250,
+  "avatar_offset_y": 600,
+  "greenscreen_enabled": true,
+  "greenscreen_color": "#00FF00",
+  "caption_style": "karaoke",
+  "caption_font": "Arial",
+  "caption_font_size": 75,
+  "caption_color": "#FFFFFF",
+  "caption_highlight_color": "#FFFF00",
+  "caption_position_y": 960
+}
+```
+
+### Update Settings
 ```bash
-GET /api/pipeline/stats
-→ { "pending": 5, "approved": 2, "published": 47, ... }
+curl -X PUT http://100.83.153.43:8000/api/settings/video \
+  -H "Content-Type: application/json" \
+  -d '{"avatar_offset_x": -250, "avatar_offset_y": 600}'
 ```
+
+## Docker Services
+
+| Service | Container | Port | Purpose |
+|---------|-----------|------|---------|
+| PostgreSQL | `SocialGen_postgres` | 5433 | Database |
+| Redis | `SocialGen_redis` | 6380 | Task queue |
+| Backend | `SocialGen_backend` | 8000 | FastAPI API |
+| Celery Worker | `SocialGen_celery_worker` | - | Pipeline execution |
+| Celery Beat | `SocialGen_celery_beat` | - | Scheduled tasks |
+| Frontend | `SocialGen_frontend` | 3000 | React dashboard |
+| Video Processor | `SocialGen_video_processor` | 8080 | GPU encoding |
 
 ## Directory Structure
 
 ```
 /home/canderson/n8n/
-├── docker-compose.yml      # Service orchestration
-├── Dockerfile              # n8n with FFmpeg
-├── .env                    # Environment variables (secrets)
-├── MASTERPLAN.md           # Detailed implementation guide
-├── README.md               # This file
-│
-├── workflows/
-│   └── COMPLETE_PIPELINE.json  # Unified n8n workflow
+├── docker-compose.yml          # Service orchestration
+├── .env                        # Environment variables
+├── CLAUDE.md                   # AI assistant instructions
+├── README.md                   # This file
 │
 ├── backend/
-│   ├── main.py             # FastAPI application
-│   ├── models.py           # SQLAlchemy models
-│   ├── schemas.py          # Pydantic schemas
-│   ├── init.sql            # Database initialization
-│   ├── migrations/         # Database migrations
-│   ├── Dockerfile          # Backend container
-│   └── requirements.txt    # Python dependencies
+│   ├── main.py                 # FastAPI application
+│   ├── celery_app.py           # Celery configuration
+│   ├── config.py               # Settings from environment
+│   ├── models.py               # SQLAlchemy models
+│   ├── schemas.py              # Pydantic schemas
+│   ├── routers/                # API route handlers
+│   ├── services/               # Business logic
+│   │   ├── avatar.py           # HeyGen integration
+│   │   ├── captions.py         # Whisper + ASS generation
+│   │   ├── publisher.py        # Blotato publishing
+│   │   ├── scraper.py          # Apify trend discovery
+│   │   ├── script_generator.py # Grok LLM integration
+│   │   ├── storage.py          # Dropbox upload
+│   │   ├── video.py            # FFmpeg composition
+│   │   ├── video_downloader.py # TikTok download
+│   │   └── voice.py            # ElevenLabs TTS
+│   ├── tasks/
+│   │   ├── pipeline.py         # Main pipeline task
+│   │   └── scrape.py           # Scraping tasks
+│   ├── utils/
+│   │   ├── logging.py          # Structured logging
+│   │   ├── paths.py            # Asset path management
+│   │   └── retry.py            # Retry decorator
+│   └── tests/                  # Unit tests (138 tests)
+│
+├── video-downloader/
+│   ├── main.py                 # FastAPI GPU service
+│   └── Dockerfile              # GPU-enabled container
 │
 ├── frontend/
-│   ├── src/
-│   │   ├── App.js          # Main React component
-│   │   ├── components/     # UI components
-│   │   └── api.js          # API client
-│   ├── Dockerfile          # Frontend container
-│   └── package.json        # Node dependencies
+│   └── src/
+│       ├── App.js              # Main React component
+│       ├── api.js              # API client
+│       └── pages/              # Dashboard pages
 │
-└── assets/                 # Media storage (volume mounted)
-    ├── audio/              # Voice files
-    ├── avatar/             # HeyGen output
-    ├── videos/             # B-roll downloads
-    ├── captions/           # SRT files
-    └── output/             # Final videos
+├── assets/                     # Media storage (volume mounted)
+│   ├── audio/                  # Voice files ({script_id}_voice.mp3)
+│   ├── avatar/                 # HeyGen output ({script_id}_avatar.mp4)
+│   ├── videos/                 # Source downloads ({script_id}_source.mp4)
+│   ├── captions/               # ASS/SRT files ({script_id}_captions.ass)
+│   ├── output/                 # Combined/Final videos
+│   └── music/                  # Background music tracks
+│
+└── archive/                    # Deprecated n8n workflows
 ```
+
+## Monitoring & Debugging
+
+### View Pipeline Logs
+```bash
+# Real-time monitoring
+docker logs -f SocialGen_celery_worker
+
+# Find errors
+docker logs SocialGen_celery_worker 2>&1 | grep -i error
+
+# Check which stage failed
+docker logs SocialGen_celery_worker 2>&1 | grep "stage="
+```
+
+### Database Access
+```bash
+docker exec -it SocialGen_postgres psql -U n8n -d content_pipeline
+
+# View recent scripts
+SELECT id, content_idea_id, status FROM scripts ORDER BY id DESC LIMIT 5;
+
+# View asset status
+SELECT script_id, avatar_video_path, final_video_path FROM assets ORDER BY id DESC LIMIT 5;
+```
+
+### Task Queue Status
+```bash
+# Pending tasks
+docker exec SocialGen_redis redis-cli LLEN celery
+
+# Worker status
+docker logs SocialGen_celery_worker 2>&1 | grep "ready"
+```
+
+## API Reference
+
+### Pipeline
+```bash
+# Trigger pipeline
+POST /api/pipeline/trigger
+{"content_idea_id": 141}
+
+# Get status
+GET /api/pipeline/status/{task_id}
+
+# Get stats
+GET /api/pipeline/stats
+```
+
+### Content Ideas
+```bash
+# List
+GET /api/content-ideas?status=approved
+
+# Create
+POST /api/content-ideas
+{"source_url": "https://tiktok.com/...", "status": "approved"}
+
+# Update
+PATCH /api/content-ideas/{id}
+{"status": "approved"}
+```
+
+### Settings
+```bash
+# Get all settings
+GET /api/settings/all
+
+# Update video settings
+PUT /api/settings/video
+{"avatar_offset_x": -250, "avatar_offset_y": 600}
+
+# Get character config
+GET /api/settings/character
+```
+
+## Cost Estimates
+
+| Service | Cost Per Run | Notes |
+|---------|--------------|-------|
+| HeyGen | ~$1-3 | Per avatar video |
+| ElevenLabs | ~$0.01-0.05 | Per voice generation |
+| Apify | ~$0.30-1.50 | Per scrape run |
+| OpenRouter (Grok) | ~$0.01 | Per script |
+| **Total** | **~$2-5** | Per published video |
 
 ## Environment Variables
 
 ```bash
 # Database
-DATABASE_URL=postgresql://n8n:n8n_password@postgres:5432/content_pipeline
+DATABASE_URL=postgresql://n8n:password@postgres:5432/content_pipeline
 POSTGRES_USER=n8n
-POSTGRES_PASSWORD=n8n_password
+POSTGRES_PASSWORD=password
 POSTGRES_DB=content_pipeline
 
-# n8n
+# Network
 N8N_HOST=100.83.153.43
-N8N_PORT=5678
-N8N_PUBLIC_URL=http://100.83.153.43:5678
 
 # API Keys
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENAI_API_KEY=sk-...
 ELEVENLABS_API_KEY=sk_...
-ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+ELEVENLABS_VOICE_ID=...
 HEYGEN_API_KEY=...
-HEYGEN_AVATAR_ID=Kristin_pubblic_3_20240108
-PEXELS_API_KEY=...
+HEYGEN_AVATAR_ID=...
 APIFY_API_KEY=apify_api_...
 BLOTATO_API_KEY=...
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**n8n can't connect to backend**
-- Ensure containers are on same Docker network
-- Use `http://backend:8000` not `localhost:8000`
-
-**HeyGen video stuck "processing"**
-- Check audio file is accessible via public URL
-- Verify N8N_PUBLIC_URL is reachable from internet
-
-**FFmpeg fails**
-- Check file paths use `/home/node/assets/` (container path)
-- Verify assets volume is mounted correctly
-
-**Scrape returns empty**
-- Check Apify API key is valid
-- Verify hashtags exist and have content
-
-**Scrape Error: "Expecting value: line 1 column 1"**
-- **Cause**: Workflow crashing immediately due to missing credentials.
-- **Fix**: Run `docker exec n8n n8n import:credentials --input=/home/node/workflows/credentials.json`
-
-**n8n Webhook 404**
-- **Cause**: Workflow not active or webhook not registered in DB.
-- **Fix**: Ensure workflow is active in n8n UI. If CLI activation fails, use manual DB update (see internal docs).
-
-### Logs
-
-```bash
-# n8n logs
-docker logs n8n -f
-
-# Backend logs
-docker logs backend -f
-
-# All services
-docker compose logs -f
-```
-
-### Database Access
-
-```bash
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline
+DROPBOX_APP_KEY=...
+DROPBOX_APP_SECRET=...
+DROPBOX_REFRESH_TOKEN=...
 ```
 
 ## Development
 
-### Rebuild after changes
-
+### Rebuild Services
 ```bash
-docker compose build --no-cache
-docker compose build --no-cache
-docker compose up -d
+# Rebuild specific service
+docker compose up -d --build celery-worker
+
+# Rebuild all
+docker compose up -d --build
 ```
 
-### Hot Reloading
-
-- **Frontend**: Local `frontend/src` is mounted to `/app/src`. Changes reflect immediately.
-- **Backend**: Local `backend` is mounted to `/app`. `uvicorn` runs with `--reload` to auto-restart on changes.
-
-### Re-import workflow
-
+### Run Tests
 ```bash
-docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
+docker exec SocialGen_backend python3 -m pytest /app/tests/ -v
 ```
 
-### Run database migrations
+### Hot Reload
+- **Backend:** Mounted volume with `--reload` flag
+- **Frontend:** Mounted `src/` directory
 
-```bash
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline -f /docker-entrypoint-initdb.d/migrations/001_add_scrape_tables.sql
-```
+---
 
-## License
-
-Private/Internal Use
-
-## Workflow Management & Recovery SOP
-
-**Critical:** Due to internal architecture changes in n8n 2.x ("Headless" mode), standard import/export can sometimes fail to link version history, leading to "Phantom Workflows" (Active but 404) or "Version Not Found" errors. Follow these procedures to prevent downtime.
-
-### 1. Safe Workflow Modification Cycle
-
-When making changes to `COMPLETE_PIPELINE.json` (or any workflow):
-
-### 1. Safe Workflow Modification Cycle (Use this for all changes)
-
-When making changes to `COMPLETE_PIPELINE.json` (or any workflow), follow this EXACT sequence to prevent corruption or duplicates:
-
-**Step 1: Verify JSON ID Preservation**
--   Before importing, check `workflows/COMPLETE_PIPELINE.json`.
--   **CRITICAL:** Ensure the file contains ` "id": "rTAhapEWXNxRAElT", ` (or whatever the known stable ID is).
--   **Never** delete the `id` field during an edit. If missing, n8n will switch to "Create Mode" and make a duplicate.
-
-**Step 2: Import**
-```bash
-docker exec n8n n8n import:workflow --input=/home/node/workflows/COMPLETE_PIPELINE.json
-```
-
-**Step 3: Verify Single Instance & Active State**
-Run this to ensure you haven't created a duplicate or reset activation:
-```bash
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity;"
-```
--   **Success:** You should see exactly **ONE** row for "AI ContentGenerator" with `active | t`.
--   **Fail:** If you see two rows, STOP. You created a duplicate. Find the new ID, delete it, fix your JSON ID, and retry.
--   **Fail:** If `active | f`, proceed to Step 4.
-
-**Step 4: Publish (Force Activation)**
-The CLI import often updates the DB but fails to register webhooks in the running process. "Publishing" fixes this.
-```bash
-docker exec n8n n8n publish:workflow --id=rTAhapEWXNxRAElT
-```
-
-**Step 5: Restart (The Final Synchronization)**
-To ensure webhooks (like standard, wait nodes, trigger nodes) are bound to the exposed port:
-```bash
-docker compose restart n8n
-```
-
-**Step B: Prepare Fresh JSON**
-1.  Open `workflows/COMPLETE_PIPELINE.json`.
-2.  Remove `"id": "..."` field (Let n8n generate a new Worklfow ID).
-3.  Remove `"versionId": "..."` field (Let n8n generate a new Version ID).
-4.  Ensure `"active": true`.
-
-**Step C: Import & Verify History (The Critical Step)**
-In n8n 2.x, CLI import sometimes creates the *Entity* but skips the *History* record.
-1.  Import: `docker exec n8n n8n import:workflow ...`
-2.  Restart: `docker compose restart n8n`
-3.  **Check History:**
-    ```bash
-    docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "SELECT * FROM workflow_history;"
-    ```
-4.  **If History is EMPTY, you MUST run the Repair Script.**
-
-### 3. Database Repair Script (The "Missing History" Fix)
-
-We have created a tool to manually inject the missing history record, which is required for Activation/Toggle to work.
-
-**Location:** `workflows/generate_history_sql.py`
-
-**Usage:**
-1.  Get the new Workflow ID from DB.
-2.  Get the Version ID (or generate one) from your JSON or DB.
-3.  Edit `workflows/generate_history_sql.py` with these IDs.
-4.  Run:
-    ```bash
-    python3 workflows/generate_history_sql.py > workflows/inject_history.sql
-    docker exec -T n8n_postgres psql -U n8n -d content_pipeline < workflows/inject_history.sql
-    docker compose restart n8n
-    ```
-
-### 4. Ownership Fix
-
-If the Toggle is missing in the UI, the workflow is likely "Orphaned" (No Owner).
-Link it to the user:
-
-```bash
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline -c "
-INSERT INTO shared_workflow (\"workflowId\", \"projectId\", \"role\", \"createdAt\", \"updatedAt\") 
-VALUES (
-  (SELECT id FROM workflow_entity WHERE name = 'AI ContentGenerator' LIMIT 1), 
-  (SELECT id FROM project LIMIT 1), 
-  'workflow:owner', 
-  NOW(), 
-  NOW()
-);"
-```
+*Last updated: January 13, 2026*

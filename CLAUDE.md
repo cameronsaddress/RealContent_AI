@@ -1,314 +1,277 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with this repository.
+This file provides guidance to Claude Code when working with the SocialGen video pipeline repository.
 
 ---
 
 ## Permissions
 
-Claude is **allowed and encouraged** to automatically use the following tools without asking:
+Claude is **allowed and encouraged** to automatically use:
 
-- **curl** - HTTP requests to APIs and webhooks
+- **curl** - HTTP requests to APIs
 - **docker** - Container management, logs, exec commands
-- **bash** - Shell commands for file operations, git, etc.
-- **MCP tools** - n8n workflow management (see below)
-- **jq** - JSON parsing and manipulation
+- **bash** - Shell commands for file operations, git
+- **jq** - JSON parsing
+
+### REQUIRES USER PERMISSION (Cost-Incurring Services)
+
+**ALWAYS ASK** before triggering:
+- **Pipeline** - `curl /api/pipeline/trigger` uses HeyGen credits (~$1-3)
+- **Apify** - Scraping operations (~$0.30-1.50)
+- **HeyGen** - Video generation (~$1-3 per video)
+
+### HeyGen MCP Server (READ-ONLY)
+
+The HeyGen MCP server (`mcp__HeyGen__*`) is for **reading only**:
+- Check credits, list voices/avatars
+- **NEVER** use `generate_avatar_video` - all generation goes through Celery pipeline
 
 ---
 
-## Quick Reference
+## Critical Architecture Rules
 
-### Service URLs
+### 1. Asset Reuse - NEVER Skip Existence Checks
+
+The pipeline checks for existing assets at each stage to avoid redundant API calls:
+
+| Stage | Check Method | File Path |
+|-------|--------------|-----------|
+| Script | DB query | `scripts.content_idea_id` |
+| Voice | `voice_exists()` | `audio/{id}_voice.mp3` |
+| Avatar | `avatar_exists()` | `avatar/{id}_avatar.mp4` |
+| Source | `source_video_exists()` | `videos/{id}_source.mp4` |
+| Combined | `combined_video_exists()` | `output/{id}_combined.mp4` |
+| Final | `final_video_exists()` | `output/{id}_final.mp4` |
+
+**To force regeneration:** Delete the file, don't modify the check logic.
+
+### 2. Settings Tables - Two Tables, Keep in Sync
+
+There are TWO settings tables that MUST stay synchronized:
+- `video_settings` - API endpoint reads/writes here
+- `system_settings` - Pipeline reads from here
+
+When updating settings via API:
+```bash
+# API updates video_settings
+curl -X PUT http://100.83.153.43:8000/api/settings/video \
+  -H "Content-Type: application/json" \
+  -d '{"avatar_offset_x": -250}'
+```
+
+If settings aren't applying, check `system_settings`:
+```sql
+SELECT value FROM system_settings WHERE key = 'video_settings';
+```
+
+### 3. GPU Video Processing - Use video-processor Service
+
+Video encoding runs on the GPU via the `video-processor` container:
+
+```bash
+# Compose (chromakey + overlay)
+POST http://video-processor:8080/compose
+
+# Caption burning
+POST http://video-processor:8080/caption
+```
+
+**NEVER** run FFmpeg in `celery-worker` for video encoding. The pipeline calls the video-processor service via HTTP.
+
+### 4. Volume Mounts in video-processor
+
+The video-processor container has these mounts:
+| Host Path | Container Path |
+|-----------|----------------|
+| `./assets/videos` | `/downloads` |
+| `./assets/output` | `/outputs` |
+| `./assets/audio` | `/audio` |
+| `./assets/avatar` | `/avatar` |
+| `./assets/captions` | `/captions` |
+| `./assets/music` | `/music` |
+
+When calling video-processor endpoints, use container paths:
+```json
+{
+  "avatar_path": "/avatar/33_avatar.mp4",
+  "background_path": "/downloads/33_source.mp4"
+}
+```
+
+### 5. Karaoke Captions - ASS Format
+
+Captions use ASS format with `\kf` (karaoke fill) effect:
+- Primary: White (`&H00FFFFFF`)
+- Secondary: Yellow (`&H0000FFFF`) - fills as word is spoken
+- Alignment: 5 (center)
+- MarginV: 960 (center of 1920px screen)
+
+```ass
+Dialogue: 0,0:00:00.00,0:00:01.51,Default,,0,0,0,,{\kf30}Hey {\kf30}neighbors
+```
+
+### 6. Avatar Positioning
+
+Avatar position is controlled by:
+- `avatar_scale`: 0.75 (75% of original size)
+- `avatar_offset_x`: -250 (negative = left of center)
+- `avatar_offset_y`: 600 (positive = down from top)
+
+FFmpeg overlay formula:
+```
+X: 10 + avatar_offset_x
+Y: (H-h-10) + avatar_offset_y
+```
+
+### 7. Location Branding
+
+Use "North Idaho & Spokane area" - NOT "Coeur d'Alene". Files updated:
+- `schemas.py`
+- `models.py`
+- `script_generator.py`
+- `publisher.py`
+
+### 8. TikTok Downloads Require Browser Headers
+
+TikTok CDN returns 204 No Content without proper headers:
+```python
+headers = {
+    "User-Agent": "Mozilla/5.0...",
+    "Referer": "https://www.tiktok.com/",
+    "Origin": "https://www.tiktok.com"
+}
+```
+
+---
+
+## Service URLs
+
 | Service | URL |
 |---------|-----|
-| n8n | http://100.83.153.43:5678 |
 | Frontend | http://100.83.153.43:3000 |
 | Backend API | http://100.83.153.43:8000 |
 | API Docs | http://100.83.153.43:8000/docs |
-
-### Key IDs
-- **Workflow ID:** `LNpBI12tR5p3NX3g`
-- **Test Content Idea:** 141
-- **Test Script:** 22
-- **GCS Credential:** `LXMqHFKoSGvfqCF5`
+| Video Processor | http://100.83.153.43:8080 |
 
 ---
 
-## MCP Tools for n8n Workflow Management
+## Container Names
 
-### List/Get Workflows
-```
-mcp__n8n__n8n_list_workflows
-mcp__n8n__n8n_get_workflow id=LNpBI12tR5p3NX3g mode=structure
-```
-
-### Update Workflow Nodes
-```javascript
-// Update a node's parameters
-mcp__n8n__n8n_update_partial_workflow
-  id=LNpBI12tR5p3NX3g
-  operations=[{
-    "type": "updateNode",
-    "nodeId": "node-id-here",  // Use nodeId, not name
-    "updates": {"parameters": {"key": "value"}}
-  }]
-
-// Add a new node
-mcp__n8n__n8n_update_partial_workflow
-  id=LNpBI12tR5p3NX3g
-  operations=[{
-    "type": "addNode",
-    "node": {
-      "id": "unique-id",
-      "name": "Node Name",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [100, 200],
-      "parameters": {}
-    }
-  }]
-
-// Add a connection
-mcp__n8n__n8n_update_partial_workflow
-  id=LNpBI12tR5p3NX3g
-  operations=[{
-    "type": "addConnection",
-    "from": {"node": "Source Node", "output": 0},
-    "to": {"node": "Target Node", "input": 0}
-  }]
-
-// Remove a node
-mcp__n8n__n8n_update_partial_workflow
-  id=LNpBI12tR5p3NX3g
-  operations=[{
-    "type": "removeNode",
-    "name": "Node Name"
-  }]
-```
-
-### Monitor Executions
-```
-// List recent executions
-mcp__n8n__n8n_executions action=list workflowId=LNpBI12tR5p3NX3g limit=5
-
-// Get execution details with error info
-mcp__n8n__n8n_executions action=get id=<execution_id> mode=error
-```
-
-### Validate Workflow
-```
-mcp__n8n__n8n_validate_workflow id=LNpBI12tR5p3NX3g
-```
+| Service | Container |
+|---------|-----------|
+| PostgreSQL | `SocialGen_postgres` |
+| Redis | `SocialGen_redis` |
+| Backend | `SocialGen_backend` |
+| Celery Worker | `SocialGen_celery_worker` |
+| Celery Beat | `SocialGen_celery_beat` |
+| Frontend | `SocialGen_frontend` |
+| Video Processor | `SocialGen_video_processor` |
 
 ---
 
-## End-to-End Pipeline Testing
+## Common Commands
 
-### Step 1: Trigger Pipeline
+### Restart Services After Code Changes
 ```bash
-curl -X POST "http://100.83.153.43:5678/webhook/trigger-pipeline" \
-  -H "Content-Type: application/json" \
-  -d '{"content_idea_id": 141}'
+# Backend/Celery (Python changes)
+docker compose restart celery-worker backend
+
+# Video Processor (needs rebuild for code changes)
+docker compose up -d --build video-processor
 ```
 
-### Step 2: Monitor Execution
-```
-mcp__n8n__n8n_executions action=list workflowId=LNpBI12tR5p3NX3g limit=5
-```
-
-### Step 3: Debug Errors
-```
-mcp__n8n__n8n_executions action=get id=<execution_id> mode=error
-```
-
-The error response includes:
-- `primaryError`: Error message and failing node
-- `upstreamContext`: Data from previous nodes
-- `executionPath`: Which nodes ran successfully
-
-### Step 4: Common Fixes
-
-**Code node sandbox error ("Can't use .all()"):**
-```javascript
-mcp__n8n__n8n_update_partial_workflow
-  id=LNpBI12tR5p3NX3g
-  operations=[{
-    "type": "updateNode",
-    "name": "Node Name",
-    "updates": {"parameters": {"mode": "runOnceForAllItems"}}
-  }]
-```
-
-**Missing file errors:**
-Check paths in `/home/node/.n8n-files/assets/`
-
-**Webhook errors:**
-Ensure `Respond Immediately` node is connected after `Webhook`
-
----
-
-## Asset File Paths
-
-All assets stored in `/home/node/.n8n-files/assets/`:
-
-| Type | Path Pattern |
-|------|--------------|
-| Audio | `audio/{script_id}_voice.mp3` |
-| Avatar | `avatar/{script_id}_avatar.mp4` |
-| Combined | `combined/{script_id}_combined.mp4` |
-| Captions | `captions/{script_id}.srt` |
-| Final | `final/{script_id}_final.mp4` |
-| Source Video | `videos/{script_id}_source.mp4` |
-
----
-
-## Docker Commands
-
+### View Logs
 ```bash
-# View logs
-docker compose logs -f n8n
-docker compose logs -f backend
-docker compose logs -f frontend
+docker logs -f SocialGen_celery_worker  # Pipeline execution
+docker logs -f SocialGen_backend        # API requests
+docker logs -f SocialGen_video_processor # FFmpeg operations
+```
 
-# Restart services
-docker compose restart n8n
-docker compose restart backend
-docker compose restart frontend
+### Database Access
+```bash
+docker exec -it SocialGen_postgres psql -U n8n -d content_pipeline
+```
 
-# Rebuild and restart
-docker compose up -d --build n8n
-
-# Access container shell
-docker exec -it n8n /bin/sh
-docker exec -it backend /bin/bash
-
-# Database access
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline
+### Check GPU Status
+```bash
+docker exec SocialGen_video_processor nvidia-smi
+curl http://localhost:8080/health | jq .gpu_encoder_available
 ```
 
 ---
 
-## Pipeline Flow (Current Nodes)
+## Pipeline Stages
 
-1. `Webhook` -> `Respond Immediately` -> `Specific ID?`
-2. `Get Specific Idea` / `Get Approved Idea` -> `Merge` -> `Normalize Idea`
-3. `Has Content?` -> `Update Status` -> `Generate Script (Grok)` -> `Parse Script` -> `Save Script`
-4. `Create Asset Record` -> `Download Source Video` -> `Verify Download`
-5. `Get Character Config` -> `Fetch Settings` -> `Prepare TTS Text` -> `Check Voice Exists` -> `Voice Exists?`
-6. `Generate Voice (ElevenLabs)` -> `Save Voice` -> `Get Duration` -> `Update Asset Voice`
-7. `Read Audio File` -> `Avatar Already Exists?` -> `Skip HeyGen?`
-8. (Skip path) `Use Existing Avatar` -> `Build FFmpeg Command`
-9. (Generate path) `Upload HeyGen Audio` -> `Is Talking Photo?` -> `Prepare HeyGen Data` -> `Create HeyGen Video` -> polling -> `Save Avatar`
-10. `Build FFmpeg Command` -> `Run FFmpeg` -> `Success?`
-11. `Prepare Whisper` -> `Read Audio for Whisper` -> `Whisper Transcribe` -> `Parse Whisper Response` -> `Save SRT`
-12. `Build Caption Cmd` -> `Burn Captions` -> `Caption Success?`
-13. `Prepare Publish Data` -> `Read Final Video` -> `GCS Upload` -> `Format GCS URL`
-14. `Publish (Blotato)` -> `Parse Response` -> `Save Publish Record` -> `Update Status Published`
-
----
-
-## Backend API Endpoints
-
-### Content Management
-```bash
-# List content ideas
-curl http://100.83.153.43:8000/api/content-ideas
-
-# Create content idea (direct link submission)
-curl -X POST http://100.83.153.43:8000/api/content-ideas \
-  -H "Content-Type: application/json" \
-  -d '{"source_url": "https://x.com/...", "source_platform": "twitter", "status": "approved"}'
-
-# Update content idea status
-curl -X PATCH http://100.83.153.43:8000/api/content-ideas/141 \
-  -H "Content-Type: application/json" \
-  -d '{"status": "approved"}'
-```
-
-### Settings
-```bash
-# Get all settings (video, audio, LLM)
-curl http://100.83.153.43:8000/api/settings/all
-
-# Update video settings (greenscreen, resolution, etc.)
-curl -X PUT http://100.83.153.43:8000/api/settings/video \
-  -H "Content-Type: application/json" \
-  -d '{"greenscreen_enabled": true, "greenscreen_color": "#00FF00"}'
-
-# Get character config
-curl http://100.83.153.43:8000/api/settings/character
-```
-
-### Pipeline Stats
-```bash
-curl http://100.83.153.43:8000/api/pipeline/stats
-curl http://100.83.153.43:8000/api/pipeline/overview
-```
+1. **get_content** - Fetch approved content idea
+2. **script_generation** - Grok 4.1 generates script
+3. **voice_generation** - ElevenLabs TTS
+4. **avatar_generation** - HeyGen video (polls until complete)
+5. **source_video_download** - Apify downloads TikTok/Instagram
+6. **video_composition** - GPU FFmpeg chromakey + overlay
+7. **captioning** - Whisper transcription + ASS karaoke + GPU burn
+8. **storage_upload** - Dropbox upload
+9. **publishing** - Blotato multi-platform post
 
 ---
 
 ## Test Data
 
-- **Content Idea 141** - Has script 22, voice file, test avatar
-- **Voice file:** `/home/node/.n8n-files/assets/audio/22_voice.mp3`
-- **Avatar video:** `/home/node/.n8n-files/assets/avatar/22_avatar.mp4`
+- **Test Content Idea:** 141, 186
+- **Test Script:** 22, 33
+- **Test Voice:** `./assets/audio/22_voice.mp3`
+- **Test Avatar:** `./assets/avatar/22_avatar.mp4`
 
-Create test avatar for bypass testing:
+---
+
+## Debugging Checklist
+
+### Pipeline Not Running
 ```bash
-docker exec -it n8n bash -c 'ffmpeg -f lavfi -i testsrc=duration=10:size=1920x1080:rate=30 \
-  -f lavfi -i sine=frequency=440:duration=10 \
-  -c:v libx264 -c:a aac -pix_fmt yuv420p \
-  /home/node/.n8n-files/assets/avatar/22_avatar.mp4'
+docker logs SocialGen_celery_worker 2>&1 | grep "ready"
+docker exec SocialGen_redis redis-cli LLEN celery
 ```
+
+### Settings Not Applied
+1. Check `video_settings` table (API writes here)
+2. Check `system_settings` table (pipeline reads here)
+3. Restart celery-worker after manual DB updates
+
+### Video Position Wrong
+1. Delete `output/{id}_combined.mp4` and `output/{id}_final.mp4`
+2. Update settings: `avatar_offset_x`, `avatar_offset_y`
+3. Re-run pipeline
+
+### GPU Not Working
+1. Check `docker inspect SocialGen_video_processor | jq '.[0].HostConfig.DeviceRequests'`
+2. Rebuild: `docker compose up -d --build video-processor`
+3. Test: `curl http://localhost:8080/health`
 
 ---
 
-## Workflow Backup
+## File Locations
 
-```bash
-# Create timestamped backup
-cp workflows/COMPLETE_PIPELINE.json "workflows/COMPLETE_PIPELINE_BACKUP_$(date +%Y%m%d_%H%M%S).json"
-
-# List backups
-ls -la workflows/COMPLETE_PIPELINE_BACKUP_*.json
-
-# Compare node counts
-jq '.nodes | length' workflows/COMPLETE_PIPELINE.json
-```
-
----
-
-## External API Configuration
-
-### OpenRouter (LLM)
-```
-Base URL: https://openrouter.ai/api/v1
-Model: x-ai/grok-4.1-fast
-```
-
-### HeyGen Avatar Types
-- **Talking Photo:** Uses `avatar_id` with `avatar_style: "normal"`
-- **Video Avatar:** Uses `avatar_id` with `avatar_style: "normal"` (premade)
-- **Greenscreen:** Controlled by `greenscreen_enabled` and `greenscreen_color` in settings
-
-### ElevenLabs Voice
-- Voice ID configured in character settings
-- Cloned voices accessible via `/api/settings/character`
+| Type | Path |
+|------|------|
+| Pipeline task | `backend/tasks/pipeline.py` |
+| Video service | `backend/services/video.py` |
+| Caption service | `backend/services/captions.py` |
+| Avatar service | `backend/services/avatar.py` |
+| GPU processor | `video-downloader/main.py` |
+| Asset paths | `backend/utils/paths.py` |
+| Settings API | `backend/routers/settings.py` |
 
 ---
 
-## Project Structure
+## Cost Estimates
 
-```
-/home/canderson/n8n/
-├── docker-compose.yml     # All services config
-├── Dockerfile             # n8n with FFmpeg + yt-dlp
-├── backend/               # FastAPI (models, schemas, main)
-├── frontend/              # React dashboard
-├── workflows/             # n8n workflow JSON exports
-└── assets/                # Fonts, logos (Docker volume for media)
-```
+| Service | Cost |
+|---------|------|
+| HeyGen | ~$1-3/video |
+| ElevenLabs | ~$0.01-0.05/voice |
+| Apify | ~$0.30-1.50/scrape |
+| OpenRouter | ~$0.01/script |
+| **Total per video** | **~$2-5** |
 
 ---
 
-*Last updated: January 9, 2026*
+*Last updated: January 13, 2026 - GPU encoding, karaoke captions, video-processor service*

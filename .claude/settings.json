@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "mcp__n8n__*"
+      "mcp__n8n__*",
+      "mcp__HeyGen__*",
+      "WebSearch",
+      "WebFetch",
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Task"
     ]
   }
 }
