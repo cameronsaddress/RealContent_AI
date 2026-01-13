@@ -1268,7 +1268,7 @@ def get_audio_settings(db: Session = Depends(get_db)):
 
 @app.put("/api/settings/audio", response_model=AudioSettingsResponse)
 def update_audio_settings(update: AudioSettingsUpdate, db: Session = Depends(get_db)):
-    """Update audio settings"""
+    """Update audio settings - syncs to both audio_settings table and system_settings for pipeline"""
     settings = db.query(AudioSettingsModel).filter(AudioSettingsModel.id == 1).first()
     if not settings:
         settings = AudioSettingsModel(id=1)
@@ -1276,6 +1276,17 @@ def update_audio_settings(update: AudioSettingsUpdate, db: Session = Depends(get
 
     for field, value in update.model_dump(exclude_unset=True).items():
         setattr(settings, field, value)
+
+    # ALSO sync to system_settings table (pipeline reads from here)
+    sys_setting = db.query(SystemSettingsModel).filter(SystemSettingsModel.key == "audio_settings").first()
+    if not sys_setting:
+        sys_setting = SystemSettingsModel(key="audio_settings", value={})
+        db.add(sys_setting)
+
+    # Merge update into existing system_settings value
+    current_value = dict(sys_setting.value) if sys_setting.value else {}
+    current_value.update(update.model_dump(exclude_unset=True))
+    sys_setting.value = current_value
 
     db.commit()
     db.refresh(settings)
@@ -1296,7 +1307,7 @@ def get_video_settings(db: Session = Depends(get_db)):
 
 @app.put("/api/settings/video", response_model=VideoSettingsResponse)
 def update_video_settings(update: VideoSettingsUpdate, db: Session = Depends(get_db)):
-    """Update video settings"""
+    """Update video settings - syncs to both video_settings table and system_settings for pipeline"""
     settings = db.query(VideoSettingsModel).filter(VideoSettingsModel.id == 1).first()
     if not settings:
         settings = VideoSettingsModel(id=1)
@@ -1304,6 +1315,17 @@ def update_video_settings(update: VideoSettingsUpdate, db: Session = Depends(get
 
     for field, value in update.model_dump(exclude_unset=True).items():
         setattr(settings, field, value)
+
+    # ALSO sync to system_settings table (pipeline reads from here)
+    sys_setting = db.query(SystemSettingsModel).filter(SystemSettingsModel.key == "video_settings").first()
+    if not sys_setting:
+        sys_setting = SystemSettingsModel(key="video_settings", value={})
+        db.add(sys_setting)
+
+    # Merge update into existing system_settings value
+    current_value = dict(sys_setting.value) if sys_setting.value else {}
+    current_value.update(update.model_dump(exclude_unset=True))
+    sys_setting.value = current_value
 
     db.commit()
     db.refresh(settings)

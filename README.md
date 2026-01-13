@@ -89,53 +89,62 @@ curl http://100.83.153.43:8000/api/pipeline/status/{task_id}
 
 ## Pipeline Stages
 
-The pipeline processes content through 8 stages, with each stage checking for existing assets to avoid redundant API calls:
+The pipeline processes content through 9 stages, with each stage checking for existing assets to avoid redundant API calls:
 
 ### Stage 1: Content Retrieval
 - Fetches approved content idea from database
 - Extracts source URL, pillar, and metadata
 
-### Stage 2: Script Generation (Grok 4.1)
+### Stage 2: Source Video Download (Apify)
+- **Reuses existing:** Checks for `idea_{content_idea_id}_source.mp4`
+- Downloads original TikTok/Instagram video via Apify
+- Handles watermark removal and CDN authentication
+- Saves to `/app/assets/videos/`
+- **Must happen BEFORE script generation** to get transcription
+
+### Stage 3: Source Video Transcription (OpenAI Whisper)
+- **Reuses existing:** Checks `content_ideas.source_transcription`
+- Extracts audio from source video (ffmpeg → 16kHz mono MP3)
+- Transcribes what they SAID in the viral video
+- Saves transcription to database for script context
+- **Critical:** Gives LLM context about video content, not just caption
+
+### Stage 4: Script Generation (Grok 4.1)
 - **Reuses existing:** Checks `scripts` table for `content_idea_id`
-- Generates hook, body, CTA, duration estimate
+- **Now receives:** Caption + Source Transcription + Brand Persona
+- Generates hook, body, CTA that REACT to what was said in the video
 - Creates platform-specific captions (TikTok, Instagram, YouTube, etc.)
-- Categorizes by content pillar:
+- Content pillars:
   - `market_intelligence` - Data, trends, analysis
   - `educational_tips` - How-tos, tutorials
   - `lifestyle_local` - Community content
   - `brand_humanization` - Personal stories
 
-### Stage 3: Voice Generation (ElevenLabs)
+### Stage 5: Voice Generation (ElevenLabs)
 - **Reuses existing:** Checks for `{script_id}_voice.mp3`
 - Generates TTS audio from full script
 - Saves to `/app/assets/audio/`
 
-### Stage 4: Avatar Generation (HeyGen)
+### Stage 6: Avatar Generation (HeyGen)
 - **Reuses existing:** Checks for `{script_id}_avatar.mp4`
 - **Resume support:** Stores `heygen_video_id` in assets table
 - Uploads audio, creates video job, polls for completion
 - Downloads green screen avatar video to `/app/assets/avatar/`
 
-### Stage 5: Source Video Download (Apify)
-- **Reuses existing:** Checks for `{script_id}_source.mp4`
-- Downloads original TikTok/Instagram video via Apify
-- Handles watermark removal and CDN authentication
-- Saves to `/app/assets/videos/`
-
-### Stage 6: Video Composition (GPU FFmpeg)
+### Stage 7: Video Composition (GPU FFmpeg)
 - **Reuses existing:** Checks for `{script_id}_combined.mp4`
 - Calls GPU video-processor service via HTTP
 - Chromakey removes green screen from avatar
 - Overlays avatar on source video with configurable position
 - Uses NVENC hardware encoding (h264_nvenc)
 
-### Stage 7: Caption Burning (GPU FFmpeg)
+### Stage 8: Caption Burning (GPU FFmpeg)
 - **Reuses existing:** Checks for `{script_id}_final.mp4`
-- Transcribes audio with Whisper (word-level timing)
+- Transcribes OUR voice audio with Whisper (word-level timing)
 - Generates ASS file with karaoke effects (`\kf` tags)
 - Burns captions via GPU video-processor service
 
-### Stage 8: Publishing
+### Stage 9: Upload & Publish
 - Uploads final video to Dropbox
 - Publishes to platforms via Blotato API
 - Records publish status in database
@@ -146,14 +155,35 @@ Each stage checks for existing assets before making expensive API calls:
 
 | Stage | Check Method | File Pattern |
 |-------|--------------|--------------|
+| Source Video | File exists check | `videos/idea_{content_idea_id}_source.mp4` |
+| Transcription | DB field `source_transcription` | N/A (stored in content_ideas table) |
 | Script | DB query `scripts.content_idea_id` | N/A |
 | Voice | `voice_exists(script_id)` | `audio/{script_id}_voice.mp3` |
 | Avatar | `avatar_exists(script_id)` | `avatar/{script_id}_avatar.mp4` |
-| Source | `source_video_exists(script_id)` | `videos/{script_id}_source.mp4` |
 | Combined | `combined_video_exists(script_id)` | `output/{script_id}_combined.mp4` |
 | Final | `final_video_exists(script_id)` | `output/{script_id}_final.mp4` |
 
 **To force regeneration:** Delete the corresponding file before running the pipeline.
+
+## Source Video Transcription
+
+The pipeline now transcribes the source video BEFORE generating the script. This gives Grok context about what was actually SAID in the viral video:
+
+```
+=== WHAT GROK RECEIVES ===
+
+Post Caption: "Day 68, saving for your house"
+
+WHAT THEY ACTUALLY SAY IN THE VIDEO:
+"""
+Day 68 of saving up money every single day until we buy our first home.
+Houses are quite expensive which means we need a lot of money. A hundred
+thousand is the goal I'm trying to achieve and I'm already at fifty one
+thousand...
+"""
+```
+
+This enables scripts that actually REACT to the video content, not just the caption.
 
 ## GPU Video Processing
 

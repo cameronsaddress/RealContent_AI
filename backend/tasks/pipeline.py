@@ -1,6 +1,17 @@
 """
 Pipeline Celery tasks - full video production pipeline.
 Replaces the main n8n workflow orchestration.
+
+Pipeline Stages (in order):
+1. Get Content Idea - Fetch approved content from database
+2. Download Source Video - Get the viral video we're reacting to
+3. Transcribe Source Video - Use Whisper to get what they SAID (for script context)
+4. Generate Script - LLM creates script with transcription + persona context
+5. Generate Voice - ElevenLabs TTS from script
+6. Generate Avatar - HeyGen video with our voice
+7. Compose Video - Chromakey avatar over source video (GPU)
+8. Burn Captions - Karaoke-style captions on final video (GPU)
+9. Upload & Publish - Dropbox + Blotato multi-platform
 """
 
 from celery import shared_task
@@ -77,7 +88,9 @@ async def _run_pipeline_async(
 
     async with async_session() as session:
         try:
-            # Stage 1: Get content idea
+            # ================================================================
+            # STAGE 1: Get Content Idea
+            # ================================================================
             result["stage"] = "get_content"
             content_idea = await _get_content_idea(session, content_idea_id)
 
@@ -87,9 +100,112 @@ async def _run_pipeline_async(
 
             content_idea_id = content_idea["id"]
             result["content_idea_id"] = content_idea_id
-            logger.info(f"Processing content idea {content_idea_id}")
+            source_url = content_idea.get("source_url")
+            logger.info(f"Processing content idea {content_idea_id}: {source_url}")
 
-            # Stage 2: Generate script (or use existing)
+            # ================================================================
+            # STAGE 2: Download Source Video (BEFORE script generation)
+            # We need this to transcribe what they SAID in the video
+            # ================================================================
+            result["stage"] = "source_video_download"
+
+            source_video_path = None
+            # Use content_idea_id for source video (not script_id, which doesn't exist yet)
+            source_video_key = f"idea_{content_idea_id}"
+
+            if source_url:
+                # Check if already downloaded (using content_idea_id as key)
+                existing_source = asset_paths.base_path / "videos" / f"{source_video_key}_source.mp4"
+                if existing_source.exists() and existing_source.stat().st_size > 1000:
+                    source_video_path = str(existing_source)
+                    logger.info(f"Using existing source video: {source_video_path}")
+                else:
+                    # Download via Apify (TikTok, Instagram, YouTube) or fallback to yt-dlp
+                    try:
+                        # Pass content_idea_id as the key for now
+                        dl_result = await video_dl_svc.download_video(source_url, content_idea_id)
+                        if dl_result.success:
+                            # Rename to use idea_ prefix
+                            import shutil
+                            downloaded_path = asset_paths.source_video_path(content_idea_id)
+                            if downloaded_path.exists():
+                                shutil.move(str(downloaded_path), str(existing_source))
+                                source_video_path = str(existing_source)
+                            else:
+                                source_video_path = dl_result.video_path
+                            logger.info(f"Downloaded source video: {source_video_path}")
+                        else:
+                            logger.warning(f"Source video download failed: {dl_result.error}")
+                    except Exception as e:
+                        logger.warning(f"Source video download error: {e}")
+                        # Continue without source video - avatar will be full screen
+
+            # ================================================================
+            # STAGE 3: Transcribe Source Video (get what they SAID)
+            # This is CRITICAL for script generation context
+            # ================================================================
+            result["stage"] = "source_transcription"
+
+            source_transcription = content_idea.get("source_transcription") or ""
+
+            if source_video_path and not source_transcription:
+                logger.info(f"Transcribing source video for context...")
+                try:
+                    # Extract audio from source video for transcription
+                    import subprocess
+                    import tempfile
+
+                    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_audio:
+                        tmp_audio_path = tmp_audio.name
+
+                    # Extract audio using ffmpeg
+                    extract_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", source_video_path,
+                        "-vn",  # No video
+                        "-acodec", "libmp3lame",
+                        "-ar", "16000",  # 16kHz for Whisper
+                        "-ac", "1",  # Mono
+                        tmp_audio_path
+                    ]
+                    subprocess.run(extract_cmd, capture_output=True, check=True, timeout=60)
+
+                    # Transcribe using Whisper API (same as caption service)
+                    import httpx
+                    with open(tmp_audio_path, "rb") as f:
+                        audio_data = f.read()
+
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        response = await client.post(
+                            "https://api.openai.com/v1/audio/transcriptions",
+                            headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
+                            files={"file": ("audio.mp3", audio_data, "audio/mpeg")},
+                            data={"model": "whisper-1", "response_format": "text"}
+                        )
+                        source_transcription = response.text.strip()
+
+                    # Clean up temp file
+                    import os
+                    os.unlink(tmp_audio_path)
+
+                    # Save transcription back to content_idea for future use
+                    from models import ContentIdea
+                    await session.execute(
+                        ContentIdea.__table__.update()
+                        .where(ContentIdea.id == content_idea_id)
+                        .values(source_transcription=source_transcription)
+                    )
+                    await session.commit()
+
+                    logger.info(f"Transcribed source video ({len(source_transcription)} chars): {source_transcription[:100]}...")
+
+                except Exception as e:
+                    logger.warning(f"Source transcription failed (continuing without): {e}")
+                    source_transcription = ""
+
+            # ================================================================
+            # STAGE 4: Generate Script (NOW with transcription context!)
+            # ================================================================
             result["stage"] = "script_generation"
             from models import Script as ScriptModel
 
@@ -127,23 +243,36 @@ async def _run_pipeline_async(
             else:
                 from services.script_generator import ScriptRequest
 
+                # NOW we have transcription to pass to the LLM!
                 script_request = ScriptRequest(
                     content_idea_id=content_idea_id,
                     pillar=content_idea.get("pillar") or "educational_tips",
-                    source_url=content_idea.get("source_url") or "",
+                    source_url=source_url or "",
                     original_text=content_idea.get("original_text") or "",
-                    source_transcription=content_idea.get("source_transcription") or "",
+                    source_transcription=source_transcription,  # <-- THE KEY CHANGE
                     suggested_hook=content_idea.get("suggested_hook"),
                     why_viral=content_idea.get("why_viral")
                 )
 
+                logger.info(f"Generating script with {len(source_transcription)} chars of transcription context")
                 script = await script_gen.generate_script(script_request)
                 script_id = await script_gen.save_script(script, session)
                 logger.info(f"Generated NEW script {script_id}")
 
             result["script_id"] = script_id
 
-            # Stage 3: Generate voice
+            # Now copy source video to script_id naming convention for later stages
+            if source_video_path:
+                script_source_path = asset_paths.source_video_path(script_id)
+                if not script_source_path.exists():
+                    import shutil
+                    shutil.copy(source_video_path, script_source_path)
+                    logger.info(f"Copied source video to {script_source_path}")
+                source_video_path = str(script_source_path)
+
+            # ================================================================
+            # STAGE 5: Generate Voice
+            # ================================================================
             result["stage"] = "voice_generation"
 
             if not voice_svc.voice_exists(script_id):
@@ -161,7 +290,9 @@ async def _run_pipeline_async(
                 )
             logger.info(f"Voice ready for script {script_id}")
 
-            # Stage 4: Generate avatar
+            # ================================================================
+            # STAGE 6: Generate Avatar (HeyGen)
+            # ================================================================
             result["stage"] = "avatar_generation"
 
             if not avatar_svc.avatar_exists(script_id):
@@ -269,30 +400,9 @@ async def _run_pipeline_async(
                     )
             logger.info(f"Avatar ready for script {script_id}")
 
-            # Stage 5: Download source video (background for chromakey)
-            result["stage"] = "source_video_download"
-
-            source_video_path = None
-            source_url = content_idea.get("source_url")
-
-            if source_url:
-                # Check if already downloaded
-                if video_dl_svc.source_video_exists(script_id):
-                    source_video_path = str(video_dl_svc.get_source_video_path(script_id))
-                    logger.info(f"Using existing source video: {source_video_path}")
-                else:
-                    # Download via Apify (TikTok, Instagram, YouTube) or fallback to yt-dlp
-                    try:
-                        dl_result = await video_dl_svc.download_video(source_url, script_id)
-                        if dl_result.success:
-                            source_video_path = dl_result.video_path
-                            logger.info(f"Downloaded source video via Apify: {source_video_path}")
-                        else:
-                            logger.warning(f"Source video download failed: {dl_result.error}")
-                    except Exception as e:
-                        logger.warning(f"Source video download error: {e}")
-
-            # Stage 6: Compose video (via GPU video-processor service)
+            # ================================================================
+            # STAGE 7: Compose Video (GPU video-processor service)
+            # ================================================================
             result["stage"] = "video_composition"
 
             if not video_svc.combined_video_exists(script_id):
@@ -361,10 +471,23 @@ async def _run_pipeline_async(
                         return result
 
                     logger.info(f"GPU composed video: {compose_result.get('output_path')} using {compose_result.get('encoder_used')}")
+            else:
+                # Need video_config for caption stage even if we skip composition
+                from models import SystemSettings as SystemSettingsModel
+                video_setting = await session.execute(
+                    SystemSettingsModel.__table__.select().where(
+                        SystemSettingsModel.key == "video_settings"
+                    )
+                )
+                video_row = video_setting.fetchone()
+                video_config = video_row.value if video_row and video_row.value else {}
 
             logger.info(f"Video composed for script {script_id}")
 
-            # Stage 7: Transcribe and add captions (via GPU video-processor service)
+            # ================================================================
+            # STAGE 8: Burn Captions (GPU video-processor service)
+            # Transcribes our VOICE audio for karaoke timing
+            # ================================================================
             result["stage"] = "captioning"
 
             if not caption_svc.final_video_exists(script_id):
@@ -378,7 +501,7 @@ async def _run_pipeline_async(
                     shutil.copy(asset_paths.combined_path(script_id), asset_paths.final_path(script_id))
                     logger.info(f"Skipped captions (style=none) for script {script_id}")
                 else:
-                    # Transcribe
+                    # Transcribe OUR voice audio (not source video) for caption timing
                     transcription = await caption_svc.transcribe_audio(script_id)
 
                     if caption_style == "karaoke":
@@ -456,7 +579,9 @@ async def _run_pipeline_async(
                     )
             logger.info(f"Captions processed for script {script_id}")
 
-            # Stage 8: Upload to Dropbox
+            # ================================================================
+            # STAGE 9: Upload & Publish
+            # ================================================================
             result["stage"] = "storage_upload"
 
             final_path = asset_paths.final_path(script_id)
@@ -469,7 +594,7 @@ async def _run_pipeline_async(
             video_url = upload_result.public_url
             logger.info(f"Uploaded to Dropbox: {video_url}")
 
-            # Stage 8: Publish
+            # Publish to platforms
             result["stage"] = "publishing"
 
             publish_request = publisher_svc.prepare_publish_data(

@@ -30,41 +30,59 @@ The HeyGen MCP server (`mcp__HeyGen__*`) is for **reading only**:
 
 ## Critical Architecture Rules
 
-### 1. Asset Reuse - NEVER Skip Existence Checks
+### 1. Pipeline Stage Order - Source Video BEFORE Script
+
+The pipeline MUST download and transcribe the source video BEFORE generating the script:
+
+```
+1. Get Content Idea
+2. Download Source Video     ← BEFORE script!
+3. Transcribe Source Video   ← Get what they SAID
+4. Generate Script           ← Now has transcription context
+5. Generate Voice
+6. Generate Avatar
+7. Compose Video
+8. Burn Captions
+9. Upload & Publish
+```
+
+This gives Grok the transcription of what was SAID in the viral video, not just the caption.
+
+### 2. Asset Reuse - NEVER Skip Existence Checks
 
 The pipeline checks for existing assets at each stage to avoid redundant API calls:
 
 | Stage | Check Method | File Path |
 |-------|--------------|-----------|
+| Source Video | File exists | `videos/idea_{content_idea_id}_source.mp4` |
+| Transcription | DB field | `content_ideas.source_transcription` |
 | Script | DB query | `scripts.content_idea_id` |
 | Voice | `voice_exists()` | `audio/{id}_voice.mp3` |
 | Avatar | `avatar_exists()` | `avatar/{id}_avatar.mp4` |
-| Source | `source_video_exists()` | `videos/{id}_source.mp4` |
 | Combined | `combined_video_exists()` | `output/{id}_combined.mp4` |
 | Final | `final_video_exists()` | `output/{id}_final.mp4` |
 
 **To force regeneration:** Delete the file, don't modify the check logic.
 
-### 2. Settings Tables - Two Tables, Keep in Sync
+### 3. Settings Tables - Auto-Synced
 
-There are TWO settings tables that MUST stay synchronized:
-- `video_settings` - API endpoint reads/writes here
-- `system_settings` - Pipeline reads from here
+The API now automatically syncs both tables when you update settings:
+- `video_settings` / `audio_settings` - Dedicated tables
+- `system_settings` - JSONB key-value (pipeline reads from here)
 
-When updating settings via API:
 ```bash
-# API updates video_settings
+# This updates BOTH tables automatically
 curl -X PUT http://100.83.153.43:8000/api/settings/video \
   -H "Content-Type: application/json" \
   -d '{"avatar_offset_x": -250}'
 ```
 
-If settings aren't applying, check `system_settings`:
+To verify sync:
 ```sql
 SELECT value FROM system_settings WHERE key = 'video_settings';
 ```
 
-### 3. GPU Video Processing - Use video-processor Service
+### 4. GPU Video Processing - Use video-processor Service
 
 Video encoding runs on the GPU via the `video-processor` container:
 
@@ -78,7 +96,7 @@ POST http://video-processor:8080/caption
 
 **NEVER** run FFmpeg in `celery-worker` for video encoding. The pipeline calls the video-processor service via HTTP.
 
-### 4. Volume Mounts in video-processor
+### 5. Volume Mounts in video-processor
 
 The video-processor container has these mounts:
 | Host Path | Container Path |
@@ -98,7 +116,7 @@ When calling video-processor endpoints, use container paths:
 }
 ```
 
-### 5. Karaoke Captions - ASS Format
+### 6. Karaoke Captions - ASS Format
 
 Captions use ASS format with `\kf` (karaoke fill) effect:
 - Primary: White (`&H00FFFFFF`)
@@ -110,7 +128,7 @@ Captions use ASS format with `\kf` (karaoke fill) effect:
 Dialogue: 0,0:00:00.00,0:00:01.51,Default,,0,0,0,,{\kf30}Hey {\kf30}neighbors
 ```
 
-### 6. Avatar Positioning
+### 7. Avatar Positioning
 
 Avatar position is controlled by:
 - `avatar_scale`: 0.75 (75% of original size)
@@ -123,7 +141,7 @@ X: 10 + avatar_offset_x
 Y: (H-h-10) + avatar_offset_y
 ```
 
-### 7. Location Branding
+### 8. Location Branding
 
 Use "North Idaho & Spokane area" - NOT "Coeur d'Alene". Files updated:
 - `schemas.py`
@@ -131,7 +149,7 @@ Use "North Idaho & Spokane area" - NOT "Coeur d'Alene". Files updated:
 - `script_generator.py`
 - `publisher.py`
 
-### 8. TikTok Downloads Require Browser Headers
+### 9. TikTok Downloads Require Browser Headers
 
 TikTok CDN returns 204 No Content without proper headers:
 ```python
