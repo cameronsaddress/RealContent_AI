@@ -14,6 +14,7 @@ celery_app = Celery(
     include=[
         "tasks.pipeline",
         "tasks.scrape",
+        "tasks.viral",
     ],
 )
 

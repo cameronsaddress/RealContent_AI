@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+export const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -288,4 +288,48 @@ export const getApiCredits = async () => {
   return data;
 };
 
+// Viral Clip Factory
+export const getInfluencers = async () => {
+  const { data } = await api.get('/api/viral/influencers');
+  return data;
+};
+
+export const createInfluencer = async (influencer) => {
+  const { data } = await api.post('/api/viral/influencers', influencer);
+  return data;
+};
+
+export const fetchInfluencerVideos = async (id) => {
+  const { data } = await api.post(`/api/viral/influencers/${id}/fetch`);
+  return data;
+};
+
+export const getVideoDetails = async (id) => {
+  const { data } = await api.get(`/api/viral/videos/${id}/details`);
+  return data;
+};
+
+export const analyzeVideo = async (id) => {
+  const { data } = await api.post(`/api/viral/videos/${id}/analyze`);
+  return data;
+};
+
+export const getInfluencerVideos = async (id) => {
+  const { data } = await api.get(`/api/viral/influencers/${id}/videos`);
+  return data;
+};
+
+export const getViralClips = async () => {
+  const { data } = await api.get(`/api/viral/viral-clips`);
+  return data;
+};
+
 export default api;
+
+// Viral Factory
+export const getViralMusic = async () => {
+  const { data } = await api.get('/api/viral/music');
+  return data;
+};
+
+

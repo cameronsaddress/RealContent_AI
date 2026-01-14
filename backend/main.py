@@ -18,6 +18,7 @@ from pathlib import Path
 
 # Import the new pipeline router (n8n replacement)
 from routers.pipeline import router as pipeline_router
+from routers.viral import router as viral_router
 
 # Import Celery tasks for direct triggering (replacing n8n webhooks)
 from tasks.pipeline import run_pipeline
@@ -60,6 +61,28 @@ app = FastAPI(
 # Create tables
 Base.metadata.create_all(bind=engine)
 
+def seed_settings():
+    """Seed default settings if not present"""
+    db = Session(bind=engine)
+    try:
+        # Seed Viral Prompt
+        key = "VIRAL_SYSTEM_PROMPT"
+        if not db.query(LLMSettingsModel).filter(LLMSettingsModel.key == key).first():
+            default_prompt = """You are a viral content expert. Your goal is to find the most controversial, vulgar, intelligent, exciting, and viral moments. 
+Focus on high-conflict debates, shock value, deep insights, or high-energy moments. 
+Ignore boring or mundane filler. 
+Prioritize clips that trigger strong emotional reactions (anger, laughter, awe).
+Ensure clips have a clear hook and payoff."""
+            db.add(LLMSettingsModel(key=key, value=default_prompt, description="Strategy for detecting viral clips"))
+            db.commit()
+            print("Seeded VIRAL_SYSTEM_PROMPT")
+    except Exception as e:
+        print(f"Error seeding settings: {e}")
+    finally:
+        db.close()
+
+seed_settings()
+
 # CORS configuration
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
@@ -72,6 +95,7 @@ app.add_middleware(
 
 # Include the pipeline router (replaces n8n webhooks)
 app.include_router(pipeline_router)
+app.include_router(viral_router)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")

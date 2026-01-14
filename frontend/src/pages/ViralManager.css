@@ -1,0 +1,437 @@
+/* Existing ViralManager.css content... */
+.viral-manager-container {
+  padding: 20px;
+  color: #fff;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.status-text {
+  font-size: 0.8em;
+  color: #aaa;
+  font-style: italic;
+  margin-right: 8px;
+}
+
+.pending-actions {
+  display: flex;
+  align-items: center;
+}
+
+.render-btn-mini {
+  background: #e17055;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 0.75em;
+  cursor: pointer;
+  font-weight: 600;
+  text-transform: uppercase;
+  transition: background 0.2s;
+}
+
+.render-btn-mini:hover {
+  background: #d63031;
+}
+
+.render-btn-mini.retry-btn {
+  background: #fdcb6e;
+  color: #2d3436;
+}
+
+.render-btn-mini.retry-btn:hover {
+  background: #e1b12c;
+}
+
+.tabs button {
+  background: #333;
+  color: #aaa;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.tabs button.active {
+  background: #007bff;
+  color: #fff;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.card {
+  background: #1e1e1e;
+  padding: 15px;
+  border-radius: 10px;
+  /* Remove cursor: pointer since it's not a single link */
+  transition: transform 0.2s;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Ensure it fills grid cell */
+  box-sizing: border-box;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  background: #2a2a2a;
+}
+
+.influencer-card h3 {
+  margin: 0 0 5px 0;
+}
+
+.platform-tag {
+  background: #cc0000;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  display: inline-block;
+  text-transform: capitalize;
+}
+
+.url {
+  color: #888;
+  font-size: 0.8em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.video-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.video-item img {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.video-item .info {
+  flex: 1;
+}
+
+.video-item h4 {
+  margin: 0 0 5px 0;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+.actions button {
+  background: #007bff;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  /* Constraints for very small screens */
+}
+
+.modal {
+  background: #222;
+  padding: 30px;
+  border-radius: 12px;
+  width: 400px;
+  max-height: 90vh;
+  /* Basic Constraint */
+  overflow-y: auto;
+  /* Allow Scroll */
+}
+
+/* Specific Video Modal Styles to prevent overflow */
+.modal.video-modal {
+  width: auto;
+  max-width: 90vw;
+  height: auto;
+  max-height: 95vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  background: #1a1a1a;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  /* Prevent header from squishing */
+}
+
+.modal-header h3 {
+  margin: 0;
+  margin-right: 20px;
+  font-size: 1.1em;
+  color: #eee;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: #aaa;
+  font-size: 1.5em;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.close-btn:hover {
+  color: #fff;
+}
+
+.modal-video-player {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 80vh;
+  /* Constrain video height */
+  object-fit: contain;
+  /* Ensure aspect ratio */
+  background: #000;
+  border-radius: 8px;
+  flex: 1;
+  /* Allow it to take up remaining space properly */
+}
+
+.modal input,
+.modal select {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 15px;
+  background: #333;
+  border: 1px solid #444;
+  color: #fff;
+  border-radius: 6px;
+}
+
+.status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  margin: 5px 0;
+}
+
+.status.pending {
+  background: #555;
+}
+
+.status.processing {
+  background: #b8860b;
+  color: black;
+}
+
+.status.ready {
+  background: #008000;
+}
+
+.status.error {
+  background: #8b0000;
+}
+
+.add-btn {
+  background: #28a745;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+/* Spinner Loader */
+.spinner-small {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #fff;
+  animation: spin 1s ease-in-out infinite;
+  margin-right: 5px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Status Badges */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+  width: fit-content;
+  text-transform: capitalize;
+}
+
+.status-badge.pending,
+.status-badge.downloading {
+  background: #FFC107;
+  color: #000;
+}
+
+.status-badge.transcribing {
+  background: #17a2b8;
+  color: #fff;
+}
+
+.status-badge.analyzing {
+  background: #6610f2;
+  color: #fff;
+}
+
+.status-badge.analyzed {
+  background: #28a745;
+  color: #fff;
+}
+
+.status-badge.error {
+  background: #dc3545;
+  color: #fff;
+}
+
+.error-text {
+  color: #ff6b6b;
+  font-size: 0.8em;
+  margin-top: 4px;
+  max-width: 250px;
+  word-wrap: break-word;
+}
+
+/* Let's Go Button */
+.lets-go-btn {
+  background: linear-gradient(135deg, #28a745, #218838);
+  color: white;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  box-shadow: 0 4px 6px rgba(40, 167, 69, 0.3);
+  transition: all 0.2s ease;
+}
+
+.lets-go-btn:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 6px 8px rgba(40, 167, 69, 0.4);
+  background: linear-gradient(135deg, #34ce57, #28a745);
+}
+
+.lets-go-btn:active {
+  transform: translateY(0);
+}
+
+/* Mini Clips List in Video Card */
+.clips-mini-list {
+  margin-top: 15px;
+  background: #2a2a2a;
+  padding: 10px;
+  border-radius: 6px;
+  /* Ensure it stays inside card */
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.clips-mini-list h5 {
+  margin: 0 0 10px 0;
+  font-size: 0.8em;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Clip List Styling Refactor */
+.clip-mini-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #333;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  border-left: 3px solid #6c5ce7;
+}
+
+.clip-info {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  flex: 1;
+  margin-right: 10px;
+}
+
+.clip-type {
+  font-weight: bold;
+  color: #a495f5;
+  margin-right: 5px;
+  white-space: nowrap;
+}
+
+.clip-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #ddd;
+}
+
+.clip-mini-item .mini-actions {}
+
+.clip-mini-item .view-link {
+  display: none;
+}

@@ -52,6 +52,7 @@ class PlatformType(str, enum.Enum):
     facebook = "facebook"
     threads = "threads"
     pinterest = "pinterest"
+    rumble = "rumble"
 
 
 class ContentIdea(Base):
@@ -345,6 +346,127 @@ class LLMSettings(Base):
     value = Column(Text, nullable=False)
     description = Column(String)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class InfluencerPlatformType(str, enum.Enum):
+    youtube = "youtube"
+    rumble = "rumble"
+
+
+class ClipPersona(Base):
+    """
+    Persona settings for the Viral Clip Factory.
+    Defines the editing style, Grok prompting strategy, and publishing targets.
+    """
+    __tablename__ = "clip_personas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True)  # e.g. "Trad West Bot"
+    description = Column(Text)
+    
+    # Analysis Configuration
+    prompt_template = Column(Text, default="Identify the most viral moments...")
+    
+    # Editing Configuration
+    outro_style = Column(String, default="sunset_fade") # CapCut style preset
+    font_style = Column(String, default="bold_impact")
+    min_clip_duration = Column(Integer, default=30)
+    max_clip_duration = Column(Integer, default=180)
+    
+    # Publishing Configuration
+    blotato_account_id = Column(String)  # ID for the specific Blotato account
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    influencers = relationship("Influencer", back_populates="persona")
+
+
+class Influencer(Base):
+    __tablename__ = "influencers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    platform = Column(SQLEnum(InfluencerPlatformType, name="influencer_platform_type", create_type=True))
+    channel_id = Column(String)  # YouTube channel ID or Rumble username
+    channel_url = Column(String)
+    profile_image_url = Column(String)
+    
+    persona_id = Column(Integer, ForeignKey("clip_personas.id"))
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    persona = relationship("ClipPersona", back_populates="influencers")
+    videos = relationship("InfluencerVideo", back_populates="influencer", cascade="all, delete-orphan")
+
+
+class InfluencerVideo(Base):
+    __tablename__ = "influencer_videos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    influencer_id = Column(Integer, ForeignKey("influencers.id", ondelete="CASCADE"))
+    
+    platform_video_id = Column(String)
+    title = Column(String)
+    url = Column(String)
+    thumbnail_url = Column(String)
+    description = Column(Text)
+    
+    publication_date = Column(DateTime(timezone=True))
+    duration = Column(Integer)  # seconds
+    view_count = Column(Integer, default=0)
+    
+    # Processing State
+    local_path = Column(Text)  # Path to downloaded .mp4
+    transcript_json = Column(JSONB)  # Whisper word-level output
+    analysis_json = Column(JSONB)  # Grok analysis results
+    
+    status = Column(String, default="pending")  # pending, downloaded, transcribed, analyzed, error
+    error_message = Column(Text)
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    influencer = relationship("Influencer", back_populates="videos")
+    clips = relationship("ViralClip", back_populates="source_video", cascade="all, delete-orphan")
+
+
+class ViralClip(Base):
+    __tablename__ = "viral_clips"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_video_id = Column(Integer, ForeignKey("influencer_videos.id", ondelete="CASCADE"))
+    
+    # Timing
+    start_time = Column(Float)
+    end_time = Column(Float)
+    duration = Column(Float)
+    
+    # Content
+    clip_type = Column(String)  # antagonistic, funny, controversial, inspirational
+    virality_explanation = Column(Text)
+    title = Column(String)
+    description = Column(Text)
+    hashtags = Column(JSONB)
+    
+    # Production
+    edited_video_path = Column(Text)
+    status = Column(String, default="pending")  # pending, rendering, ready, published, error
+    error_message = Column(Text)
+    render_metadata = Column(JSONB)
+    
+    # Publishing
+    blotato_post_id = Column(String)
+    published_at = Column(DateTime(timezone=True))
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    source_video = relationship("InfluencerVideo", back_populates="clips")
 
 
 def get_db():

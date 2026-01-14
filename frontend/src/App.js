@@ -3,6 +3,7 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Character from './pages/Character';
 import Scraper from './pages/Scraper';
+import ViralManager from './pages/ViralManager';
 import ContentIdeas from './pages/ContentIdeas';
 import Scripts from './pages/Scripts';
 import Assets from './pages/Assets';
@@ -32,6 +33,9 @@ function App() {
             <NavLink to="/scraper">Scraper</NavLink>
           </li>
           <li>
+            <NavLink to="/viral">Viral Factory</NavLink>
+          </li>
+          <li>
             <NavLink to="/ideas">Content Ideas</NavLink>
           </li>
           <li>
@@ -58,6 +62,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/character" element={<Character />} /> {/* Added Route for Character */}
           <Route path="/scraper" element={<Scraper />} />
+          <Route path="/viral" element={<ViralManager />} />
           <Route path="/ideas" element={<ContentIdeas />} />
           <Route path="/scripts" element={<Scripts />} />
           <Route path="/assets" element={<Assets />} />

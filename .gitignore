@@ -32,3 +32,6 @@ Thumbs.db
 
 # Docker
 *.log
+
+assets/music/
+assets/output/

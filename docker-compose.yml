@@ -95,7 +95,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   celery-beat:
     build:
@@ -147,6 +147,7 @@ services:
       - ./assets/avatar:/avatar
       - ./assets/captions:/captions
       - ./assets/music:/music
+      - ./assets:/assets
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     deploy:
@@ -155,7 +156,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
 volumes:
   postgres_data:

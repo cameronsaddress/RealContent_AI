@@ -3,7 +3,8 @@ import {
   getAudioSettings, updateAudioSettings,
   getVideoSettings, updateVideoSettings,
   getLLMSettings, updateLLMSetting,
-  getBrandPersona, updateBrandPersona
+  getBrandPersona, updateBrandPersona,
+  getViralMusic
 } from '../api';
 
 export default function Settings() {
@@ -47,6 +48,9 @@ export default function Settings() {
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [editValue, setEditValue] = useState('');
 
+  // Music state
+  const [musicFiles, setMusicFiles] = useState([]);
+
   // Brand Persona state
   const [persona, setPersona] = useState({
     name: '',
@@ -79,15 +83,17 @@ export default function Settings() {
   const loadAllSettings = async () => {
     setLoading(true);
     try {
-      const [audioData, videoData, llmData, personaData] = await Promise.all([
+      const [audioData, videoData, llmData, personaData, musicData] = await Promise.all([
         getAudioSettings(),
         getVideoSettings(),
         getLLMSettings(),
-        getBrandPersona()
+        getBrandPersona(),
+        getViralMusic()
       ]);
       setAudio(audioData);
       setVideo(videoData);
       setLlmPrompts(llmData);
+      setMusicFiles(musicData);
       if (personaData) {
         setPersona(personaData);
       }
@@ -125,15 +131,15 @@ export default function Settings() {
     setSaving(false);
   };
 
-  const saveLLMPrompt = async (key) => {
+  const saveLLMPrompt = async (key, val) => {
     setSaving(true);
     try {
-      await updateLLMSetting(key, { value: editValue });
-      setEditingPrompt(null);
+      await updateLLMSetting(key, { value: val || editValue });
+      if (!val) setEditingPrompt(null);
       loadAllSettings();
-      showMessage('Prompt saved!', 'success');
+      showMessage('Setting saved!', 'success');
     } catch (err) {
-      showMessage('Error saving prompt', 'error');
+      showMessage('Error saving setting', 'error');
     }
     setSaving(false);
   };
@@ -200,7 +206,7 @@ export default function Settings() {
               <input
                 type="text"
                 value={persona.name}
-                onChange={(e) => setPersona({...persona, name: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, name: e.target.value })}
                 className="text-input"
                 placeholder="Your name or brand name"
               />
@@ -211,7 +217,7 @@ export default function Settings() {
               <input
                 type="text"
                 value={persona.title}
-                onChange={(e) => setPersona({...persona, title: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, title: e.target.value })}
                 className="text-input"
                 placeholder="e.g., Real Estate Expert, Fitness Coach"
               />
@@ -222,7 +228,7 @@ export default function Settings() {
               <input
                 type="text"
                 value={persona.location}
-                onChange={(e) => setPersona({...persona, location: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, location: e.target.value })}
                 className="text-input"
                 placeholder="e.g., Austin, Texas"
               />
@@ -232,7 +238,7 @@ export default function Settings() {
               <label>Bio / Background</label>
               <textarea
                 value={persona.bio}
-                onChange={(e) => setPersona({...persona, bio: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, bio: e.target.value })}
                 className="textarea-input"
                 rows={3}
                 placeholder="Brief background that helps the AI understand who you are..."
@@ -249,7 +255,7 @@ export default function Settings() {
               <label>Communication Tone</label>
               <select
                 value={persona.tone}
-                onChange={(e) => setPersona({...persona, tone: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, tone: e.target.value })}
                 className="select-input"
               >
                 <option value="professional">Professional - Business-like, polished</option>
@@ -264,7 +270,7 @@ export default function Settings() {
               <label>Energy Level</label>
               <select
                 value={persona.energy_level}
-                onChange={(e) => setPersona({...persona, energy_level: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, energy_level: e.target.value })}
                 className="select-input"
               >
                 <option value="calm">Calm - Relaxed, measured pace</option>
@@ -278,7 +284,7 @@ export default function Settings() {
               <label>Humor Style</label>
               <select
                 value={persona.humor_style}
-                onChange={(e) => setPersona({...persona, humor_style: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, humor_style: e.target.value })}
                 className="select-input"
               >
                 <option value="none">None - Serious, straightforward</option>
@@ -298,7 +304,7 @@ export default function Settings() {
               <input
                 type="text"
                 value={persona.signature_intro}
-                onChange={(e) => setPersona({...persona, signature_intro: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, signature_intro: e.target.value })}
                 className="text-input"
                 placeholder="e.g., Hey neighbors!, What's up everyone?"
               />
@@ -310,7 +316,7 @@ export default function Settings() {
               <input
                 type="text"
                 value={persona.signature_cta}
-                onChange={(e) => setPersona({...persona, signature_cta: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, signature_cta: e.target.value })}
                 className="text-input"
                 placeholder="e.g., DM me to chat!, Follow for more tips!"
               />
@@ -420,7 +426,7 @@ export default function Settings() {
             <div className="setting-item">
               <textarea
                 value={persona.response_style}
-                onChange={(e) => setPersona({...persona, response_style: e.target.value})}
+                onChange={(e) => setPersona({ ...persona, response_style: e.target.value })}
                 className="textarea-input"
                 rows={6}
                 placeholder="When reviewing viral content:
@@ -457,7 +463,7 @@ export default function Settings() {
               min="0"
               max="100"
               value={audio.original_volume * 100}
-              onChange={(e) => setAudio({...audio, original_volume: e.target.value / 100})}
+              onChange={(e) => setAudio({ ...audio, original_volume: e.target.value / 100 })}
               className="slider"
             />
             <span className="slider-hint">Volume of the source social media video's audio</span>
@@ -473,7 +479,7 @@ export default function Settings() {
               min="0"
               max="100"
               value={audio.avatar_volume * 100}
-              onChange={(e) => setAudio({...audio, avatar_volume: e.target.value / 100})}
+              onChange={(e) => setAudio({ ...audio, avatar_volume: e.target.value / 100 })}
               className="slider"
             />
             <span className="slider-hint">Volume of the AI avatar's voiceover</span>
@@ -489,7 +495,7 @@ export default function Settings() {
               min="0"
               max="100"
               value={(audio.music_volume ?? 0.3) * 100}
-              onChange={(e) => setAudio({...audio, music_volume: e.target.value / 100})}
+              onChange={(e) => setAudio({ ...audio, music_volume: e.target.value / 100 })}
               className="slider"
             />
             <span className="slider-hint">Volume of the background music track (if enabled)</span>
@@ -501,7 +507,7 @@ export default function Settings() {
               <input
                 type="checkbox"
                 checked={audio.music_autoduck ?? true}
-                onChange={(e) => setAudio({...audio, music_autoduck: e.target.checked})}
+                onChange={(e) => setAudio({ ...audio, music_autoduck: e.target.checked })}
               />
               <span>Auto-Duck Music When Speaking</span>
             </label>
@@ -514,7 +520,7 @@ export default function Settings() {
               <input
                 type="checkbox"
                 checked={audio.ducking_enabled}
-                onChange={(e) => setAudio({...audio, ducking_enabled: e.target.checked})}
+                onChange={(e) => setAudio({ ...audio, ducking_enabled: e.target.checked })}
               />
               <span>Enable Audio Ducking</span>
             </label>
@@ -534,7 +540,7 @@ export default function Settings() {
                   max="30"
                   step="0.5"
                   value={audio.avatar_delay_seconds}
-                  onChange={(e) => setAudio({...audio, avatar_delay_seconds: parseFloat(e.target.value) || 0})}
+                  onChange={(e) => setAudio({ ...audio, avatar_delay_seconds: parseFloat(e.target.value) || 0 })}
                   className="number-input"
                 />
                 <span className="slider-hint">Time before avatar starts speaking (original audio plays full during this time)</span>
@@ -549,7 +555,7 @@ export default function Settings() {
                   min="0"
                   max="100"
                   value={audio.duck_to_percent * 100}
-                  onChange={(e) => setAudio({...audio, duck_to_percent: e.target.value / 100})}
+                  onChange={(e) => setAudio({ ...audio, duck_to_percent: e.target.value / 100 })}
                   className="slider"
                 />
                 <span className="slider-hint">Original audio volume when avatar is speaking</span>
@@ -582,7 +588,7 @@ export default function Settings() {
                   type="radio"
                   name="resolution"
                   checked={video.output_height === 1280}
-                  onChange={() => setVideo({...video, output_width: 720, output_height: 1280})}
+                  onChange={() => setVideo({ ...video, output_width: 720, output_height: 1280 })}
                 />
                 <span>720p (720x1280)</span>
               </label>
@@ -591,7 +597,7 @@ export default function Settings() {
                   type="radio"
                   name="resolution"
                   checked={video.output_height === 1920}
-                  onChange={() => setVideo({...video, output_width: 1080, output_height: 1920})}
+                  onChange={() => setVideo({ ...video, output_width: 1080, output_height: 1920 })}
                 />
                 <span>1080p (1080x1920) - Recommended</span>
               </label>
@@ -600,7 +606,7 @@ export default function Settings() {
                   type="radio"
                   name="resolution"
                   checked={video.output_height === 3840}
-                  onChange={() => setVideo({...video, output_width: 2160, output_height: 3840})}
+                  onChange={() => setVideo({ ...video, output_width: 2160, output_height: 3840 })}
                 />
                 <span>4K (2160x3840)</span>
               </label>
@@ -620,7 +626,7 @@ export default function Settings() {
               min="15"
               max="28"
               value={video.crf}
-              onChange={(e) => setVideo({...video, crf: parseInt(e.target.value)})}
+              onChange={(e) => setVideo({ ...video, crf: parseInt(e.target.value) })}
               className="slider"
             />
             <span className="slider-hint">Lower = better quality, larger file size. 18 is recommended.</span>
@@ -631,7 +637,7 @@ export default function Settings() {
             <label>Encoding Preset</label>
             <select
               value={video.preset}
-              onChange={(e) => setVideo({...video, preset: e.target.value})}
+              onChange={(e) => setVideo({ ...video, preset: e.target.value })}
               className="select-input"
             >
               <option value="ultrafast">Ultra Fast (lower quality)</option>
@@ -649,7 +655,7 @@ export default function Settings() {
               <input
                 type="checkbox"
                 checked={video.greenscreen_enabled}
-                onChange={(e) => setVideo({...video, greenscreen_enabled: e.target.checked})}
+                onChange={(e) => setVideo({ ...video, greenscreen_enabled: e.target.checked })}
               />
               <span>Enable Greenscreen Background</span>
             </label>
@@ -665,13 +671,13 @@ export default function Settings() {
                   <input
                     type="color"
                     value={video.greenscreen_color}
-                    onChange={(e) => setVideo({...video, greenscreen_color: e.target.value})}
+                    onChange={(e) => setVideo({ ...video, greenscreen_color: e.target.value })}
                     className="color-picker"
                   />
                   <input
                     type="text"
                     value={video.greenscreen_color}
-                    onChange={(e) => setVideo({...video, greenscreen_color: e.target.value})}
+                    onChange={(e) => setVideo({ ...video, greenscreen_color: e.target.value })}
                     className="color-input"
                     placeholder="#00FF00"
                   />
@@ -706,7 +712,7 @@ export default function Settings() {
                   type="radio"
                   name="avatar_position"
                   checked={video.avatar_position === 'bottom-left'}
-                  onChange={() => setVideo({...video, avatar_position: 'bottom-left'})}
+                  onChange={() => setVideo({ ...video, avatar_position: 'bottom-left' })}
                 />
                 <span>Bottom Left</span>
               </label>
@@ -715,7 +721,7 @@ export default function Settings() {
                   type="radio"
                   name="avatar_position"
                   checked={video.avatar_position === 'bottom-center'}
-                  onChange={() => setVideo({...video, avatar_position: 'bottom-center'})}
+                  onChange={() => setVideo({ ...video, avatar_position: 'bottom-center' })}
                 />
                 <span>Bottom Center</span>
               </label>
@@ -724,7 +730,7 @@ export default function Settings() {
                   type="radio"
                   name="avatar_position"
                   checked={video.avatar_position === 'bottom-right'}
-                  onChange={() => setVideo({...video, avatar_position: 'bottom-right'})}
+                  onChange={() => setVideo({ ...video, avatar_position: 'bottom-right' })}
                 />
                 <span>Bottom Right</span>
               </label>
@@ -742,7 +748,7 @@ export default function Settings() {
               min="30"
               max="100"
               value={(video.avatar_scale || 0.8) * 100}
-              onChange={(e) => setVideo({...video, avatar_scale: e.target.value / 100})}
+              onChange={(e) => setVideo({ ...video, avatar_scale: e.target.value / 100 })}
               className="slider"
             />
             <span className="slider-hint">Size of the avatar relative to screen width (80% recommended for TikTok)</span>
@@ -758,7 +764,7 @@ export default function Settings() {
               min="-500"
               max="500"
               value={video.avatar_offset_x ?? -200}
-              onChange={(e) => setVideo({...video, avatar_offset_x: parseInt(e.target.value)})}
+              onChange={(e) => setVideo({ ...video, avatar_offset_x: parseInt(e.target.value) })}
               className="slider"
             />
             <span className="slider-hint">Horizontal shift (negative = left, positive = right). Default: -200</span>
@@ -773,7 +779,7 @@ export default function Settings() {
               min="0"
               max="1000"
               value={video.avatar_offset_y ?? 500}
-              onChange={(e) => setVideo({...video, avatar_offset_y: parseInt(e.target.value)})}
+              onChange={(e) => setVideo({ ...video, avatar_offset_y: parseInt(e.target.value) })}
               className="slider"
             />
             <span className="slider-hint">Push avatar down to hide transparent space above (higher = lower on screen). Default: 500</span>
@@ -804,7 +810,7 @@ export default function Settings() {
                   type="radio"
                   name="caption_style"
                   checked={video.caption_style === 'karaoke'}
-                  onChange={() => setVideo({...video, caption_style: 'karaoke'})}
+                  onChange={() => setVideo({ ...video, caption_style: 'karaoke' })}
                 />
                 <span>Karaoke (word highlight)</span>
               </label>
@@ -813,7 +819,7 @@ export default function Settings() {
                   type="radio"
                   name="caption_style"
                   checked={video.caption_style === 'static'}
-                  onChange={() => setVideo({...video, caption_style: 'static'})}
+                  onChange={() => setVideo({ ...video, caption_style: 'static' })}
                 />
                 <span>Static (standard subtitles)</span>
               </label>
@@ -822,7 +828,7 @@ export default function Settings() {
                   type="radio"
                   name="caption_style"
                   checked={video.caption_style === 'none'}
-                  onChange={() => setVideo({...video, caption_style: 'none'})}
+                  onChange={() => setVideo({ ...video, caption_style: 'none' })}
                 />
                 <span>None</span>
               </label>
@@ -841,7 +847,7 @@ export default function Settings() {
                   min="48"
                   max="144"
                   value={video.caption_font_size || 96}
-                  onChange={(e) => setVideo({...video, caption_font_size: parseInt(e.target.value)})}
+                  onChange={(e) => setVideo({ ...video, caption_font_size: parseInt(e.target.value) })}
                   className="slider"
                 />
                 <span className="slider-hint">Text size for captions (96pt recommended)</span>
@@ -857,13 +863,13 @@ export default function Settings() {
                       <input
                         type="color"
                         value={video.caption_color || '#FFFFFF'}
-                        onChange={(e) => setVideo({...video, caption_color: e.target.value})}
+                        onChange={(e) => setVideo({ ...video, caption_color: e.target.value })}
                         className="color-picker"
                       />
                       <input
                         type="text"
                         value={video.caption_color || '#FFFFFF'}
-                        onChange={(e) => setVideo({...video, caption_color: e.target.value})}
+                        onChange={(e) => setVideo({ ...video, caption_color: e.target.value })}
                         className="color-input"
                       />
                     </div>
@@ -876,13 +882,13 @@ export default function Settings() {
                         <input
                           type="color"
                           value={video.caption_highlight_color || '#FFFF00'}
-                          onChange={(e) => setVideo({...video, caption_highlight_color: e.target.value})}
+                          onChange={(e) => setVideo({ ...video, caption_highlight_color: e.target.value })}
                           className="color-picker"
                         />
                         <input
                           type="text"
                           value={video.caption_highlight_color || '#FFFF00'}
-                          onChange={(e) => setVideo({...video, caption_highlight_color: e.target.value})}
+                          onChange={(e) => setVideo({ ...video, caption_highlight_color: e.target.value })}
                           className="color-input"
                         />
                       </div>
@@ -895,13 +901,13 @@ export default function Settings() {
                       <input
                         type="color"
                         value={video.caption_outline_color || '#000000'}
-                        onChange={(e) => setVideo({...video, caption_outline_color: e.target.value})}
+                        onChange={(e) => setVideo({ ...video, caption_outline_color: e.target.value })}
                         className="color-picker"
                       />
                       <input
                         type="text"
                         value={video.caption_outline_color || '#000000'}
-                        onChange={(e) => setVideo({...video, caption_outline_color: e.target.value})}
+                        onChange={(e) => setVideo({ ...video, caption_outline_color: e.target.value })}
                         className="color-input"
                       />
                     </div>
@@ -919,7 +925,7 @@ export default function Settings() {
                   min="1"
                   max="10"
                   value={video.caption_outline_width || 5}
-                  onChange={(e) => setVideo({...video, caption_outline_width: parseInt(e.target.value)})}
+                  onChange={(e) => setVideo({ ...video, caption_outline_width: parseInt(e.target.value) })}
                   className="slider"
                 />
               </div>
@@ -934,7 +940,7 @@ export default function Settings() {
                   min="400"
                   max="1200"
                   value={video.caption_position_y || 850}
-                  onChange={(e) => setVideo({...video, caption_position_y: parseInt(e.target.value)})}
+                  onChange={(e) => setVideo({ ...video, caption_position_y: parseInt(e.target.value) })}
                   className="slider"
                 />
                 <span className="slider-hint">Distance from bottom (higher = closer to center)</span>
@@ -1513,7 +1519,133 @@ export default function Settings() {
         .add-button:hover {
           background: var(--accent-secondary);
         }
+        
+        /* Music Library */
+        .music-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin-top: 16px;
+        }
+        .music-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: var(--bg-tertiary);
+          padding: 12px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+        }
+        .music-info {
+          display: flex;
+          flex-direction: column;
+        }
+        .music-name {
+          font-weight: 500;
+          color: var(--text-primary);
+        }
+        .file-size {
+          font-size: 0.8rem;
+          color: var(--text-secondary);
+        }
+        .music-player {
+          height: 32px;
+        }
+        .no-music {
+          color: var(--text-secondary);
+          font-style: italic;
+        }
       `}</style>
+      {/* VIRAL FACTORY SETTINGS */}
+      <div className="settings-section">
+        <h2>Viral Clip Factory</h2>
+        <p className="section-description">Configure the AI behavior for the Viral Clip Factory pipeline.</p>
+
+        <div className="settings-grid">
+          <div className="setting-item">
+            <label>Viral Strategy (System Prompt)</label>
+            <textarea
+              value={llmPrompts.find(p => p.key === 'VIRAL_SYSTEM_PROMPT')?.value || ''}
+              onChange={(e) => {
+                const newVal = e.target.value;
+                setLlmPrompts(prev => {
+                  const idx = prev.findIndex(p => p.key === 'VIRAL_SYSTEM_PROMPT');
+                  if (idx >= 0) {
+                    const copy = [...prev];
+                    copy[idx] = { ...copy[idx], value: newVal };
+                    return copy;
+                  } else {
+                    return [...prev, { key: 'VIRAL_SYSTEM_PROMPT', value: newVal }];
+                  }
+                });
+              }}
+              className="textarea-input"
+              rows={8}
+              placeholder="Instructions for Grok on how to identify viral clips..."
+            />
+            <button
+              onClick={() => saveLLMPrompt('VIRAL_SYSTEM_PROMPT', llmPrompts.find(p => p.key === 'VIRAL_SYSTEM_PROMPT')?.value)}
+              className="save-button"
+              style={{ marginTop: '10px' }}
+            >
+              Save Prompt
+            </button>
+          </div>
+
+          <div className="setting-item">
+            <label>Channel Handle (@username)</label>
+            <input
+              type="text"
+              value={llmPrompts.find(p => p.key === 'VIRAL_CHANNEL_HANDLE')?.value || ''}
+              onChange={(e) => {
+                const newVal = e.target.value;
+                setLlmPrompts(prev => {
+                  const idx = prev.findIndex(p => p.key === 'VIRAL_CHANNEL_HANDLE');
+                  if (idx >= 0) {
+                    const copy = [...prev];
+                    copy[idx] = { ...copy[idx], value: newVal };
+                    return copy;
+                  } else {
+                    return [...prev, { key: 'VIRAL_CHANNEL_HANDLE', value: newVal }];
+                  }
+                });
+              }}
+              className="text-input"
+              placeholder="e.g. realDonaldTrump"
+            />
+            <button
+              onClick={() => saveLLMPrompt('VIRAL_CHANNEL_HANDLE', llmPrompts.find(p => p.key === 'VIRAL_CHANNEL_HANDLE')?.value)}
+              className="save-button"
+              style={{ marginTop: '10px' }}
+            >
+              Save Handle
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* VIRAL MUSIC LIBRARY */}
+      <div className="settings-section">
+        <h2>Viral Music Library</h2>
+        <p className="section-description">Background music for viral clips (TradWest style). Files in /assets/music.</p>
+
+        <div className="music-list">
+          {musicFiles.length === 0 ? (
+            <p className="no-music">No music files found. Add mp3/wav to /assets/music.</p>
+          ) : (
+            musicFiles.map((file, i) => (
+              <div key={i} className="music-item">
+                <div className="music-info">
+                  <span className="music-name">{file.name}</span>
+                  <span className="file-size">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                </div>
+                <audio controls src={`/api/viral/music/${file.name}`} className="music-player" />
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
+
   );
 }

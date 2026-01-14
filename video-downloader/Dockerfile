@@ -1,26 +1,22 @@
 # Video Processing Service - CUDA-enabled FFmpeg + yt-dlp + FastAPI
-# Built on NVIDIA PyTorch base for DGX Spark GPU support
-FROM nvcr.io/nvidia/pytorch:25.11-py3
+# Using existing 'cuda social container' (n8n-video-processor) as base to ensure correct yt-dlp/net config
+FROM n8n-video-processor:latest
 
 WORKDIR /app
 
-# Install FFmpeg with NVIDIA hardware acceleration
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install ImageMagick for MoviePy TextClip
+# Unblock ImageMagick security policy for TextClip
+RUN apt-get update && apt-get install -y imagemagick fonts-dejavu fonts-liberation && \
+    sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies including curl_cffi for browser impersonation
-# curl_cffi is required for TikTok/Instagram to avoid IP blocks
-# Note: curl_cffi 0.13.x is the latest version supported by yt-dlp (0.14.x not yet compatible)
+# Install NEW dependencies for Viral Clips (Whisper, MoviePy)
+# Existing image already contains: ffmpeg, yt-dlp, fastapi, curl_cffi
 RUN pip install --no-cache-dir \
-    "yt-dlp[default,curl-cffi]" \
-    fastapi \
-    uvicorn[standard] \
-    python-multipart \
-    aiofiles \
-    "curl_cffi>=0.10,<0.14" \
-    httpx
+    openai-whisper \
+    moviepy \
+    scipy \
+    numpy
 
 # Copy the API server
 COPY main.py .
