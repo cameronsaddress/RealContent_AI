@@ -129,11 +129,13 @@ TRANSCRIPT SEGMENTS (with timestamps):
 {json.dumps(segments, indent=None)}
 
 TASK:
-Identify 3-5 distinct clips that fit one of these types:
-- Antagonistic / Conflict (High emotion)
+Identify up to 10 distinct clips (prioritizing quality and viral potential) that fit one of these types:
+- OUTRAGEOUS / CONTROVERSIAL (Priority #1 - Hot Takes, "Cancelled" moments)
+- Antagonistic / Conflict (High emotion battles)
 - Funny / Memeable (Out of context or hilarious)
-- Controversial / Hot Take
-- Inspirational / "Based"
+- Inspirational / "Based" (Strong monologues)
+
+FOCUS ON THE MOST CONTROVERSIAL AND SHOCKING MOMENTS. DO NOT HOLD BACK.
 
 Constraints:
 - Clips should be between {persona.min_clip_duration} and {persona.max_clip_duration} seconds.

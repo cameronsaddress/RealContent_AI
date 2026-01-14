@@ -127,7 +127,12 @@ async def analyze_video(id: int, db: Session = Depends(get_db)):
     if not video:
          raise HTTPException(status_code=404)
     
-    video.status = "processing"
+    # video.status = "processing" 
+    # FIX: Do not overwrite 'transcribed' or 'downloaded' status, 
+    # otherwise the shortcut logic in tasks/viral.py will fail to detect them!
+    if video.status not in ["transcribed", "downloaded"]:
+        video.status = "processing"
+    
     db.commit()
     
     # Trigger Celery pipeline (Download -> Transcribe -> Analyze)

@@ -92,7 +92,7 @@ def get_whisper_model():
     if whisper_model is None:
         print("Loading Whisper model...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        whisper_model = whisper.load_model("small", device=device)
+        whisper_model = whisper.load_model("medium", device=device)
     return whisper_model
 
 app = FastAPI(

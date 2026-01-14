@@ -54,6 +54,19 @@ const ViralManager = () => {
         }
     };
 
+    const getThumbnail = (video) => {
+        if (video.thumbnail_url) return video.thumbnail_url;
+        // Fallback for YouTube logic if URL structure known, or just placeholder
+        return 'https://via.placeholder.com/320x180?text=No+Thumbnail';
+    };
+
+    const formatDuration = (seconds) => {
+        if (!seconds) return '';
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
     const handleSelectInfluencer = async (inf) => {
         setSelectedInfluencer(inf);
         setActiveTab('videos');
@@ -107,11 +120,13 @@ const ViralManager = () => {
     };
 
     const handleAnalyze = async (videoId) => {
-        if (!window.confirm("Start analysis? This will download, transcribe, and use Grok credits.")) return;
+        // Removed confirmation as requested
+        // if (!window.confirm("...")) return; 
         try {
             const res = await analyzeVideo(videoId);
-            alert(res.message);
-            setActiveTab('clips'); // Switch to clips to see result coming in
+            console.log(res.message); // Log instead of alert
+            // alert(res.message); // Removed success alert
+            // setActiveTab('clips'); // Don't switch prematurely. Let user watch status.
             loadClips();
         } catch (e) {
             alert(e.message);
@@ -177,21 +192,52 @@ const ViralManager = () => {
                                         .sort((a, b) => new Date(b.publication_date || b.created_at || 0) - new Date(a.publication_date || a.created_at || 0))
                                         .map(v => (
                                             <div key={v.id} className="video-item card">
-                                                <img src={v.thumbnail_url} alt="thumb" />
-                                                <div className="info">
-                                                    <h4>{v.title}</h4>
-                                                    {v.status !== 'pending' && (
-                                                        <div className={`status-badge ${v.status?.toLowerCase().split(' ')[0]}`}>
-                                                            {(v.status?.toLowerCase().includes('downloading') ||
-                                                                v.status?.toLowerCase().includes('transcribing') ||
-                                                                v.status?.toLowerCase().includes('analyzing')) && (
-                                                                    <span className="spinner-small"></span>
-                                                                )}
-                                                            {v.status}
+                                                <div className="video-card-content">
+                                                    <a href={v.url} target="_blank" rel="noreferrer" className="thumbnail-link">
+                                                        <div className="thumbnail-wrapper">
+                                                            <img src={getThumbnail(v)} alt={v.title} onError={(e) => e.target.src = 'https://via.placeholder.com/320x180?text=No+Thumbnail'} />
+                                                            <div className="play-overlay">
+                                                                <div className="play-icon">▶</div>
+                                                            </div>
                                                         </div>
-                                                    )}
-                                                    {v.status === 'error' && <p className="error-text" title={v.error_message}>{v.error_message}</p>}
-                                                    <a href={v.url} target="_blank" rel="noreferrer">Watch</a>
+                                                    </a>
+                                                    <div className="info">
+                                                        <h4>{v.title}</h4>
+                                                        <div className="meta">
+                                                            {v.duration && <span className="duration">{formatDuration(v.duration)}</span>}
+                                                            {v.influencer && <span className="influencer-name"> | {v.influencer.name}</span>}
+                                                        </div>
+
+                                                        {v.status !== 'pending' && (
+                                                            <div className={`status-badge ${v.status?.toLowerCase().split(' ')[0]}`}>
+                                                                {(v.status?.toLowerCase().includes('downloading') ||
+                                                                    v.status?.toLowerCase().includes('transcribing') ||
+                                                                    v.status?.toLowerCase().includes('analyzing')) && (
+                                                                        <span className="spinner-small"></span>
+                                                                    )}
+                                                                {v.status}
+                                                            </div>
+                                                        )}
+                                                        {v.status === 'error' && <p className="error-text" title={v.error_message}>{v.error_message}</p>}
+
+                                                        <div className="actions-row">
+                                                            {!['downloaded', 'transcribed', 'analyzed', 'pending', 'error'].some(s => v.status?.toLowerCase().includes(s) === false) ? null :
+                                                                /* Actually, simpler logic: Show if NOT active */
+                                                                !(v.status?.toLowerCase().includes('downloading') ||
+                                                                    v.status?.toLowerCase().includes('transcribing') ||
+                                                                    v.status?.toLowerCase().includes('analyzing') ||
+                                                                    v.status?.toLowerCase().includes('processing') ||
+                                                                    v.status?.toLowerCase().includes('rendering')) && (
+                                                                    <button
+                                                                        className="analyze-btn"
+                                                                        style={{ marginTop: '10px', width: '100%' }}
+                                                                        onClick={() => handleAnalyze(v.id)}
+                                                                    >
+                                                                        {v.status === 'analyzed' || v.status === 'completed' ? 'Re-Generate Clips' : 'Auto-Generate Clips'}
+                                                                    </button>
+                                                                )}
+                                                        </div>
+                                                    </div>
                                                 </div>
                                                 <div className="actions">
                                                     {v.clips && v.clips.length > 0 && (

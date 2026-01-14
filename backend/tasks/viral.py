@@ -35,6 +35,26 @@ async def _download_video_async(video_id: int):
             logger.error(f"Video {video_id} not found")
             return
 
+        # --- SHORTCUT LOGIC ---
+        # If already transcribed (and we have the JSON), skip to analysis
+        if video.status == "transcribed" and video.transcript_json:
+            # Check if file actually exists (Repair Scenario)
+            import os
+            if os.path.exists(video.local_path):
+                logger.info(f"Video {video_id} transcribed AND file exists. Skipping to Analysis.")
+                process_viral_video_analyze.delay(video_id)
+                return
+            else:
+                logger.info(f"Video {video_id} is transcribed but FILE MISSING. Proceeding to Download.")
+                # Fall through to download...
+
+        # If already downloaded, skip download
+        if video.status == "downloaded" and video.local_path:
+             logger.info(f"Video {video_id} already downloaded. Skipping to Transcription.")
+             process_viral_video_transcribe.delay(video_id)
+             return
+        # ----------------------
+
         video.status = "downloading"
         db.commit()
 
@@ -82,6 +102,14 @@ async def _transcribe_video_async(video_id: int):
         if not video or not video.local_path:
              raise Exception("Video not ready for transcription")
 
+        # --- SHORTCUT LOGIC ---
+        # Trust the data: If transcript exists, SKIP. status doesn't matter (might be 'downloaded' from repair).
+        if video.transcript_json:
+            logger.info(f"Video {video_id} already has transcript. Skipping to Analysis.")
+            process_viral_video_analyze.delay(video_id)
+            return
+        # ----------------------
+
         video.status = "transcribing (whisper)"
         db.commit()
 
@@ -101,7 +129,78 @@ async def _transcribe_video_async(video_id: int):
                 raise Exception(f"Transcription failed: {response.text}")
 
             result = response.json()
-            video.transcript_json = result # Save full JSON with timestamps
+            
+            # --- SAVE RAW TRANSCRIPT FIRST (Safety Checkpoint) ---
+            # This ensures we don't lose the expensive GPU work if the intro logic crashes
+            video.transcript_json = result 
+            video.status = "transcribed_raw"
+            db.commit()
+            logger.info(f"Raw transcript saved for video {video_id}")
+
+            # --- Intro Skipping Logic for specific creators ---
+            try:
+                # For Nicholas J Fuentes, skip the "intro" loop until he says "Good evening! This is America First"
+                channel_id = (video.influencer.channel_id or "").lower()
+                influencer_name = (video.influencer.name or "").lower()
+                
+                if video.influencer and ("nicholasjfuentes" in channel_id or "nicholas" in influencer_name):
+                    logger.info(f"Checking for intro skip for influencer: {video.influencer.name}")
+                    segments = result.get("segments", [])
+                    # Find LAST occurrence of the intro phrase
+                    last_cutoff_time = 0.0
+                    found_match = False
+                    
+                    for i, seg in enumerate(segments):
+                        text = (seg.get("text") or "").lower()
+                        
+                        # Check current segment
+                        # Primary Trigger: "America First" + context
+                        match_primary = "america first" in text and ("good evening" in text or "watching" in text)
+                        
+                        # Secondary Trigger: "We have a great show for you" (explicit start marker)
+                        match_secondary = "we have a great show for you" in text
+
+                        # Check previous segment context for Primary Trigger
+                        match_sequence = False
+                        if i > 0:
+                            prev_text = (segments[i-1].get("text") or "").lower()
+                            if "good evening" in prev_text and "america" in text:
+                                match_sequence = True
+
+                        if match_primary or match_secondary or match_sequence:
+                            cutoff_candidate = seg["end"]
+                            
+                            # Look ahead for name drop extension
+                            if i + 1 < len(segments):
+                                next_seg = segments[i+1]
+                                next_text = (next_seg.get("text") or "").lower()
+                                if "nicholas" in next_text:
+                                    cutoff_candidate = next_seg["end"]
+                            
+                            last_cutoff_time = cutoff_candidate
+                            found_match = True
+                            logger.info(f"Found intro candidate at {cutoff_candidate}s")
+                    
+                    if found_match:
+                        logger.info(f"Final Nick Fuentes intro cleanup cutoff: {last_cutoff_time}s")
+                        
+                        # Filter transcript to exclude everything before cutoff
+                        new_segments = []
+                        for seg in segments:
+                            if seg["end"] > last_cutoff_time:
+                                new_segments.append(seg)
+                        
+                        if new_segments:
+                            result["segments"] = new_segments
+                            # Update with filtered result
+                            video.transcript_json = result
+                            logger.info(f"Intro skipping applied. Removed segments before {last_cutoff_time}s.")
+                        else:
+                            logger.warning("Intro skipping removed ALL segments! Reverting...")
+            except Exception as logic_err:
+                logger.error(f"Intro Logic Failed (continuing with raw transcript): {logic_err}")
+                # Do not re-raise; keep the raw transcript we already saved
+            
             video.status = "transcribed"
             db.commit()
             
@@ -133,15 +232,16 @@ async def _analyze_video_async(video_id: int):
         db.expire_all() # Ensure we get fresh data
         video = db.query(InfluencerVideo).filter(InfluencerVideo.id == video_id).first()
         if video and video.clips:
-            total_clips = len(video.clips)
-            for i, clip in enumerate(video.clips):
-                video.status = f"rendering clip ({i+1}/{total_clips})"
-                db.commit()
-                logger.info(f"Auto-rendering clip {clip.id} ({i+1}/{total_clips})")
-                await _render_clip_async(clip.id)
+            # AUTO-RENDER DISABLED per user request
+            # total_clips = len(video.clips)
+            # for i, clip in enumerate(video.clips):
+            #     video.status = f"rendering clip ({i+1}/{total_clips})"
+            #     db.commit()
+            #     logger.info(f"Auto-rendering clip {clip.id} ({i+1}/{total_clips})")
+            #     await _render_clip_async(clip.id)
                 
             video = db.query(InfluencerVideo).filter(InfluencerVideo.id == video_id).first()
-            video.status = "completed"
+            video.status = "analyzed" # Ready for manual render
             db.commit()
             
     except Exception as e:
