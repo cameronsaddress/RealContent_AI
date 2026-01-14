@@ -1,0 +1,40 @@
+[Script Info]
+Title: Karaoke Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,75,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,60,60,960,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.51,Default,,0,0,0,,{\kf30}Hey {\kf30}neighbors, {\kf30}that {\kf30}viral {\kf30}TikTok
+Dialogue: 0,0:00:01.51,0:00:03.03,Default,,0,0,0,,{\kf30}on {\kf30}the {\kf30}last {\kf30}tip {\kf30}for
+Dialogue: 0,0:00:03.03,0:00:04.54,Default,,0,0,0,,{\kf30}how {\kf30}you {\kf30}measure {\kf30}it? {\kf30}Spot
+Dialogue: 0,0:00:04.54,0:00:06.14,Default,,0,0,0,,{\kf30}on, {\kf30}but {\kf30}let's {\kf30}add {\kf38}some
+Dialogue: 0,0:00:06.14,0:00:08.09,Default,,0,0,0,,{\kf38}North {\kf38}Idaho {\kf38}expertise {\kf38}while {\kf38}it
+Dialogue: 0,0:00:08.09,0:00:10.04,Default,,0,0,0,,{\kf38}plays {\kf38}behind {\kf38}me. {\kf38}Okay, {\kf38}she's
+Dialogue: 0,0:00:10.04,0:00:11.98,Default,,0,0,0,,{\kf38}nailing {\kf38}those {\kf38}quick {\kf38}measuring {\kf38}hacks
+Dialogue: 0,0:00:11.98,0:00:13.91,Default,,0,0,0,,{\kf38}for {\kf38}realtors {\kf38}and {\kf38}buyers. {\kf38}Pro
+Dialogue: 0,0:00:13.91,0:00:15.83,Default,,0,0,0,,{\kf38}tip, {\kf38}always {\kf38}start {\kf38}from {\kf38}the
+Dialogue: 0,0:00:15.83,0:00:17.76,Default,,0,0,0,,{\kf38}exterior {\kf38}walls {\kf38}to {\kf38}get {\kf38}accurate
+Dialogue: 0,0:00:17.76,0:00:19.59,Default,,0,0,0,,{\kf36}square {\kf36}footage. {\kf36}No {\kf36}inflating {\kf36}numbers
+Dialogue: 0,0:00:19.59,0:00:21.43,Default,,0,0,0,,{\kf36}here. {\kf36}Here's {\kf36}what {\kf36}you {\kf36}need
+Dialogue: 0,0:00:21.43,0:00:23.26,Default,,0,0,0,,{\kf36}to {\kf36}know {\kf36}for {\kf36}Spokane {\kf36}and
+Dialogue: 0,0:00:23.26,0:00:24.94,Default,,0,0,0,,{\kf36}North {\kf36}Idaho. {\kf31}Our {\kf31}charming {\kf31}older
+Dialogue: 0,0:00:24.94,0:00:26.52,Default,,0,0,0,,{\kf31}homes {\kf31}often {\kf31}have {\kf31}funky {\kf31}angles
+Dialogue: 0,0:00:26.52,0:00:28.09,Default,,0,0,0,,{\kf31}or {\kf31}attic {\kf31}spaces, {\kf31}so {\kf31}use
+Dialogue: 0,0:00:28.09,0:00:29.82,Default,,0,0,0,,{\kf31}a {\kf31}laser {\kf31}measure {\kf31}for {\kf46}precision.
+Dialogue: 0,0:00:29.82,0:00:32.16,Default,,0,0,0,,{\kf46}The {\kf46}secret {\kf46}is {\kf46}subtracting {\kf46}non-living
+Dialogue: 0,0:00:32.16,0:00:34.50,Default,,0,0,0,,{\kf46}areas {\kf46}like {\kf46}garages {\kf46}correctly {\kf46}to
+Dialogue: 0,0:00:34.50,0:00:36.89,Default,,0,0,0,,{\kf46}avoid {\kf46}appraisal {\kf48}surprises. {\kf48}Locally, {\kf48}for
+Dialogue: 0,0:00:36.89,0:00:39.32,Default,,0,0,0,,{\kf48}lakefront {\kf48}properties {\kf48}in {\kf48}Coeur {\kf48}d'Alene,
+Dialogue: 0,0:00:39.32,0:00:41.75,Default,,0,0,0,,{\kf48}measure {\kf48}those {\kf48}outdoor {\kf48}living {\kf48}spaces
+Dialogue: 0,0:00:41.75,0:00:44.00,Default,,0,0,0,,{\kf44}too. {\kf44}They {\kf44}boost {\kf44}value {\kf44}big
+Dialogue: 0,0:00:44.00,0:00:46.25,Default,,0,0,0,,{\kf44}time. {\kf44}This {\kf44}keeps {\kf44}transactions {\kf44}smooth
+Dialogue: 0,0:00:46.25,0:00:48.90,Default,,0,0,0,,{\kf44}and {\kf44}clients {\kf44}happy. {\kf25}DM {\kf25}me
+Dialogue: 0,0:00:48.90,0:00:50.15,Default,,0,0,0,,{\kf25}to {\kf25}chat {\kf25}about {\kf25}your {\kf25}home
+Dialogue: 0,0:00:50.15,0:00:50.40,Default,,0,0,0,,{\kf25}journey.

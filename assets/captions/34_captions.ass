@@ -1,0 +1,48 @@
+[Script Info]
+Title: Karaoke Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,75,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,60,60,960,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.60,Default,,0,0,0,,{\kf32}Hey, {\kf32}neighbors! {\kf32}You {\kf32}see {\kf32}that
+Dialogue: 0,0:00:01.60,0:00:03.20,Default,,0,0,0,,{\kf32}viral {\kf32}TikTok {\kf32}from {\kf32}Tennessee? {\kf32}I
+Dialogue: 0,0:00:03.20,0:00:04.80,Default,,0,0,0,,{\kf32}wish {\kf32}I {\kf32}was {\kf32}lying, {\kf32}but
+Dialogue: 0,0:00:04.80,0:00:07.16,Default,,0,0,0,,{\kf32}I'm {\kf32}not. {\kf30}That {\kf30}hits {\kf30}way
+Dialogue: 0,0:00:07.16,0:00:08.71,Default,,0,0,0,,{\kf30}too {\kf30}close {\kf30}to {\kf30}home. {\kf30}I'll
+Dialogue: 0,0:00:08.71,0:00:10.26,Default,,0,0,0,,{\kf30}be {\kf30}honest. {\kf30}Watching {\kf30}this {\kf30}unfold
+Dialogue: 0,0:00:10.26,0:00:11.92,Default,,0,0,0,,{\kf30}behind {\kf30}me, {\kf34}it's {\kf34}that {\kf34}raw
+Dialogue: 0,0:00:11.92,0:00:13.66,Default,,0,0,0,,{\kf34}real {\kf34}estate {\kf34}frustration {\kf34}we {\kf34}all
+Dialogue: 0,0:00:13.66,0:00:15.40,Default,,0,0,0,,{\kf34}feel {\kf34}in {\kf34}competitive {\kf34}markets. {\kf34}What
+Dialogue: 0,0:00:15.40,0:00:17.19,Default,,0,0,0,,{\kf34}people {\kf34}don't {\kf34}see {\kf34}are {\kf39}the
+Dialogue: 0,0:00:17.19,0:00:19.16,Default,,0,0,0,,{\kf39}behind-the-scenes {\kf39}battles, {\kf39}the {\kf39}last-second {\kf39}bids
+Dialogue: 0,0:00:19.16,0:00:21.13,Default,,0,0,0,,{\kf39}that {\kf39}steal {\kf39}your {\kf39}dream {\kf39}home,
+Dialogue: 0,0:00:21.13,0:00:23.00,Default,,0,0,0,,{\kf39}or {\kf39}sellers {\kf36}holding {\kf36}out {\kf36}for
+Dialogue: 0,0:00:23.00,0:00:24.82,Default,,0,0,0,,{\kf36}that {\kf36}unicorn {\kf36}offer. {\kf36}My {\kf36}experience
+Dialogue: 0,0:00:24.82,0:00:26.63,Default,,0,0,0,,{\kf36}right {\kf36}here {\kf36}in {\kf36}North {\kf36}Idaho
+Dialogue: 0,0:00:26.63,0:00:29.19,Default,,0,0,0,,{\kf36}and {\kf36}Spokane? {\kf29}Just {\kf29}last {\kf29}week,
+Dialogue: 0,0:00:29.19,0:00:30.66,Default,,0,0,0,,{\kf29}my {\kf29}buyers {\kf29}lost {\kf29}a {\kf29}gorgeous
+Dialogue: 0,0:00:30.66,0:00:32.13,Default,,0,0,0,,{\kf29}lakeside {\kf29}spot {\kf29}in {\kf29}Cura {\kf29}d'Alene
+Dialogue: 0,0:00:32.13,0:00:33.59,Default,,0,0,0,,{\kf29}to {\kf29}an {\kf29}all-cash {\kf29}offer {\kf29}from
+Dialogue: 0,0:00:33.59,0:00:36.27,Default,,0,0,0,,{\kf53}out-of-state, {\kf53}15% {\kf53}over {\kf53}asking. {\kf53}But
+Dialogue: 0,0:00:36.27,0:00:38.95,Default,,0,0,0,,{\kf53}here's {\kf53}the {\kf53}genuine {\kf53}value. {\kf53}In
+Dialogue: 0,0:00:38.95,0:00:41.43,Default,,0,0,0,,{\kf53}our {\kf53}low-inventory {\kf53}market, {\kf43}get {\kf43}pre-approved
+Dialogue: 0,0:00:41.43,0:00:43.62,Default,,0,0,0,,{\kf43}strong, {\kf43}know {\kf43}the {\kf43}comps, {\kf43}median
+Dialogue: 0,0:00:43.62,0:00:45.80,Default,,0,0,0,,{\kf43}prices {\kf43}are {\kf43}up {\kf43}8% {\kf43}year-over-year,
+Dialogue: 0,0:00:45.80,0:00:47.79,Default,,0,0,0,,{\kf43}and {\kf43}partner {\kf43}with {\kf34}a {\kf34}local
+Dialogue: 0,0:00:47.79,0:00:49.50,Default,,0,0,0,,{\kf34}who {\kf34}spots {\kf34}off-market {\kf34}gems. {\kf34}That
+Dialogue: 0,0:00:49.50,0:00:51.20,Default,,0,0,0,,{\kf34}strategy {\kf34}just {\kf34}closed {\kf34}a {\kf34}beauty
+Dialogue: 0,0:00:51.20,0:00:53.38,Default,,0,0,0,,{\kf34}for {\kf34}another {\kf34}client {\kf34}yesterday. {\kf26}Sometimes
+Dialogue: 0,0:00:53.38,0:00:54.69,Default,,0,0,0,,{\kf26}I {\kf26}wish {\kf26}I {\kf26}was {\kf26}lying
+Dialogue: 0,0:00:54.69,0:00:56.00,Default,,0,0,0,,{\kf26}about {\kf26}how {\kf26}wild {\kf26}it {\kf26}gets,
+Dialogue: 0,0:00:56.00,0:00:57.31,Default,,0,0,0,,{\kf26}but {\kf26}building {\kf26}smart {\kf26}beats {\kf26}the
+Dialogue: 0,0:00:57.31,0:00:58.88,Default,,0,0,0,,{\kf26}chaos {\kf26}every {\kf34}time. {\kf34}DM {\kf34}me
+Dialogue: 0,0:00:58.88,0:01:00.62,Default,,0,0,0,,{\kf34}to {\kf34}chat {\kf34}about {\kf34}your {\kf34}home
+Dialogue: 0,0:01:00.62,0:01:02.37,Default,,0,0,0,,{\kf34}journey. {\kf34}Let's {\kf34}make {\kf34}yours {\kf34}a
+Dialogue: 0,0:01:02.37,0:01:02.72,Default,,0,0,0,,{\kf34}win.

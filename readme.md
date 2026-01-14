@@ -266,7 +266,7 @@ Videos are published to:
 
 5. **Initialize the database** (if tables don't exist)
    ```bash
-   docker exec -i n8n_postgres psql -U n8n -d content_pipeline < backend/init.sql
+   docker exec -i SocialGen_postgres psql -U n8n -d content_pipeline < backend/init.sql
    ```
 
 6. **Access the services**
@@ -871,7 +871,7 @@ docker exec -it n8n /bin/sh
 docker exec -it backend /bin/bash
 
 # Database access
-docker exec -it n8n_postgres psql -U n8n -d content_pipeline
+docker exec -it SocialGen_postgres psql -U n8n -d content_pipeline
 ```
 
 ### Health Checks
@@ -887,20 +887,20 @@ curl http://100.83.153.43:8000/api/pipeline/stats
 curl http://100.83.153.43:3000
 
 # Check PostgreSQL
-docker exec n8n_postgres pg_isready -U n8n
+docker exec SocialGen_postgres pg_isready -U n8n
 ```
 
 ### Backup
 
 ```bash
 # Backup database
-docker exec n8n_postgres pg_dump -U n8n content_pipeline > backup.sql
+docker exec SocialGen_postgres pg_dump -U n8n content_pipeline > backup.sql
 
 # Backup n8n workflows
 docker exec n8n n8n export:workflow --all --output=/home/node/workflows/
 
 # Restore database
-docker exec -i n8n_postgres psql -U n8n -d content_pipeline < backup.sql
+docker exec -i SocialGen_postgres psql -U n8n -d content_pipeline < backup.sql
 ```
 
 ---
@@ -975,7 +975,7 @@ docker exec -i n8n_postgres psql -U n8n -d content_pipeline < backup.sql
 - **Solution**: Use `http://backend:8000` (Docker network), not localhost
 
 **Error**: `relation does not exist`
-- **Solution**: `docker exec -i n8n_postgres psql -U n8n -d content_pipeline < backend/init.sql`
+- **Solution**: `docker exec -i SocialGen_postgres psql -U n8n -d content_pipeline < backend/init.sql`
 
 #### Workflow Errors
 
@@ -1015,7 +1015,7 @@ Use this procedure when the "AI ContentGenerator" workflow is corrupted, showing
 1.  **Identify Current Workflow ID:**
     ```bash
     # Get the ID of the broken workflow
-    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity WHERE name = 'AI ContentGenerator';"
+    docker exec SocialGen_postgres psql -U n8n -d content_pipeline -c "SELECT id, name, active FROM workflow_entity WHERE name = 'AI ContentGenerator';"
     # Example ID to delete: 'rTAhapEWXNxRAElT'
     ```
 
@@ -1023,7 +1023,7 @@ Use this procedure when the "AI ContentGenerator" workflow is corrupted, showing
     ```bash
     # Delete the corrupted workflow entity
     # REPLACE 'WORKFLOW_ID' with the actual ID from step 1
-    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "DELETE FROM workflow_entity WHERE id = 'WORKFLOW_ID';"
+    docker exec SocialGen_postgres psql -U n8n -d content_pipeline -c "DELETE FROM workflow_entity WHERE id = 'WORKFLOW_ID';"
     ```
 
 3.  **Prepare Clean JSON:**
@@ -1046,7 +1046,7 @@ Use this procedure when the "AI ContentGenerator" workflow is corrupted, showing
 5.  **Retrieve New Workflow ID and Version ID:**
     ```bash
     # Get new ID
-    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "SELECT id, \"activeVersionId\" FROM workflow_entity WHERE name = 'AI ContentGenerator';"
+    docker exec SocialGen_postgres psql -U n8n -d content_pipeline -c "SELECT id, \"activeVersionId\" FROM workflow_entity WHERE name = 'AI ContentGenerator';"
     # Note the NEW_ID and VERSION_ID
     ```
 
@@ -1061,13 +1061,13 @@ Use this procedure when the "AI ContentGenerator" workflow is corrupted, showing
     python3 workflows/repair_history.py > workflows/fix.sql
     
     # Apply Fix
-    cat workflows/fix.sql | docker exec -i n8n_postgres psql -U n8n -d content_pipeline
+    cat workflows/fix.sql | docker exec -i SocialGen_postgres psql -U n8n -d content_pipeline
     ```
 
 7.  **Restore Ownership:**
     Ensure the workflow is owned by the default user so it appears in the UI.
     ```bash
-    docker exec n8n_postgres psql -U n8n -d content_pipeline -c "INSERT INTO shared_workflow (\"workflowId\", \"projectId\", \"role\", \"createdAt\", \"updatedAt\") VALUES ((SELECT id FROM workflow_entity WHERE name = 'AI ContentGenerator' LIMIT 1), (SELECT id FROM project LIMIT 1), 'workflow:owner', NOW(), NOW()) ON CONFLICT DO NOTHING;"
+    docker exec SocialGen_postgres psql -U n8n -d content_pipeline -c "INSERT INTO shared_workflow (\"workflowId\", \"projectId\", \"role\", \"createdAt\", \"updatedAt\") VALUES ((SELECT id FROM workflow_entity WHERE name = 'AI ContentGenerator' LIMIT 1), (SELECT id FROM project LIMIT 1), 'workflow:owner', NOW(), NOW()) ON CONFLICT DO NOTHING;"
     ```
 
 8.  **Activate and Restart:**

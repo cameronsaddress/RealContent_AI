@@ -26,7 +26,7 @@ class ScrapeParams(BaseModel):
     hashtags: List[str] = ["realtor", "realestate", "homebuying"]
     results_per_platform: int = 30
     # How many to analyze with LLM (costs money, so we limit)
-    analyze_top_n: int = 20
+    analyze_top_n: int = 50
     # Enable 2-phase discovery: first find trending hashtags, then scrape them
     discover_hashtags: bool = False
     # Seed keyword for hashtag discovery (e.g., "realtor")
@@ -93,8 +93,8 @@ class ScraperService(BaseService):
 
     # Apify actor IDs for scraping (use ~ separator for API URLs)
     APIFY_TIKTOK_ACTOR = "clockworks~tiktok-hashtag-scraper"
-    APIFY_INSTAGRAM_ACTOR = "apify~instagram-scraper"
-    APIFY_YOUTUBE_ACTOR = "streamers~youtube-scraper"
+    APIFY_INSTAGRAM_ACTOR = "apify~instagram-hashtag-scraper"  # Better for hashtag search
+    APIFY_YOUTUBE_ACTOR = "h7iqpunk~youtube-search-scraper"  # Search-based scraper
 
     # Apify actor for hashtag discovery
     APIFY_TIKTOK_DISCOVER_ACTOR = "clockworks~tiktok-discover-scraper"
@@ -332,35 +332,53 @@ class ScraperService(BaseService):
         """
         Scrape Instagram Reels using HASHTAG SEARCH.
 
-        Uses apify/instagram-scraper in hashtag mode.
+        Uses apify/instagram-hashtag-scraper with hashtags parameter.
+
+        NOTE: Instagram hashtag scraping has limitations:
+        - Returns "Recent" posts, not "Top" posts (no API access to Top)
+        - View counts for Reels are not publicly available via API
+        - We estimate engagement using likes * 100 as a proxy for reach
+        - Filter to only include posts with decent engagement (100+ likes)
         """
         url = f"https://api.apify.com/v2/acts/{self.APIFY_INSTAGRAM_ACTOR}/run-sync-get-dataset-items"
 
         try:
-            all_items = []
+            # Request more results to filter down to quality content
+            response = await self._post(
+                url,
+                params={"token": settings.APIFY_API_KEY},
+                json={
+                    "hashtags": hashtags[:5],
+                    "resultsLimit": limit * 5  # Get more to filter
+                },
+                timeout=180.0
+            )
 
-            for hashtag in hashtags[:3]:  # Limit to 3 hashtags
-                response = await self._post(
-                    url,
-                    params={"token": settings.APIFY_API_KEY},
-                    json={
-                        "search": hashtag,
-                        "searchType": "hashtag",
-                        "resultsLimit": limit // len(hashtags[:3]),
-                        "searchLimit": 1
-                    },
-                    timeout=180.0
-                )
+            items = response.json()
+            if not isinstance(items, list):
+                logger.warning(f"Instagram returned non-list: {str(items)[:200]}")
+                return []
 
-                items = response.json()
-                if isinstance(items, list):
-                    # Filter to only video/reel content
-                    video_items = [i for i in items if i.get("type") == "Video" or i.get("isVideo")]
-                    all_items.extend(video_items)
-                    logger.info(f"Instagram #{hashtag}: got {len(video_items)} video results")
+            # Log like distribution for debugging
+            all_likes = [i.get("likesCount", 0) for i in items]
+            if all_likes:
+                logger.info(f"Instagram raw: {len(items)} items, likes range: {min(all_likes)}-{max(all_likes)}, median: {sorted(all_likes)[len(all_likes)//2]}")
 
-            normalized = [self._normalize_instagram_item(item) for item in all_items]
-            normalized.sort(key=lambda x: x.views, reverse=True)
+            # Filter to ONLY video/reel content with minimum engagement
+            # productType "reels" or "clips" = actual Reels
+            # type "Video" = video posts
+            # Require minimum 10 likes to filter complete spam (0-2 likes)
+            video_items = [
+                i for i in items
+                if (i.get("type") == "Video" or i.get("productType") in ["reels", "clips"])
+                and i.get("likesCount", 0) >= 10  # Lower threshold - hashtag search returns recent, not viral
+            ]
+
+            logger.info(f"Instagram: got {len(video_items)} reels from {len(items)} total (10+ likes, video only)")
+
+            normalized = [self._normalize_instagram_item(item) for item in video_items]
+            # Sort by likes (best proxy for virality since views aren't available)
+            normalized.sort(key=lambda x: x.likes, reverse=True)
             return normalized[:limit]
 
         except Exception as e:
@@ -368,19 +386,28 @@ class ScraperService(BaseService):
             raise
 
     def _normalize_instagram_item(self, item: Dict) -> TrendItem:
-        """Normalize Instagram item to common format."""
+        """Normalize Instagram item to common format (instagram-hashtag-scraper).
+
+        NOTE: Instagram doesn't expose view counts via hashtag API.
+        We estimate views as likes * 100 (typical engagement rate ~1%).
+        """
+        likes = item.get("likesCount", 0)
+        # Estimate views: Instagram reels typically get 1-3% like rate
+        # So views ≈ likes * 50-100. Using 100 as multiplier.
+        estimated_views = item.get("videoViewCount") or (likes * 100)
+
         return TrendItem(
             platform="instagram",
-            url=item.get("url") or item.get("shortCode", ""),
-            title=item.get("caption") or item.get("alt") or "",
-            views=item.get("videoViewCount") or item.get("viewCount", 0),
-            likes=item.get("likesCount") or item.get("likes", 0),
+            url=item.get("url") or f"https://www.instagram.com/p/{item.get('shortCode', '')}",
+            title=item.get("caption") or "",
+            views=estimated_views,
+            likes=likes,
             shares=0,
-            comments=item.get("commentsCount") or item.get("comments", 0),
-            author=item.get("ownerUsername") or item.get("owner", {}).get("username", ""),
-            author_followers=item.get("ownerFullName", 0) if isinstance(item.get("ownerFullName"), int) else 0,
+            comments=item.get("commentsCount", 0),
+            author=item.get("ownerUsername", ""),
+            author_followers=0,
             hashtags=item.get("hashtags", []) if isinstance(item.get("hashtags"), list) else [],
-            duration_seconds=item.get("videoDuration", 0),
+            duration_seconds=0,
             posted_at=item.get("timestamp", "")
         )
 
@@ -388,39 +415,11 @@ class ScraperService(BaseService):
         """
         Scrape YouTube Shorts using KEYWORD SEARCH.
 
-        Uses streamers/youtube-scraper with hashtags as search keywords.
+        NOTE: YouTube scraping is currently disabled due to Apify actor availability issues.
+        Returns empty list gracefully.
         """
-        url = f"https://api.apify.com/v2/acts/{self.APIFY_YOUTUBE_ACTOR}/run-sync-get-dataset-items"
-
-        try:
-            # Convert hashtags to search keywords with "shorts"
-            search_keywords = [f"{tag} shorts" for tag in hashtags[:3]]
-
-            response = await self._post(
-                url,
-                params={"token": settings.APIFY_API_KEY},
-                json={
-                    "searchKeywords": search_keywords,
-                    "maxResults": limit,
-                    "maxResultsShorts": limit
-                },
-                timeout=180.0
-            )
-
-            items = response.json()
-            if not isinstance(items, list):
-                logger.warning(f"YouTube returned unexpected format: {type(items)}")
-                return []
-
-            logger.info(f"YouTube keywords {search_keywords}: got {len(items)} results")
-
-            normalized = [self._normalize_youtube_item(item) for item in items]
-            normalized.sort(key=lambda x: x.views, reverse=True)
-            return normalized[:limit]
-
-        except Exception as e:
-            logger.error(f"YouTube scrape failed: {e}")
-            raise
+        logger.warning("YouTube scraping is currently disabled - no working Apify actor available")
+        return []  # Disabled for now - no reliable YouTube actor available
 
     def _normalize_youtube_item(self, item: Dict) -> TrendItem:
         """Normalize YouTube item to common format."""
@@ -483,57 +482,77 @@ class ScraperService(BaseService):
 
         return unique_items
 
-    async def analyze_trends(self, items: List[TrendItem], niche: str, analyze_count: int = 20) -> List[TrendItem]:
+    async def analyze_trends(self, items: List[TrendItem], niche: str, analyze_count: int = 50) -> List[TrendItem]:
         """
-        Analyze top trends using Grok LLM via OpenRouter.
+        Prepare trends for saving - NO LLM analysis during scrape.
+
+        LLM analysis (hooks, scores, why_viral) happens when idea is APPROVED,
+        not during scraping. This saves API costs.
 
         Args:
-            items: List of trend items to analyze (already sorted by views)
+            items: List of trend items (already sorted by views)
             niche: Content niche for context
-            analyze_count: How many top items to analyze
+            analyze_count: Unused - kept for API compatibility
 
         Returns:
-            Items with viral_score, pillar, suggested_hook, why_viral filled in
+            ALL items with default values (no LLM call)
         """
         if not items:
             return []
 
-        # Analyze top N items (they're already sorted by views)
-        items_to_analyze = items[:analyze_count]
+        # Set defaults for ALL items - no LLM analysis during scrape
+        for item in items:
+            item.viral_score = item.viral_score or 0  # 0 = not yet analyzed
+            item.pillar = item.pillar or ""  # Empty = not yet categorized
+            item.suggested_hook = item.suggested_hook or ""
+            item.why_viral = item.why_viral or ""
 
-        # Build video data for prompt (can't have comments inside f-string)
-        videos_data = json.dumps([{
-            "platform": item.platform,
-            "title": item.title[:200],
-            "views": item.views,
-            "likes": item.likes,
-            "author": item.author,
-            "url": item.url
-        } for item in items_to_analyze], indent=2)
+        logger.info(f"Prepared {len(items)} items for saving (LLM analysis deferred to approval)")
+        return items
 
-        prompt = f"""You are analyzing the TOP {len(items_to_analyze)} most-viewed {niche} videos from TikTok, Instagram, and YouTube.
+    async def analyze_single_idea(self, idea_id: int, title: str, url: str, platform: str, views: int, likes: int) -> dict:
+        """
+        Analyze a SINGLE content idea with LLM when it gets approved.
 
-These are PROVEN viral videos - they already have high view counts. Your job is to:
-1. Score how replicable this content is for a {niche} professional (viral_score 1-10)
+        Called from the approval endpoint, not during scraping.
+
+        Args:
+            idea_id: Content idea ID
+            title: Video title/caption
+            url: Source URL
+            platform: Source platform
+            views: View count
+            likes: Like count
+
+        Returns:
+            Dict with viral_score, pillar, suggested_hook, why_viral
+        """
+        prompt = f"""Analyze this viral {platform} video for a real estate professional to recreate:
+
+Title/Caption: {title}
+URL: {url}
+Views: {views:,}
+Likes: {likes:,}
+
+Your job:
+1. Score how replicable this is for a real estate agent (viral_score 1-10)
 2. Categorize by content pillar
 3. Suggest a hook that captures what made this video work
-4. Explain WHY it went viral (what psychological triggers, trends, or techniques)
+4. Explain WHY it went viral
 
 Content pillars:
-- market_intelligence: Market data, trends, statistics, predictions
-- educational_tips: How-to content, tips, tutorials, advice
-- lifestyle_local: Local area features, community, lifestyle content
-- brand_humanization: Personal stories, behind-the-scenes, day-in-the-life
+- market_intelligence: Market data, trends, statistics
+- educational_tips: How-to content, tips, advice
+- lifestyle_local: Local area, community content
+- brand_humanization: Personal stories, behind-the-scenes
 
-Videos to analyze (sorted by views, highest first):
-{videos_data}
-
-Return JSON with "trends" array. Each item must have:
-- url (string): The original URL
-- viral_score (int 1-10): How easy to replicate successfully
-- pillar (string): One of the 4 pillars above
-- suggested_hook (string): A compelling hook for recreating this content
-- why_viral (string): 1-2 sentences on why this specific video went viral"""
+Return JSON:
+{{
+  "viral_score": 8,
+  "pillar": "educational_tips",
+  "suggested_hook": "A compelling hook...",
+  "why_viral": "1-2 sentences on why this went viral"
+}}"""
 
         try:
             response = await self._post(
@@ -547,38 +566,24 @@ Return JSON with "trends" array. Each item must have:
                     "messages": [{"role": "user", "content": prompt}],
                     "response_format": {"type": "json_object"}
                 },
-                timeout=90.0
+                timeout=30.0
             )
 
             result = response.json()
             content = result["choices"][0]["message"]["content"]
             analyzed = json.loads(content)
 
-            # Parse analyzed items
-            analyzed_items = analyzed.get("trends", analyzed)
-            if isinstance(analyzed_items, dict):
-                analyzed_items = [analyzed_items]
-
-            # Match analysis back to items by URL
-            analysis_by_url = {a.get("url", ""): a for a in analyzed_items}
-
-            for item in items_to_analyze:
-                analysis = analysis_by_url.get(item.url, {})
-                item.viral_score = analysis.get("viral_score", 7)
-                item.pillar = analysis.get("pillar", "educational_tips")
-                item.suggested_hook = analysis.get("suggested_hook", "")
-                item.why_viral = analysis.get("why_viral", "")
-
-            logger.info(f"Analyzed {len(items_to_analyze)} items with LLM")
-            return items_to_analyze
+            logger.info(f"Analyzed idea {idea_id}: score={analyzed.get('viral_score')}, pillar={analyzed.get('pillar')}")
+            return analyzed
 
         except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
-            # Return items with default values
-            for item in items_to_analyze:
-                item.viral_score = 7
-                item.pillar = "educational_tips"
-            return items_to_analyze
+            logger.error(f"Failed to analyze idea {idea_id}: {e}")
+            return {
+                "viral_score": 7,
+                "pillar": "educational_tips",
+                "suggested_hook": "",
+                "why_viral": ""
+            }
 
     def format_response(
         self,
@@ -604,27 +609,37 @@ Return JSON with "trends" array. Each item must have:
         db_session
     ) -> int:
         """
-        Save analyzed trends to database.
+        Save trends to database, skipping duplicates by URL.
 
         Args:
             items: Trend items to save
             db_session: Database session
 
         Returns:
-            Number of items saved
+            Number of NEW items saved (excludes duplicates)
         """
         from models import ContentIdea
+        from sqlalchemy import select
 
         saved_count = 0
+        skipped_duplicates = 0
 
         for item in items:
             try:
+                # Check if URL already exists
+                existing = await db_session.execute(
+                    select(ContentIdea.id).where(ContentIdea.source_url == item.url)
+                )
+                if existing.scalar_one_or_none():
+                    skipped_duplicates += 1
+                    continue
+
                 idea = ContentIdea(
                     source_url=item.url,
                     source_platform=item.platform,
                     original_text=item.title,
                     pillar=item.pillar or "educational_tips",
-                    viral_score=item.viral_score or 7,
+                    viral_score=item.viral_score or 5,
                     suggested_hook=item.suggested_hook or "",
                     why_viral=item.why_viral or "",
                     status="pending",
@@ -644,5 +659,8 @@ Return JSON with "trends" array. Each item must have:
                 logger.error(f"Failed to save trend: {e}")
                 await db_session.rollback()
                 continue
+
+        if skipped_duplicates > 0:
+            logger.info(f"Skipped {skipped_duplicates} duplicate URLs")
 
         return saved_count

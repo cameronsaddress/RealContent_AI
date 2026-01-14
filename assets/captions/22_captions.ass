@@ -11,24 +11,30 @@ Style: Default,Arial,96,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,0:00:05.52,Default,,0,0,0,,{\kf50}Hey, {\kf30}it's {\kf40}Beth {\kf40}here {\kf30}in {\kf60}beautiful {\kf80}Coeur {\kf40}d'Alene.
-Dialogue: 0,0:00:02.50,0:00:05.52,Default,,0,0,0,,{\kf50}Check {\kf30}out {\kf40}this {\kf60}adorable {\kf60}TikTok {\kf50}behind {\kf40}me.
-Dialogue: 0,0:00:06.08,0:00:10.00,Default,,0,0,0,,{\kf40}Day {\kf30}68 {\kf30}of {\kf50}saving {\kf30}for {\kf20}a {\kf50}house,
-Dialogue: 0,0:00:10.00,0:00:13.36,Default,,0,0,0,,{\kf50}asking {\kf30}for {\kf40}your {\kf40}fave {\kf30}TV {\kf50}shows. {\kf40}Love {\kf30}it.
-Dialogue: 0,0:00:13.36,0:00:16.00,Default,,0,0,0,,{\kf40}This {\kf50}creator {\kf30}is {\kf60}nailing {\kf30}the
-Dialogue: 0,0:00:16.00,0:00:18.40,Default,,0,0,0,,{\kf70}home-buying {\kf60}journey. {\kf40}It's {\kf40}raw, {\kf40}fun,
-Dialogue: 0,0:00:18.40,0:00:21.50,Default,,0,0,0,,{\kf30}and {\kf50}builds {\kf40}real {\kf60}community {\kf30}with
-Dialogue: 0,0:00:21.50,0:00:24.40,Default,,0,0,0,,{\kf40}those {\kf70}hashtags. {\kf30}I {\kf40}get {\kf30}it.
-Dialogue: 0,0:00:24.40,0:00:27.50,Default,,0,0,0,,{\kf30}I {\kf40}binge {\kf40}The {\kf50}Office {\kf70}nonstop
-Dialogue: 0,0:00:27.50,0:00:29.04,Default,,0,0,0,,{\kf40}while {\kf50}saving {\kf30}for {\kf30}my {\kf40}first {\kf50}place
-Dialogue: 0,0:00:29.04,0:00:32.00,Default,,0,0,0,,{\kf30}in {\kf60}Liberty {\kf60}Lake. {\kf40}Long {\kf50}listing {\kf40}days,
-Dialogue: 0,0:00:32.00,0:00:35.84,Default,,0,0,0,,{\kf80}coffee-fueled {\kf50}nights, {\kf30}but {\kf40}those {\kf50}shows {\kf40}kept {\kf30}me {\kf40}sane.
-Dialogue: 0,0:00:35.84,0:00:38.50,Default,,0,0,0,,{\kf40}Pro {\kf40}move, {\kf40}mix {\kf50}saving {\kf30}with {\kf40}joy.
-Dialogue: 0,0:00:38.50,0:00:40.40,Default,,0,0,0,,{\kf40}Track {\kf40}every {\kf50}dollar, {\kf40}snag {\kf40}local
-Dialogue: 0,0:00:40.40,0:00:43.00,Default,,0,0,0,,{\kf70}first-time {\kf50}buyer {\kf60}programs {\kf40}here {\kf30}in {\kf50}Idaho.
-Dialogue: 0,0:00:43.00,0:00:44.72,Default,,0,0,0,,{\kf30}We {\kf30}can {\kf40}cut {\kf40}your {\kf40}down {\kf50}payment {\kf40}big {\kf40}time,
-Dialogue: 0,0:00:44.72,0:00:47.00,Default,,0,0,0,,{\kf30}but {\kf40}don't {\kf40}burn {\kf40}out. {\kf40}This {\kf30}vid {\kf50}shows
-Dialogue: 0,0:00:47.00,0:00:49.04,Default,,0,0,0,,{\kf50}saving {\kf50}doesn't {\kf40}have {\kf30}to {\kf40}suck. {\kf40}It's {\kf50}human.
-Dialogue: 0,0:00:49.04,0:00:52.00,Default,,0,0,0,,{\kf50}What's {\kf40}your {\kf40}binge {\kf40}watch {\kf40}while {\kf50}stacking {\kf40}cash?
-Dialogue: 0,0:00:52.00,0:00:54.48,Default,,0,0,0,,{\kf40}Drop {\kf30}it {\kf40}below. {\kf30}DM {\kf30}me {\kf40}binge {\kf30}for {\kf40}your
-Dialogue: 0,0:00:54.48,0:00:57.00,Default,,0,0,0,,{\kf50}custom {\kf80}Coeur {\kf60}d'Alene {\kf80}home-saving {\kf40}plan {\kf50}today.
+Dialogue: 0,0:00:03.00,0:00:05.50,Default,,0,0,0,,{\k30}Hey, {\k20}it's {\k25}Beth {\k25}here
+Dialogue: 0,0:00:05.50,0:00:08.52,Default,,0,0,0,,{\k25}in {\k45}beautiful {\k55}Coeur {\k45}d'Alene.
+Dialogue: 0,0:00:08.52,0:00:11.00,Default,,0,0,0,,{\k30}Check {\k20}out {\k25}this {\k40}adorable
+Dialogue: 0,0:00:11.00,0:00:13.00,Default,,0,0,0,,{\k40}TikTok {\k35}behind {\k30}me.
+Dialogue: 0,0:00:13.00,0:00:16.36,Default,,0,0,0,,{\k25}Day {\k20}68 {\k15}of {\k30}saving {\k20}for {\k12}a {\k35}house,
+Dialogue: 0,0:00:16.36,0:00:19.00,Default,,0,0,0,,{\k30}asking {\k20}for {\k20}your {\k30}fave {\k20}TV {\k30}shows.
+Dialogue: 0,0:00:19.00,0:00:21.40,Default,,0,0,0,,{\k25}Love {\k20}it. {\k25}This {\k30}creator {\k20}is {\k40}nailing
+Dialogue: 0,0:00:21.40,0:00:24.00,Default,,0,0,0,,{\k20}the {\k50}home-buying {\k40}journey.
+Dialogue: 0,0:00:24.00,0:00:27.40,Default,,0,0,0,,{\k20}It's {\k25}raw, {\k25}fun, {\k20}and {\k30}builds {\k30}real {\k40}community
+Dialogue: 0,0:00:27.40,0:00:30.00,Default,,0,0,0,,{\k20}with {\k30}those {\k45}hashtags.
+Dialogue: 0,0:00:30.00,0:00:32.50,Default,,0,0,0,,{\k20}I {\k25}get {\k20}it. {\k15}I {\k25}binge {\k25}The {\k35}Office
+Dialogue: 0,0:00:32.50,0:00:35.00,Default,,0,0,0,,{\k40}nonstop {\k30}while {\k30}saving {\k20}for {\k20}my {\k25}first {\k35}place
+Dialogue: 0,0:00:35.00,0:00:37.50,Default,,0,0,0,,{\k20}in {\k40}Liberty {\k40}Lake.
+Dialogue: 0,0:00:37.50,0:00:40.04,Default,,0,0,0,,{\k30}Long {\k35}listing {\k30}days, {\k55}coffee-fueled {\k40}nights,
+Dialogue: 0,0:00:40.04,0:00:42.50,Default,,0,0,0,,{\k20}but {\k30}those {\k30}shows {\k30}kept {\k20}me {\k30}sane.
+Dialogue: 0,0:00:42.50,0:00:45.84,Default,,0,0,0,,{\k30}Pro {\k30}move, {\k30}mix {\k30}saving {\k20}with {\k30}joy.
+Dialogue: 0,0:00:45.84,0:00:48.84,Default,,0,0,0,,{\k30}Track {\k30}every {\k35}dollar, {\k30}snag {\k30}local {\k45}first-time
+Dialogue: 0,0:00:48.84,0:00:51.84,Default,,0,0,0,,{\k35}buyer {\k40}programs {\k30}here {\k20}in {\k30}Idaho.
+Dialogue: 0,0:00:51.84,0:00:54.72,Default,,0,0,0,,{\k20}We {\k20}can {\k30}cut {\k30}your {\k30}down {\k35}payment {\k30}big {\k30}time,
+Dialogue: 0,0:00:54.72,0:00:56.04,Default,,0,0,0,,{\k20}but {\k30}don't {\k30}burn {\k30}out.
+Dialogue: 0,0:00:56.04,0:00:57.72,Default,,0,0,0,,{\k30}This {\k20}vid {\k35}shows {\k35}saving {\k35}doesn't {\k30}have
+Dialogue: 0,0:00:57.72,0:00:58.52,Default,,0,0,0,,{\k20}to {\k30}suck. {\k30}It's {\k35}human.
+Dialogue: 0,0:00:58.52,0:01:00.04,Default,,0,0,0,,{\k35}What's {\k30}your {\k30}binge {\k30}watch
+Dialogue: 0,0:01:00.04,0:01:01.04,Default,,0,0,0,,{\k30}while {\k35}stacking {\k30}cash? {\k30}Drop {\k20}it {\k30}below.
+Dialogue: 0,0:01:01.04,0:01:02.92,Default,,0,0,0,,{\k20}DM {\k20}me {\k30}binge {\k20}for {\k30}your {\k35}custom
+Dialogue: 0,0:01:02.92,0:01:05.48,Default,,0,0,0,,{\k45}Coeur {\k40}d'Alene {\k55}home-saving {\k30}plan {\k35}today.
+

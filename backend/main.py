@@ -151,6 +151,34 @@ async def update_content_idea(idea_id: int, idea: ContentIdeaUpdate, db: Session
         status_changed_to_approved = True
 
     if status_changed_to_approved:
+        # Analyze with LLM if not already analyzed (viral_score=0 means unanalyzed)
+        if db_idea.viral_score == 0 or not db_idea.pillar:
+            print(f"DEBUG: Analyzing idea {idea_id} with LLM before pipeline...")
+            try:
+                import asyncio
+                from services.scraper import ScraperService
+                scraper = ScraperService()
+                analysis = asyncio.get_event_loop().run_until_complete(
+                    scraper.analyze_single_idea(
+                        idea_id=idea_id,
+                        title=db_idea.original_text or "",
+                        url=db_idea.source_url or "",
+                        platform=db_idea.source_platform or "unknown",
+                        views=db_idea.views or 0,
+                        likes=db_idea.likes or 0
+                    )
+                )
+                # Update idea with analysis
+                db_idea.viral_score = analysis.get("viral_score", 7)
+                db_idea.pillar = analysis.get("pillar", "educational_tips")
+                db_idea.suggested_hook = analysis.get("suggested_hook", "")
+                db_idea.why_viral = analysis.get("why_viral", "")
+                db.commit()
+                db.refresh(db_idea)
+                print(f"DEBUG: Idea {idea_id} analyzed: score={db_idea.viral_score}, pillar={db_idea.pillar}")
+            except Exception as e:
+                print(f"ERROR: Failed to analyze idea {idea_id}: {e}")
+
         # Trigger pipeline via Celery task (replaces n8n webhook)
         print(f"DEBUG: Status changed to approved. Triggering Celery pipeline task for idea {idea_id}")
         try:

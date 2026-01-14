@@ -1,0 +1,32 @@
+[Script Info]
+Title: Karaoke Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,75,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,60,60,788,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:05.67,Default,,0,0,0,,{\k70}Day {\k70}68, {\k70}saving {\k70}for {\k70}your {\k70}house, {\k70}binge-watch {\k70}wrecks.
+Dialogue: 0,0:00:05.67,0:00:09.80,Default,,0,0,0,,{\k58}Hey, {\k58}I'm {\k58}Beth {\k58}Anderson, {\k58}your {\k58}carodiline {\k58}realtor.
+Dialogue: 0,0:00:09.80,0:00:13.96,Default,,0,0,0,,{\k59}And {\k59}this {\k59}TikTok {\k59}behind {\k59}me, {\k59}pure {\k59}gold.
+Dialogue: 0,0:00:13.96,0:00:19.00,Default,,0,0,0,,{\k35}Day {\k35}68 {\k35}of {\k35}grinding {\k35}to {\k35}buy {\k35}a {\k35}home, {\k35}but {\k35}still {\k35}craving {\k35}your {\k35}fave {\k35}shows.
+Dialogue: 0,0:00:19.00,0:00:22.07,Default,,0,0,0,,{\k43}This {\k43}creator {\k43}nails {\k43}the {\k43}real {\k43}home-buying {\k43}journey.
+Dialogue: 0,0:00:22.07,0:00:25.84,Default,,0,0,0,,{\k37}It's {\k37}not {\k37}just {\k37}spreadsheets {\k37}and {\k37}offers, {\k37}it's {\k37}late {\k37}nights, {\k37}saving,
+Dialogue: 0,0:00:25.84,0:00:29.79,Default,,0,0,0,,{\k49}dreaming {\k49}big, {\k49}and {\k49}yeah, {\k49}zoning {\k49}out {\k49}to {\k49}Netflix.
+Dialogue: 0,0:00:29.92,0:00:33.04,Default,,0,0,0,,{\k34}I {\k34}love {\k34}how {\k34}they're {\k34}building {\k34}community {\k34}with {\k34}those {\k34}hashtags.
+Dialogue: 0,0:00:33.04,0:00:37.52,Default,,0,0,0,,{\k37}First-time {\k37}buyers, {\k37}we're {\k37}all {\k37}in {\k37}this {\k37}together {\k37}here {\k37}in {\k37}Idaho {\k37}and {\k37}Washington.
+Dialogue: 0,0:00:37.52,0:00:41.43,Default,,0,0,0,,{\k30}Reminds {\k30}me {\k30}of {\k30}my {\k30}early {\k30}clients {\k30}in {\k30}Liberty {\k30}Lake, {\k30}juggling {\k30}jobs, {\k30}fun, {\k30}and
+Dialogue: 0,0:00:41.43,0:00:42.52,Default,,0,0,0,,{\k27}that {\k27}down {\k27}payment {\k27}hustle.
+Dialogue: 0,0:00:44.11,0:00:48.04,Default,,0,0,0,,{\k39}Pro {\k39}move, {\k39}use {\k39}binge {\k39}time {\k39}to {\k39}review {\k39}your {\k39}budget {\k39}app.
+Dialogue: 0,0:00:48.04,0:00:51.68,Default,,0,0,0,,{\k36}Our {\k36}market's {\k36}hot, {\k36}median {\k36}price {\k36}is {\k36}up {\k36}5% {\k36}this {\k36}year.
+Dialogue: 0,0:00:51.68,0:00:53.75,Default,,0,0,0,,{\k25}Stay {\k25}consistent {\k25}and {\k25}you'll {\k25}be {\k25}keys {\k25}in {\k25}hand.
+Dialogue: 0,0:00:55.00,0:00:55.50,Default,,0,0,0,,{\k50}Air.
+Dialogue: 0,0:00:56.68,0:00:59.24,Default,,0,0,0,,{\k36}What's {\k36}your {\k36}go-to {\k36}show {\k36}for {\k36}saving {\k36}motivation?
+Dialogue: 0,0:00:59.24,0:00:59.95,Default,,0,0,0,,{\k23}Drop {\k23}it {\k23}below.
+Dialogue: 0,0:01:01.75,0:01:04.19,Default,,0,0,0,,{\k30}DM {\k30}me {\k30}your {\k30}fave {\k30}binge {\k30}and {\k30}home {\k30}goals.
+Dialogue: 0,0:01:04.19,0:01:06.44,Default,,0,0,0,,{\k28}Let's {\k28}chat {\k28}your {\k28}path {\k28}to {\k28}owning {\k28}and {\k28}carodiline.

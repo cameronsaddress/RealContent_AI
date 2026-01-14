@@ -218,6 +218,7 @@ IMPORTANT:
 - Stay in character - maintain the tone and respect the boundaries
 - NO emojis in the spoken script
 - Make it conversational, not scripted-sounding
+- NEVER use "Coeur d'Alene" - the TTS mispronounces it. Use "North Idaho" or "the Spokane area" instead
 
 Return as JSON:
 {{

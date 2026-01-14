@@ -457,7 +457,8 @@ function Scraper() {
         }
         .checkbox-group {
           display: flex;
-          gap: 20px;
+          flex-wrap: wrap;
+          gap: 10px;
           margin-top: 10px;
         }
         .checkbox-group label {
@@ -466,14 +467,21 @@ function Scraper() {
           gap: 8px;
           cursor: pointer;
           color: var(--text-primary);
-          padding: 6px 10px;
+          padding: 8px 12px;
           background: var(--bg-tertiary);
           border-radius: 6px;
           border: 1px solid var(--border);
           transition: all 0.2s;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
         .checkbox-group label:hover {
           border-color: var(--accent-primary);
+        }
+        .checkbox-group input[type="checkbox"] {
+          width: 16px;
+          height: 16px;
+          accent-color: var(--accent-primary);
         }
         .preset-save-row {
           display: flex;

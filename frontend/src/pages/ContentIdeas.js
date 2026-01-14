@@ -9,7 +9,10 @@ function ContentIdeas() {
   const [pillarFilter, setPillarFilter] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [viewingIdea, setViewingIdea] = useState(null);
+  const [sortField, setSortField] = useState('created_at');
+  const [sortDirection, setSortDirection] = useState('desc'); // desc = newest first
 
+  // Fetch data first
   const { data: ideas, isLoading, error } = useQuery({
     queryKey: ['contentIdeas', statusFilter, pillarFilter],
     queryFn: () => getContentIdeas({
@@ -17,6 +20,59 @@ function ContentIdeas() {
       pillar: pillarFilter || undefined,
     }),
   });
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
+  const sortedIdeas = React.useMemo(() => {
+    if (!ideas) return [];
+    return [...ideas].sort((a, b) => {
+      let aVal = a[sortField];
+      let bVal = b[sortField];
+
+      // Handle nulls
+      if (aVal == null) aVal = sortField === 'created_at' ? '' : 0;
+      if (bVal == null) bVal = sortField === 'created_at' ? '' : 0;
+
+      // Date comparison
+      if (sortField === 'created_at') {
+        aVal = new Date(aVal).getTime();
+        bVal = new Date(bVal).getTime();
+      }
+
+      // String comparison
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+
+      if (sortDirection === 'asc') {
+        return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+      } else {
+        return aVal < bVal ? 1 : aVal > bVal ? -1 : 0;
+      }
+    });
+  }, [ideas, sortField, sortDirection]);
+
+  const SortHeader = ({ field, children, width }) => (
+    <th
+      style={{ width, cursor: 'pointer', userSelect: 'none' }}
+      onClick={() => handleSort(field)}
+    >
+      {children}
+      {sortField === field && (
+        <span style={{ marginLeft: '4px', opacity: 0.7 }}>
+          {sortDirection === 'asc' ? '▲' : '▼'}
+        </span>
+      )}
+    </th>
+  );
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => updateContentIdea(id, data),
@@ -46,7 +102,7 @@ function ContentIdeas() {
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
-      setSelectedIds(ideas?.map(i => i.id) || []);
+      setSelectedIds(sortedIdeas?.map(i => i.id) || []);
     } else {
       setSelectedIds([]);
     }
@@ -163,7 +219,7 @@ function ContentIdeas() {
         </div>
       )}
 
-      {!ideas?.length ? (
+      {!sortedIdeas?.length ? (
         <div className="empty-state">
           <p>No content ideas found. Check back later!</p>
         </div>
@@ -176,22 +232,22 @@ function ContentIdeas() {
                   <input
                     type="checkbox"
                     onChange={handleSelectAll}
-                    checked={selectedIds.length === ideas?.length && ideas.length > 0}
+                    checked={selectedIds.length === sortedIdeas?.length && sortedIdeas.length > 0}
                   />
                 </th>
-                <th style={{ width: '60px' }}>ID</th>
-                <th style={{ width: '100px' }}>PLATFORM</th>
-                <th style={{ width: '100px' }}>VIEWS</th>
-                <th style={{ width: '140px' }}>PILLAR</th>
-                <th>HOOK</th>
-                <th style={{ width: '80px' }}>SCORE</th>
-                <th style={{ width: '140px' }}>STATUS</th>
-                <th style={{ width: '120px' }}>CREATED</th>
+                <SortHeader field="id" width="60px">ID</SortHeader>
+                <SortHeader field="source_platform" width="80px">PLATFORM</SortHeader>
+                <SortHeader field="views" width="80px">VIEWS</SortHeader>
+                <SortHeader field="likes" width="80px">LIKES</SortHeader>
+                <SortHeader field="original_text" width={undefined}>CAPTION</SortHeader>
+                <SortHeader field="author" width="100px">AUTHOR</SortHeader>
+                <SortHeader field="status" width="100px">STATUS</SortHeader>
+                <SortHeader field="created_at" width="100px">CREATED</SortHeader>
                 <th style={{ width: '120px' }}>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
-              {ideas.map((idea) => (
+              {sortedIdeas.map((idea) => (
                 <tr key={idea.id} className={`row-${idea.status}`}>
                   <td>
                     <input
@@ -210,7 +266,7 @@ function ContentIdeas() {
                   </td>
                   <td>
                     {idea.views ? (
-                      <span style={{ fontWeight: 500 }}>
+                      <span style={{ fontWeight: 500, color: '#0284c7' }}>
                         {idea.views >= 1000000
                           ? `${(idea.views / 1000000).toFixed(1)}M`
                           : idea.views >= 1000
@@ -220,28 +276,29 @@ function ContentIdeas() {
                     ) : '-'}
                   </td>
                   <td>
-                    {idea.pillar && (
-                      <span className={`pillar-badge pillar-${idea.pillar}`}>
-                        {idea.pillar.replace('_', ' ')}
+                    {idea.likes ? (
+                      <span style={{ fontWeight: 500, color: '#dc2626' }}>
+                        {idea.likes >= 1000000
+                          ? `${(idea.likes / 1000000).toFixed(1)}M`
+                          : idea.likes >= 1000
+                            ? `${(idea.likes / 1000).toFixed(0)}K`
+                            : idea.likes}
                       </span>
-                    )}
+                    ) : '-'}
                   </td>
-                  <td className="hook-cell" title={idea.suggested_hook}>
-                    {idea.suggested_hook?.substring(0, 50)}
-                    {idea.suggested_hook?.length > 50 && '...'}
+                  <td className="caption-cell" title={idea.original_text}>
+                    {idea.original_text?.substring(0, 60)}
+                    {idea.original_text?.length > 60 && '...'}
                   </td>
-                  <td>{idea.viral_score || '-'}/10</td>
+                  <td style={{ fontSize: '0.85em' }}>
+                    {idea.author ? `@${idea.author.substring(0, 12)}${idea.author.length > 12 ? '...' : ''}` : '-'}
+                  </td>
                   <td>
                     <span className={`status-badge status-${idea.status}`}>
                       {idea.status.replace('_', ' ')}
                     </span>
                   </td>
-                  <td>
-                    <span style={{ fontSize: '0.85em', color: '#666' }}>
-                      {getDetailedStatus(idea)}
-                    </span>
-                  </td>
-                  <td>{new Date(idea.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                  <td style={{ fontSize: '0.85em' }}>{new Date(idea.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric' })}</td>
                   <td>
                     <div className="actions">
                       <button
@@ -482,8 +539,16 @@ function ContentIdeas() {
       }
 
       <style>{`
-        .hook-cell {
-          max-width: 200px;
+        .ideas-table th {
+          transition: background 0.2s;
+        }
+        .ideas-table th:hover {
+          background: var(--bg-tertiary);
+        }
+        .caption-cell {
+          max-width: 250px;
+          font-size: 0.9em;
+          color: #666;
         }
         .action-btn.retry {
           background: #f59e0b;

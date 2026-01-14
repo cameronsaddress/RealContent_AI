@@ -2296,7 +2296,7 @@ Header Value: Bearer {{ $env.BLOTATO_API_KEY }}
 **Solution**: Use `http://backend:8000` (Docker network name), not localhost
 
 **Error**: `relation does not exist`
-**Solution**: Run `docker exec -i n8n_postgres psql -U n8n -d content_pipeline < backend/init.sql`
+**Solution**: Run `docker exec -i SocialGen_postgres psql -U n8n -d content_pipeline < backend/init.sql`
 
 ### Workflow Errors
 

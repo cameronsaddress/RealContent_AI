@@ -19,8 +19,8 @@ def run_scrape(
     niche: str = "real estate",
     platforms: Optional[List[str]] = None,
     hashtags: Optional[List[str]] = None,
-    results_per_platform: int = 30,
-    analyze_top_n: int = 20,
+    results_per_platform: int = 50,
+    analyze_top_n: int = 50,
     discover_hashtags: bool = False,
     seed_keyword: str = ""
 ) -> Dict[str, Any]:
@@ -188,8 +188,8 @@ def run_daily_scrape() -> Dict[str, Any]:
         niche="real estate",
         platforms=["tiktok", "instagram", "youtube"],
         hashtags=["realtor", "realestate", "homebuying", "firsttimehomebuyer"],
-        results_per_platform=30,
-        analyze_top_n=20
+        results_per_platform=50,
+        analyze_top_n=50
     )
 
 
@@ -234,6 +234,6 @@ async def _scrape_with_preset_async(preset_id: int) -> Dict[str, Any]:
             niche=preset_dict.get("name", "real estate"),
             platforms=["tiktok", "instagram", "youtube"],
             hashtags=preset_dict.get("hashtags", []),
-            results_per_platform=30,
-            analyze_top_n=20
+            results_per_platform=50,
+            analyze_top_n=50
         )

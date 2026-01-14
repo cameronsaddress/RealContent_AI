@@ -355,19 +355,24 @@ async def compose_video(request: ComposeRequest):
     Compose final video: background + avatar overlay + optional music
 
     This creates TikTok-style video with:
-    - Source video as background (scaled to 9:16)
+    - Source video as background (scaled to 9:16, looped if shorter than avatar)
     - Avatar with chroma key removal overlaid with configurable position
     - Optional background music mixed with avatar audio
     """
     output_filename = request.output_filename or f"{request.script_id}_combined.mp4"
     output_path = OUTPUT_DIR / output_filename
 
+    # Get avatar duration to set output duration limit
+    avatar_info = get_video_info(request.avatar_path)
+    avatar_duration = avatar_info["duration"]
+
     # Get encoder settings
     encoder, encoder_opts = get_gpu_encoder() if request.use_gpu else ("libx264", ["-preset", "fast", "-crf", "23"])
 
     # Build FFmpeg filter complex
     filter_parts = []
-    inputs = ["-i", request.background_path, "-i", request.avatar_path]
+    # Loop background video to match avatar duration (avatar is usually longer than source clip)
+    inputs = ["-stream_loop", "-1", "-i", request.background_path, "-i", request.avatar_path]
     input_count = 2
     audio_index = 1  # Avatar audio by default
 
@@ -398,7 +403,9 @@ async def compose_video(request: ComposeRequest):
     # Y: (H-h-10) + offset_y (positive offset moves down from bottom)
     x_pos = f"(10+{request.avatar_offset_x})"
     y_pos = f"((H-h-10)+{request.avatar_offset_y})"
-    filter_parts.append(f"[bg][avatar_keyed]overlay={x_pos}:{y_pos}:shortest=1[outv]")
+    # Use eof_action=repeat to keep showing last frame if bg runs out, but with loop it won't
+    # Remove shortest=1 so video runs for full avatar duration
+    filter_parts.append(f"[bg][avatar_keyed]overlay={x_pos}:{y_pos}[outv]")
 
     # Audio mixing
     if music_index >= 0:
@@ -411,13 +418,14 @@ async def compose_video(request: ComposeRequest):
 
     filter_complex = ";".join(filter_parts)
 
-    # Build full command
+    # Build full command with duration limit to match avatar length
     cmd = [
         "ffmpeg", "-y",
         *inputs,
         "-filter_complex", filter_complex,
         "-map", "[outv]",
         "-map", "[outa]",
+        "-t", str(avatar_duration),  # Limit output to avatar duration
         "-c:v", encoder,
         *encoder_opts,
         "-c:a", "aac", "-b:a", "128k",

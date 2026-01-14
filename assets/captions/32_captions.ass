@@ -1,0 +1,23 @@
+[Script Info]
+Title: Karaoke Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,96,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,60,60,850,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.96,Default,,0,0,0,,{\k31}Hey {\k31}neighbors! {\k31}Have {\k31}you {\k31}seen {\k31}this {\k31}viral {\k31}dancing {\k31}realtor {\k31}going {\k31}all {\k31}out {\k31}for {\k31}her {\k31}unsold {\k31}gem?
+Dialogue: 0,0:00:04.96,0:00:10.39,Default,,0,0,0,,{\k30}Look {\k30}at {\k30}that {\k30}hustle! {\k30}I'll {\k30}be {\k30}honest, {\k30}I {\k30}love {\k30}this {\k30}energy. {\k30}What {\k30}people {\k30}don't {\k30}see {\k30}behind {\k30}the {\k30}fun
+Dialogue: 0,0:00:10.39,0:00:16.15,Default,,0,0,0,,{\k33}dances {\k33}and {\k33}persistence {\k33}is {\k33}the {\k33}real {\k33}grind {\k33}of {\k33}real {\k33}estate. {\k33}That {\k33}home {\k33}in {\k33}Owensboro {\k33}hasn't {\k33}sold {\k33}yet,
+Dialogue: 0,0:00:16.15,0:00:20.23,Default,,0,0,0,,{\k27}but {\k27}she's {\k27}not {\k27}quitting. {\k27}And {\k27}neither {\k27}do {\k27}I {\k27}here {\k27}in {\k27}Coeur {\k27}d'Alene {\k27}and {\k27}Liberty {\k27}Lake.
+Dialogue: 0,0:00:21.04,0:00:24.95,Default,,0,0,0,,{\k35}My {\k35}experience {\k35}tells {\k35}me {\k35}homes {\k35}linger {\k35}sometimes {\k35}due {\k35}to {\k35}pricing {\k35}hiccups,
+Dialogue: 0,0:00:24.95,0:00:28.15,Default,,0,0,0,,{\k35}market {\k35}shifts, {\k35}or {\k35}just {\k35}needing {\k35}that {\k35}fresh {\k35}marketing {\k35}spark.
+Dialogue: 0,0:00:29.12,0:00:34.08,Default,,0,0,0,,{\k33}Locally, {\k33}our {\k33}lake {\k33}views {\k33}and {\k33}mountain {\k33}vibes {\k33}make {\k33}properties {\k33}hot, {\k33}but {\k33}I've {\k33}turned {\k33}stalled {\k33}listings
+Dialogue: 0,0:00:34.08,0:00:39.75,Default,,0,0,0,,{\k40}around {\k40}with {\k40}virtual {\k40}tours, {\k40}targeted {\k40}open {\k40}houses, {\k40}and {\k40}creative {\k40}staging {\k40}that {\k40}highlights {\k40}those {\k40}Idaho
+Dialogue: 0,0:00:39.75,0:00:45.59,Default,,0,0,0,,{\k44}sunsets. {\k44}Persistence {\k44}pays. {\k44}Treat {\k44}yourself {\k44}to {\k44}a {\k44}bold {\k44}strategy {\k44}and {\k44}watch {\k44}it {\k44}move.
+Dialogue: 0,0:00:46.40,0:00:48.72,Default,,0,0,0,,{\k28}DM {\k28}me {\k28}to {\k28}chat {\k28}about {\k28}your {\k28}home {\k28}journey.
