@@ -769,11 +769,16 @@ def render_viral_clip(request: RenderClipRequest):
             try:
                 beat_times = detect_beats(str(bgm_path), duration)
                 print(f"Detected {len(beat_times)} bass drum hits in BGM for pulse sync")
-                # SUBTLE pulse on each kick drum hit
-                # 2.5% zoom, 0.08s decay (quick snap back) - barely perceptible but feels right
-                for bt in beat_times[:80]:  # Limit to avoid FFmpeg expr overflow
-                    decay_time = 0.08  # Quick snap-back
-                    beat_pulse += f"+0.025*between(t,{bt:.3f},{bt+decay_time:.3f})*(1-((t-{bt:.3f})/{decay_time}))"
+                # VERY SUBTLE pulse - quick in, smooth out
+                # 1.25% zoom, 0.02s attack + 0.18s decay for buttery smooth feel
+                for bt in beat_times[:60]:  # Limit to avoid FFmpeg expr overflow
+                    attack = 0.02   # Instant snap in
+                    decay = 0.18    # Smooth ease out
+                    peak = bt + attack
+                    end = peak + decay
+                    # Attack: ramp 0->1 over attack time, Decay: ramp 1->0 over decay time
+                    beat_pulse += f"+0.0125*between(t,{bt:.3f},{peak:.3f})*((t-{bt:.3f})/{attack})"
+                    beat_pulse += f"+0.0125*between(t,{peak:.3f},{end:.3f})*(1-((t-{peak:.3f})/{decay}))"
             except Exception as e:
                 print(f"Beat detection failed, using fallback heartbeat: {e}")
                 beat_pulse = "+0.003*sin(2*3.14159*t*2.0)"  # Very subtle 2Hz fallback
