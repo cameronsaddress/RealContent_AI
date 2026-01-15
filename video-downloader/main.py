@@ -599,8 +599,10 @@ def render_viral_clip(request: RenderClipRequest):
         for seg in fresh_segments:
             words = seg.get("words", [])
             for word_obj in words:
-                w_text = word_obj.get("word", "").lower().strip(".,!?;:'\"")
+                # Strip whitespace AND punctuation - Whisper often returns " word" with leading space
+                w_text = word_obj.get("word", "").lower().strip().strip(".,!?;:'\"()-")
                 if w_text in TRAD_TRIGGER_WORDS:
+                    print(f"  TRIGGER HIT: '{w_text}' at {word_obj.get('start', 0):.2f}s")
                     fresh_trigger_words.append({
                         "start": word_obj["start"],
                         "end": word_obj["end"],
