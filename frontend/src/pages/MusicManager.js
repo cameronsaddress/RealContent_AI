@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { uploadMusic, getMusicInfo, getMusicFiles, activateMusic } from '../api';
+import { uploadMusic, getMusicInfo, getMusicFiles, activateMusic, deleteMusic } from '../api';
 
 const MusicManager = () => {
     const [selectedFile, setSelectedFile] = useState(null);
@@ -240,23 +240,49 @@ const MusicManager = () => {
 
                                     {/* Bottom Row: Controls */}
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
-                                        {/* Play/Pause Button */}
-                                        <button
-                                            onClick={(e) => handlePlayPause(e, file)}
-                                            style={{
-                                                background: isPlaying ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                                                color: isPlaying ? 'white' : 'var(--text-primary)',
-                                                border: 'none',
-                                                borderRadius: '50%',
-                                                width: '36px', height: '36px',
-                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                cursor: 'pointer',
-                                                transition: 'all 0.2s'
-                                            }}
-                                            title="Preview"
-                                        >
-                                            {isPlaying ? '⏸' : '▶'}
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            {/* Play/Pause Button */}
+                                            <button
+                                                onClick={(e) => handlePlayPause(e, file)}
+                                                style={{
+                                                    background: isPlaying ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                                                    color: isPlaying ? 'white' : 'var(--text-primary)',
+                                                    border: 'none',
+                                                    borderRadius: '50%',
+                                                    width: '36px', height: '36px',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                title="Preview"
+                                            >
+                                                {isPlaying ? '⏸' : '▶'}
+                                            </button>
+
+                                            {/* Delete Button */}
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (window.confirm(`Delete "${file.filename}"?`)) {
+                                                        const { deleteMusic } = require('../api');
+                                                        deleteMusic(file.filename).then(() => fetchInfo()).catch(err => alert("Failed to delete: " + err));
+                                                    }
+                                                }}
+                                                style={{
+                                                    background: 'rgba(239, 68, 68, 0.1)',
+                                                    color: 'var(--error)',
+                                                    border: 'none',
+                                                    borderRadius: '50%',
+                                                    width: '36px', height: '36px',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s'
+                                                }}
+                                                title="Delete"
+                                            >
+                                                🗑️
+                                            </button>
+                                        </div>
 
                                         {/* Status Indicator */}
                                         {isActive ? (

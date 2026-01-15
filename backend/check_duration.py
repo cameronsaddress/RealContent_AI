@@ -1,49 +1,37 @@
+
 import sys
 import os
-import subprocess
-
-# Add current directory to path so we can import backend
 sys.path.append(os.getcwd())
+from models import InfluencerVideo, SessionLocal
 
+db = SessionLocal()
 try:
-    from backend.models import SessionLocal, InfluencerVideo
-except ImportError:
-    from models import SessionLocal, InfluencerVideo
-
-def check_duration():
-    db = SessionLocal()
-    try:
-        video = db.query(InfluencerVideo).filter(InfluencerVideo.id == 2).first()
-        if not video:
-            print("Video ID 2 not found.")
-            return
+    video_id = 2
+    video = db.query(InfluencerVideo).filter(InfluencerVideo.id == video_id).first()
+    
+    print(f"Video ID: {video.id}")
+    print(f"DB Duration: {video.duration}")
+    
+    if video.local_path and os.path.exists(video.local_path):
+        import shutil
+        # quick ffprobe or just trust the error msg for now. 
+        # Actually MoviePy is installed in backend
+        try:
+             from moviepy.editor import VideoFileClip
+             clip = VideoFileClip(video.local_path)
+             print(f"Actual File Duration: {clip.duration}")
+             clip.close()
+        except Exception as e:
+            print(f"Could not read file duration: {e}")
             
-        print(f"Video ID 2: {video.title}")
-        if video.duration:
-            print(f"DB Duration: {video.duration} seconds ({video.duration/60:.2f} minutes)")
+    if video.transcript_json:
+        segments = video.transcript_json.get("segments", [])
+        if segments:
+            last_seg = segments[-1]
+            print(f"Last Transcript Segment End: {last_seg.get('end')}")
+            print(f"Total Segments: {len(segments)}")
         else:
-            print("DB Duration: None")
-        print(f"Local Path: {video.local_path}")
-        
-        # Check actual file duration using ffprobe if available, or just file size
-        if video.local_path and os.path.exists(video.local_path):
-            size = os.path.getsize(video.local_path)
-            print(f"File Size: {size / (1024*1024):.2f} MB")
+            print("Transcript has no segments")
             
-            # Simple duration check via ffmpeg if possible?
-            # Creating a quick subprocess call
-            try:
-                cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video.local_path]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                print(f"FFprobe Duration: {result.stdout.strip()} seconds")
-            except Exception as e:
-                print(f"FFprobe failed: {e}")
-                
-        else:
-            print("File not found on disk.")
-            
-    finally:
-        db.close()
-
-if __name__ == "__main__":
-    check_duration()
+finally:
+    db.close()

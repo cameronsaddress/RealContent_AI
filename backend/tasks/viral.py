@@ -58,11 +58,17 @@ async def _download_video_async(video_id: int):
         video.status = "downloading"
         db.commit()
 
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=5400.0) as client:
             # Call video-processor to download
+            # PASS STABLE FILENAME to allow yt-dlp to RESUME .part files if they exist!
+            # Otherwise random UUIDs are used and we lose progress.
             response = await client.post(
                 f"{VIDEO_PROCESSOR_URL}/download",
-                json={"url": video.url, "format": "mp4"}
+                json={
+                    "url": video.url, 
+                    "format": "mp4",
+                    "filename": f"video_{video_id}" # Stable ID for resume support
+                }
             )
             
             if response.status_code != 200:
@@ -197,6 +203,9 @@ async def _transcribe_video_async(video_id: int):
                             logger.info(f"Intro skipping applied. Removed segments before {last_cutoff_time}s.")
                         else:
                             logger.warning("Intro skipping removed ALL segments! Reverting...")
+                    else:
+                        # Fallback Rule: If no intro phrase found, assume Video starts at 0:00
+                        logger.info("No 'Nick Fuentes' intro sequence found in transcript. Treating video start as actual beginning (0:00).")
             except Exception as logic_err:
                 logger.error(f"Intro Logic Failed (continuing with raw transcript): {logic_err}")
                 # Do not re-raise; keep the raw transcript we already saved
@@ -289,22 +298,29 @@ async def _render_clip_async(clip_id: int):
 
         # Extract trigger words for pulse effect from clip_segments
         trigger_words = []
-        for s in clip_segments:
-            text_lower = s["text"].lower()
-            # Check for any trigger word match
-            for w in TRAD_TRIGGER_WORDS:
-                if w in text_lower:
-                    # If we have precise word timestamps, search inside
-                    found_precise = False
-                    if s.get("words"):
-                        for word_obj in s["words"]:
-                             if w in word_obj["word"].lower():
-                                  trigger_words.append({"start": word_obj["start"], "end": word_obj["end"], "word": w})
-                                  found_precise = True
-                    
-                    # If no word timestamps or not found in words (fuzzy match), use segment range
-                    if not found_precise:
-                         trigger_words.append({"start": s["start"], "end": s["end"], "word": w})
+        
+        # 1. Grok Triggers (Priority)
+        if clip.render_metadata and clip.render_metadata.get("trigger_words"):
+            trigger_words = clip.render_metadata.get("trigger_words")
+            logger.info(f"Using {len(trigger_words)} Grok-detected High Intensity Triggers")
+        else:
+            # 2. Fallback to Hardcoded Word List Search
+            for s in clip_segments:
+                text_lower = s["text"].lower()
+                # Check for any trigger word match
+                for w in TRAD_TRIGGER_WORDS:
+                    if w in text_lower:
+                        # If we have precise word timestamps, search inside
+                        found_precise = False
+                        if s.get("words"):
+                            for word_obj in s["words"]:
+                                 if w in word_obj["word"].lower():
+                                      trigger_words.append({"start": word_obj["start"], "end": word_obj["end"], "word": w})
+                                      found_precise = True
+                        
+                        # If no word timestamps or not found in words (fuzzy match), use segment range
+                        if not found_precise:
+                             trigger_words.append({"start": s["start"], "end": s["end"], "word": w})
         
         async with httpx.AsyncClient(timeout=600.0) as client:
             payload = {

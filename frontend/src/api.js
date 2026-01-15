@@ -209,6 +209,11 @@ export const activateMusic = async (filename) => {
   return data;
 };
 
+export const deleteMusic = async (filename) => {
+  const { data } = await api.delete(`/api/music/${filename}`);
+  return data;
+};
+
 // Character & Settings (Upload Extensions)
 export const uploadAvatarImage = async (file) => {
   const formData = new FormData();

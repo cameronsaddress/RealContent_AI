@@ -1302,6 +1302,30 @@ def get_music_info():
         "url": "/assets/music/background_music.mp3"
     }
 
+@app.delete("/api/music/{filename}")
+async def delete_music(filename: str):
+    """Delete a music file from the library"""
+    # Prevent deleting the active background file directly via name (though it's a copy)
+    if filename == "background_music.mp3":
+         raise HTTPException(status_code=400, detail="Cannot delete system file")
+         
+    target = MUSIC_DIR / filename
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        # Check if it was the active one
+        active_name = get_active_music_filename()
+        if active_name == filename:
+            # We allow deleting it, but we should probably unset active state or warn
+            # For now, just delete the source. The active copy (background_music.mp3) remains until changed.
+            pass
+            
+        target.unlink()
+        return {"success": True, "filename": filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
+
 
 # ==================== PIPELINE SETTINGS ====================
 

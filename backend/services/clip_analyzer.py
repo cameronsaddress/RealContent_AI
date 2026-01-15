@@ -99,7 +99,8 @@ class ClipAnalyzerService(BaseService):
                     title=clip_data.get("title", "Viral Clip"),
                     description=clip_data.get("caption", ""),
                     hashtags=clip_data.get("hashtags", []),
-                    status="pending"
+                    status="pending",
+                    render_metadata={"trigger_words": clip_data.get("trigger_words", [])}
                 )
                 db_session.add(vc)
                 created_clips.append(vc)
@@ -129,13 +130,17 @@ TRANSCRIPT SEGMENTS (with timestamps):
 {json.dumps(segments, indent=None)}
 
 TASK:
-Identify up to 10 distinct clips (prioritizing quality and viral potential) that fit one of these types:
+Identify up to 20 distinct clips (prioritizing quality and viral potential) that fit one of these types:
 - OUTRAGEOUS / CONTROVERSIAL (Priority #1 - Hot Takes, "Cancelled" moments)
 - Antagonistic / Conflict (High emotion battles)
 - Funny / Memeable (Out of context or hilarious)
 - Inspirational / "Based" (Strong monologues)
 
+- Inspirational / "Based" (Strong monologues)
+
 FOCUS ON THE MOST CONTROVERSIAL AND SHOCKING MOMENTS. DO NOT HOLD BACK.
+
+Also identify 3-5 high-intensity SINGLE WORDS (triggers) within the clip for visual impact (e.g., WAR, DIE, TRUMP, MONEY, LIAR). Provide their exact start/end timestamps.
 
 Constraints:
 - Clips should be between {persona.min_clip_duration} and {persona.max_clip_duration} seconds.
@@ -152,7 +157,11 @@ Return ONLY valid JSON in this format:
       "title": "TOP G DESTROYS DEBATE OPPONENT",
       "reason": "High conflict moment, very engaging",
       "caption": "Bro didn't stand a chance... \ud83d\udc80 #owned #debate",
-      "hashtags": ["#viral", "#shorts", "#fyp", "#sigma"]
+      "hashtags": ["#viral", "#shorts", "#fyp", "#sigma"],
+      "trigger_words": [
+          {{"word": "DESTROYED", "start": 30.5, "end": 31.0}},
+          {{"word": "LIAR", "start": 40.2, "end": 40.8}}
+      ]
     }}
   ]
 }}
