@@ -310,23 +310,23 @@ def get_video_info(path: str) -> dict:
     }
 
 def create_cross_image():
-    # Generate the Purple Cross overlay
-    size = (200, 200)
+    # Generate the Purple Cross overlay - 2x larger
+    size = (400, 400)
     img = Image.new('RGBA', size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     # Try system fonts
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
-        font = ImageFont.truetype(font_path, 150)
+        font = ImageFont.truetype(font_path, 300)
     except:
         font = ImageFont.load_default()
-        
+
     try:
         bbox = draw.textbbox((0, 0), "†", font=font)
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     except:
-        w, h = 100, 100
-        
+        w, h = 200, 200
+
     draw.text(((size[0] - w) / 2, (size[1] - h) / 2), "†", font=font, fill=(128, 0, 128))
     cross_path = OUTPUT_DIR / f"cross_{uuid.uuid4().hex[:8]}.png"
     img.save(cross_path)
@@ -446,8 +446,8 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,{font},100,&H00FFFFFF,&H00FF00FF,&H00000000,&HAA000000,-1,0,0,0,100,100,2,0,1,4,2,2,20,20,120,1
-Style: TriggerWord,{font},100,&H00FFFF00,&H00FF00FF,&H000000FF,&HAA000000,-1,0,0,0,300,300,2,0,1,6,3,2,20,20,120,1
+Style: Karaoke,{font},175,&H00FFFFFF,&H00FF00FF,&H00000000,&HAA000000,-1,0,0,0,100,100,2,0,1,5,2,2,20,20,120,1
+Style: TriggerWord,{font},175,&H00FFFF00,&H00FF00FF,&H000000FF,&HAA000000,-1,0,0,0,300,300,2,0,1,8,3,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -769,16 +769,16 @@ def render_viral_clip(request: RenderClipRequest):
             try:
                 beat_times = detect_beats(str(bgm_path), duration)
                 print(f"Detected {len(beat_times)} bass drum hits in BGM for pulse sync")
-                # VERY SUBTLE pulse - quick in, smooth out
-                # 1.25% zoom, 0.02s attack + 0.18s decay for buttery smooth feel
+                # BARELY PERCEPTIBLE pulse - quick in, smooth out
+                # 0.6% zoom, 0.02s attack + 0.20s decay for ultra-smooth feel
                 for bt in beat_times[:60]:  # Limit to avoid FFmpeg expr overflow
                     attack = 0.02   # Instant snap in
-                    decay = 0.18    # Smooth ease out
+                    decay = 0.20    # Smooth ease out
                     peak = bt + attack
                     end = peak + decay
                     # Attack: ramp 0->1 over attack time, Decay: ramp 1->0 over decay time
-                    beat_pulse += f"+0.0125*between(t,{bt:.3f},{peak:.3f})*((t-{bt:.3f})/{attack})"
-                    beat_pulse += f"+0.0125*between(t,{peak:.3f},{end:.3f})*(1-((t-{peak:.3f})/{decay}))"
+                    beat_pulse += f"+0.006*between(t,{bt:.3f},{peak:.3f})*((t-{bt:.3f})/{attack})"
+                    beat_pulse += f"+0.006*between(t,{peak:.3f},{end:.3f})*(1-((t-{peak:.3f})/{decay}))"
             except Exception as e:
                 print(f"Beat detection failed, using fallback heartbeat: {e}")
                 beat_pulse = "+0.003*sin(2*3.14159*t*2.0)"  # Very subtle 2Hz fallback
@@ -798,6 +798,11 @@ def render_viral_clip(request: RenderClipRequest):
         
         # Grade Expr (CPU)
         grade_filter = "eq=contrast=1.15:brightness=0.03:saturation=1.25"
+
+        # VHS Grain Filter - random noise that fades in/out like old tape
+        # Uses geq for dynamic intensity based on time (sin wave modulation)
+        # Grain intensity pulses between 0 and 20 on a ~2 second cycle with randomness
+        vhs_grain = "noise=alls=15:allf=t+u"
 
         # Chromatic Aberration - DISABLED (rgbashift/colorbalance don't support time expressions)
         # The smooth pulse zoom effect is the main visual impact.
@@ -825,12 +830,14 @@ def render_viral_clip(request: RenderClipRequest):
 
         # Apply effects to extracted clip (already extracted above for transcription)
         # temp_extracted starts at t=0, fresh transcript also starts at t=0 = perfect sync
+        # VHS grain goes BEFORE subtitles so text is clean on top
         filter_complex_effects = (
             f"[0:v]hwdownload,format=nv12,format=yuv420p,"
             f"scale=-2:1920,"
             f"scale={zoom_expr}:eval=frame,"
             f"crop=1080:1920:(iw-1080)/2+250:(ih-1920)/2,"
             f"{grade_filter},"
+            f"{vhs_grain},"
             f"ass='{escaped_ass}',"
             f"hwupload_cuda[v];"
             f"[0:a]volume=1.0[a]"
