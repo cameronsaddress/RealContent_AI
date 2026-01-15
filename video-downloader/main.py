@@ -199,11 +199,13 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
 
 def detect_beats(audio_path: str, max_duration: float = None) -> list:
     """
-    Detect beat times in audio file using onset detection.
+    Detect BASS DRUM hits in audio file using low-frequency onset detection.
+    Focuses on kick drum frequencies (40-120Hz) for tight beat sync.
     Returns list of beat timestamps in seconds.
     """
     import subprocess
     import tempfile
+    from scipy.signal import butter, filtfilt
 
     # Extract audio to WAV for analysis
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
@@ -229,27 +231,41 @@ def detect_beats(audio_path: str, max_duration: float = None) -> list:
         elif audio_data.dtype == np.int32:
             audio_data = audio_data.astype(np.float32) / 2147483648.0
 
-        # Onset detection using energy envelope
+        # LOW-PASS FILTER to isolate bass drum (kick drum is 40-120Hz)
+        # Use 120Hz cutoff to capture kick drum fundamentals
+        nyquist = sample_rate / 2
+        low_cutoff = 120 / nyquist  # Normalize to Nyquist
+
+        # Butterworth low-pass filter, 4th order for sharp rolloff
+        b, a = butter(4, low_cutoff, btype='low')
+        bass_audio = filtfilt(b, a, audio_data)
+
+        # Onset detection on bass-filtered signal
         # Compute short-time energy with hop size ~23ms (512 samples at 22kHz)
         hop_size = 512
         frame_size = 1024
 
-        # Compute RMS energy per frame
-        num_frames = (len(audio_data) - frame_size) // hop_size + 1
+        # Compute RMS energy per frame on BASS signal
+        num_frames = (len(bass_audio) - frame_size) // hop_size + 1
         energy = np.zeros(num_frames)
         for i in range(num_frames):
             start = i * hop_size
-            frame = audio_data[start:start + frame_size]
+            frame = bass_audio[start:start + frame_size]
             energy[i] = np.sqrt(np.mean(frame ** 2))
 
         # Normalize energy
         if energy.max() > 0:
             energy = energy / energy.max()
 
-        # Detect onsets: local maxima above threshold with minimum distance
-        # Use scipy's find_peaks for robust peak detection
-        min_beat_gap = int(0.3 * sample_rate / hop_size)  # Minimum 0.3s between beats
-        peaks, _ = find_peaks(energy, height=0.15, distance=min_beat_gap, prominence=0.05)
+        # Detect bass drum hits: local maxima with tighter constraints
+        # Kick drums typically hit every 0.4-0.6s in most music (100-150 BPM)
+        min_beat_gap = int(0.35 * sample_rate / hop_size)  # Minimum 0.35s between kicks
+        peaks, properties = find_peaks(
+            energy,
+            height=0.25,          # Higher threshold for cleaner kicks
+            distance=min_beat_gap,
+            prominence=0.10       # Must be prominent peaks
+        )
 
         # Convert frame indices to timestamps
         beat_times = peaks * hop_size / sample_rate
@@ -747,23 +763,25 @@ def render_viral_clip(request: RenderClipRequest):
                 trigger_sum += f"+0.50*between(t,{snap_start:.3f},{snap_peak:.3f})*((t-{snap_start:.3f})/{attack_dur})"
                 trigger_sum += f"+0.50*between(t,{snap_peak:.3f},{snap_end:.3f})*(1-((t-{snap_peak:.3f})/{decay_dur}))"
 
-        # Beat-synced pulse from background music
+        # Beat-synced pulse from background music (bass drum only)
         beat_pulse = ""
         if bgm_path:
             try:
                 beat_times = detect_beats(str(bgm_path), duration)
-                print(f"Detected {len(beat_times)} beats in BGM for pulse sync")
-                # Add subtle pulse on each beat (10% zoom, quick decay)
-                for bt in beat_times[:100]:  # Limit to avoid FFmpeg expr overflow
-                    beat_pulse += f"+0.10*between(t,{bt:.3f},{bt+0.15:.3f})*(1-((t-{bt:.3f})/0.15))"
+                print(f"Detected {len(beat_times)} bass drum hits in BGM for pulse sync")
+                # SUBTLE pulse on each kick drum hit
+                # 2.5% zoom, 0.08s decay (quick snap back) - barely perceptible but feels right
+                for bt in beat_times[:80]:  # Limit to avoid FFmpeg expr overflow
+                    decay_time = 0.08  # Quick snap-back
+                    beat_pulse += f"+0.025*between(t,{bt:.3f},{bt+decay_time:.3f})*(1-((t-{bt:.3f})/{decay_time}))"
             except Exception as e:
                 print(f"Beat detection failed, using fallback heartbeat: {e}")
-                beat_pulse = "0.008*sin(2*3.14159*t*2.0)"  # 2Hz fallback
+                beat_pulse = "+0.003*sin(2*3.14159*t*2.0)"  # Very subtle 2Hz fallback
 
         # Pulse Expr (CPU Dynamic)
         zoom_base = "min(1+0.001*t,1.5)"
-        # Use beat pulse if available, otherwise subtle heartbeat
-        heartbeat = beat_pulse if beat_pulse else "0.005*sin(2*3.14159*t*2.0)"
+        # Use beat pulse if available, otherwise very subtle sine fallback
+        heartbeat = beat_pulse if beat_pulse else "+0.003*sin(2*3.14159*t*2.0)"
         
         # Combined Scale Factor
         scale_factor = f"({zoom_base}+{heartbeat}{trigger_sum})"
