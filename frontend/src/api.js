@@ -337,4 +337,20 @@ export const getViralMusic = async () => {
   return data;
 };
 
+// Font Management
+export const getViralFonts = async () => {
+  const { data } = await api.get('/api/viral/fonts');
+  return data;
+};
+
+export const deleteViralFont = async (filename) => {
+  const { data } = await api.delete(`/api/viral/fonts/${filename}`);
+  return data;
+};
+
+export const downloadGoogleFont = async (fontName) => {
+  const { data } = await api.post('/api/viral/fonts/google', { font_name: fontName });
+  return data;
+};
+
 

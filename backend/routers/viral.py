@@ -227,12 +227,13 @@ def get_viral_file(filename: str):
     # Security: basic check to prevent traversal
     if ".." in filename or "/" in filename:
          raise HTTPException(status_code=400, detail="Invalid filename")
-    
+
     file_path = f"/app/assets/output/{filename}"
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-        
-    return FileResponse(file_path)
+
+    # Return with proper media type for video streaming
+    return FileResponse(file_path, media_type="video/mp4")
 
 @router.get("/music")
 def list_music():
@@ -249,9 +250,42 @@ def list_music():
 def get_music_file(filename: str):
     if ".." in filename or "/" in filename:
          raise HTTPException(status_code=400, detail="Invalid filename")
-    
+
     file_path = f"/app/assets/music/{filename}"
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-        
+
     return FileResponse(file_path)
+
+# --- Font Management (proxy to video-processor) ---
+
+@router.get("/fonts")
+async def list_fonts():
+    """List installed custom fonts from video-processor."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get("http://video-processor:8080/fonts")
+        return resp.json()
+
+@router.delete("/fonts/{filename}")
+async def delete_font(filename: str):
+    """Delete a custom font from video-processor."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.delete(f"http://video-processor:8080/fonts/{filename}")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.json().get("detail", "Failed"))
+        return resp.json()
+
+class GoogleFontDownload(BaseModel):
+    font_name: str
+
+@router.post("/fonts/google")
+async def download_google_font(req: GoogleFontDownload):
+    """Download a font from Google Fonts via video-processor."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            "http://video-processor:8080/fonts/google",
+            json={"font_name": req.font_name}
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.json().get("detail", "Failed"))
+        return resp.json()

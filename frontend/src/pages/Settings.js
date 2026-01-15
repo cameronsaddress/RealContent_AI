@@ -4,7 +4,7 @@ import {
   getVideoSettings, updateVideoSettings,
   getLLMSettings, updateLLMSetting,
   getBrandPersona, updateBrandPersona,
-  getViralMusic
+  getViralMusic, getViralFonts, deleteViralFont, downloadGoogleFont
 } from '../api';
 
 export default function Settings() {
@@ -51,6 +51,11 @@ export default function Settings() {
   // Music state
   const [musicFiles, setMusicFiles] = useState([]);
 
+  // Font state
+  const [fonts, setFonts] = useState([]);
+  const [newGoogleFont, setNewGoogleFont] = useState('');
+  const [downloadingFont, setDownloadingFont] = useState(false);
+
   // Brand Persona state
   const [persona, setPersona] = useState({
     name: '',
@@ -83,17 +88,19 @@ export default function Settings() {
   const loadAllSettings = async () => {
     setLoading(true);
     try {
-      const [audioData, videoData, llmData, personaData, musicData] = await Promise.all([
+      const [audioData, videoData, llmData, personaData, musicData, fontsData] = await Promise.all([
         getAudioSettings(),
         getVideoSettings(),
         getLLMSettings(),
         getBrandPersona(),
-        getViralMusic()
+        getViralMusic(),
+        getViralFonts()
       ]);
       setAudio(audioData);
       setVideo(videoData);
       setLlmPrompts(llmData);
       setMusicFiles(musicData);
+      setFonts(fontsData.fonts || []);
       if (personaData) {
         setPersona(personaData);
       }
@@ -129,6 +136,33 @@ export default function Settings() {
       showMessage('Error saving video settings', 'error');
     }
     setSaving(false);
+  };
+
+  const handleDeleteFont = async (filename) => {
+    if (!window.confirm(`Delete font "${filename}"?`)) return;
+    try {
+      await deleteViralFont(filename);
+      setFonts(fonts.filter(f => f.filename !== filename));
+      showMessage('Font deleted!', 'success');
+    } catch (err) {
+      showMessage('Failed to delete font', 'error');
+    }
+  };
+
+  const handleDownloadGoogleFont = async () => {
+    if (!newGoogleFont.trim()) return;
+    setDownloadingFont(true);
+    try {
+      const result = await downloadGoogleFont(newGoogleFont.trim());
+      showMessage(`Downloaded: ${result.files.join(', ')}`, 'success');
+      setNewGoogleFont('');
+      // Reload fonts
+      const fontsData = await getViralFonts();
+      setFonts(fontsData.fonts || []);
+    } catch (err) {
+      showMessage(err.response?.data?.detail || 'Failed to download font', 'error');
+    }
+    setDownloadingFont(false);
   };
 
   const saveLLMPrompt = async (key, val) => {
@@ -1621,6 +1655,124 @@ export default function Settings() {
               Save Handle
             </button>
           </div>
+
+          {/* Caption Font Selection */}
+          <div className="setting-item">
+            <label>Caption Font</label>
+            <div className="font-selector">
+              <div className="checkbox-item" style={{ marginBottom: '12px' }}>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={llmPrompts.find(p => p.key === 'VIRAL_FONT_RANDOM')?.value !== 'false'}
+                    onChange={(e) => {
+                      const newVal = e.target.checked ? 'true' : 'false';
+                      setLlmPrompts(prev => {
+                        const idx = prev.findIndex(p => p.key === 'VIRAL_FONT_RANDOM');
+                        if (idx >= 0) {
+                          const copy = [...prev];
+                          copy[idx] = { ...copy[idx], value: newVal };
+                          return copy;
+                        } else {
+                          return [...prev, { key: 'VIRAL_FONT_RANDOM', value: newVal }];
+                        }
+                      });
+                      saveLLMPrompt('VIRAL_FONT_RANDOM', newVal);
+                    }}
+                  />
+                  <span>Random Font (recommended for variety)</span>
+                </label>
+              </div>
+
+              {llmPrompts.find(p => p.key === 'VIRAL_FONT_RANDOM')?.value === 'false' && (
+                <>
+                  <select
+                    value={llmPrompts.find(p => p.key === 'VIRAL_CAPTION_FONT')?.value || 'Honk'}
+                    onChange={(e) => {
+                      const newVal = e.target.value;
+                      setLlmPrompts(prev => {
+                        const idx = prev.findIndex(p => p.key === 'VIRAL_CAPTION_FONT');
+                        if (idx >= 0) {
+                          const copy = [...prev];
+                          copy[idx] = { ...copy[idx], value: newVal };
+                          return copy;
+                        } else {
+                          return [...prev, { key: 'VIRAL_CAPTION_FONT', value: newVal }];
+                        }
+                      });
+                    }}
+                    className="select-input"
+                    style={{ marginBottom: '12px' }}
+                  >
+                    <option value="Honk">Honk - Playful & Expressive</option>
+                    <option value="Pirata One">Pirata One - Vintage Gothic</option>
+                    <option value="Rubik Vinyl">Rubik Vinyl - Retro Groovy</option>
+                    <option value="Rubik 80s Fade">Rubik 80s Fade - Neon Retro</option>
+                    <option value="Rubik Dirt">Rubik Dirt - Grungy Distressed</option>
+                  </select>
+                  <button
+                    onClick={() => saveLLMPrompt('VIRAL_CAPTION_FONT', llmPrompts.find(p => p.key === 'VIRAL_CAPTION_FONT')?.value)}
+                    className="save-button"
+                  >
+                    Save Font
+                  </button>
+                </>
+              )}
+            </div>
+            <span className="slider-hint">TikTok-style fonts for viral clip captions</span>
+          </div>
+        </div>
+      </div>
+
+      {/* VIRAL FONT LIBRARY */}
+      <div className="settings-section">
+        <h2>Viral Font Library</h2>
+        <p className="section-description">TikTok-style fonts for viral clip captions. Random font is selected for each clip.</p>
+
+        {/* Google Fonts Download */}
+        <div className="setting-item" style={{ marginBottom: '20px' }}>
+          <label>Add from Google Fonts</label>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <input
+              type="text"
+              placeholder="Font name (e.g., Bebas Neue, Oswald, Bangers)"
+              value={newGoogleFont}
+              onChange={(e) => setNewGoogleFont(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleDownloadGoogleFont()}
+              style={{ flex: 1 }}
+            />
+            <button
+              onClick={handleDownloadGoogleFont}
+              disabled={downloadingFont || !newGoogleFont.trim()}
+              className="save-button"
+            >
+              {downloadingFont ? 'Downloading...' : 'Download'}
+            </button>
+          </div>
+          <span className="slider-hint">Enter exact font name from fonts.google.com</span>
+        </div>
+
+        {/* Installed Fonts List */}
+        <div className="music-list">
+          {fonts.length === 0 ? (
+            <p className="no-music">No custom fonts found.</p>
+          ) : (
+            fonts.map((font, i) => (
+              <div key={i} className="music-item">
+                <div className="music-info">
+                  <span className="music-name">{font.name}</span>
+                  <span className="file-size">{font.filename}</span>
+                </div>
+                <button
+                  onClick={() => handleDeleteFont(font.filename)}
+                  className="delete-button"
+                  style={{ background: '#dc3545', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

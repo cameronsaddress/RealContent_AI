@@ -132,13 +132,29 @@ class ExtractClipRequest(BaseModel):
     output_filename: Optional[str] = None
 
 # Available TikTok-style fonts for viral clips
-VIRAL_FONTS = [
-    "Honk",           # Playful & Expressive
-    "Pirata One",     # Vintage Gothic
-    "Rubik Vinyl",    # Retro Groovy
-    "Rubik 80s Fade", # Neon Retro
-    "Rubik Dirt",     # Grungy Distressed
-]
+FONTS_DIR = Path("/usr/share/fonts/truetype/custom")
+
+def get_installed_fonts() -> list:
+    """Scan custom fonts directory and return list of font family names."""
+    if not FONTS_DIR.exists():
+        return ["Arial"]  # Fallback
+    fonts = []
+    for f in FONTS_DIR.glob("*.ttf"):
+        # Extract font name from filename (e.g., "Honk.ttf" -> "Honk")
+        # For multi-word fonts like "PirataOne-Regular.ttf" -> "Pirata One"
+        name = f.stem
+        # Remove common suffixes
+        for suffix in ["-Regular", "-Bold", "-Italic", "-Medium", "-Light"]:
+            name = name.replace(suffix, "")
+        # Convert CamelCase to spaces (PirataOne -> Pirata One)
+        import re
+        name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+        if name and name not in fonts:
+            fonts.append(name)
+    return fonts if fonts else ["Arial"]
+
+# Legacy compatibility - will be called dynamically
+VIRAL_FONTS = get_installed_fonts()
 
 class RenderClipRequest(BaseModel):
     video_path: str
@@ -709,11 +725,12 @@ def render_viral_clip(request: RenderClipRequest):
             music_files = list(MUSIC_DIR.glob("*.mp3")) + list(MUSIC_DIR.glob("*.wav"))
             if music_files: bgm_path = random.choice(music_files)
 
-        # Font Selection - "random" picks from VIRAL_FONTS list
+        # Font Selection - "random" picks from installed custom fonts
         selected_font = request.font
         if request.font.lower() == "random":
-            selected_font = random.choice(VIRAL_FONTS)
-            print(f"DEBUG: Random font selected: {selected_font}")
+            available_fonts = get_installed_fonts()
+            selected_font = random.choice(available_fonts)
+            print(f"DEBUG: Random font selected: {selected_font} (from {len(available_fonts)} available)")
 
         # 5. Karaoke ASS Generation with FRESH timestamps (offset=0 since clip starts at 0)
         report_status(request.status_webhook_url, f"Processing: Karaoke ({selected_font})")
@@ -985,6 +1002,99 @@ def render_viral_clip(request: RenderClipRequest):
             if f.exists():
                 try: f.unlink()
                 except: pass
+
+# ============ FONT MANAGEMENT ENDPOINTS ============
+
+class GoogleFontRequest(BaseModel):
+    font_name: str  # e.g., "Bebas Neue", "Oswald", etc.
+
+@app.get("/fonts")
+def list_fonts():
+    """List all installed custom fonts."""
+    fonts = []
+    if FONTS_DIR.exists():
+        for f in FONTS_DIR.glob("*.ttf"):
+            fonts.append({
+                "filename": f.name,
+                "name": f.stem,
+                "size": f.stat().st_size
+            })
+    return {"fonts": fonts, "directory": str(FONTS_DIR)}
+
+@app.delete("/fonts/{filename}")
+def delete_font(filename: str):
+    """Delete a custom font."""
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    font_path = FONTS_DIR / filename
+    if not font_path.exists():
+        raise HTTPException(status_code=404, detail="Font not found")
+
+    try:
+        font_path.unlink()
+        # Refresh font cache
+        subprocess.run(["fc-cache", "-fv"], capture_output=True)
+        return {"success": True, "deleted": filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
+
+@app.post("/fonts/google")
+async def download_google_font(req: GoogleFontRequest):
+    """Download a font from Google Fonts."""
+    import urllib.parse
+
+    font_name = req.font_name.strip()
+    if not font_name:
+        raise HTTPException(status_code=400, detail="Font name required")
+
+    # Google Fonts API URL
+    api_url = f"https://fonts.google.com/download?family={urllib.parse.quote(font_name)}"
+
+    try:
+        # Download the font zip
+        import tempfile
+        import zipfile
+
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+            tmp_path = tmp.name
+
+        # Use curl for reliable download
+        result = subprocess.run(
+            ["curl", "-L", "-o", tmp_path, api_url],
+            capture_output=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Font '{font_name}' not found on Google Fonts")
+
+        # Extract TTF files
+        extracted = []
+        with zipfile.ZipFile(tmp_path, 'r') as zf:
+            for name in zf.namelist():
+                if name.endswith('.ttf'):
+                    # Extract to fonts dir
+                    dest = FONTS_DIR / Path(name).name
+                    with zf.open(name) as src, open(dest, 'wb') as dst:
+                        dst.write(src.read())
+                    extracted.append(Path(name).name)
+
+        # Cleanup
+        os.unlink(tmp_path)
+
+        if not extracted:
+            raise HTTPException(status_code=400, detail="No TTF files found in font package")
+
+        # Refresh font cache
+        subprocess.run(["fc-cache", "-fv"], capture_output=True)
+
+        return {"success": True, "font": font_name, "files": extracted}
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=404, detail=f"Font '{font_name}' not found on Google Fonts")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

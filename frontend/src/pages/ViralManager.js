@@ -332,12 +332,15 @@ const ViralManager = () => {
                                                 <button onClick={() => handleRender(c.id)}>Render (CapCut Style)</button>
                                             )}
                                             {c.status === 'ready' && (
-                                                <button onClick={() => {
-                                                    const filename = c.edited_video_path?.split('/').pop();
-                                                    if (!filename) return;
-                                                    const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
-                                                    window.open(downloadUrl, '_blank');
-                                                }}>Download</button>
+                                                <>
+                                                    <button onClick={() => setViewingClip(c)}>▶ Play</button>
+                                                    <button onClick={() => {
+                                                        const filename = c.edited_video_path?.split('/').pop();
+                                                        if (!filename) return;
+                                                        const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
+                                                        window.open(downloadUrl, '_blank');
+                                                    }}>Download</button>
+                                                </>
                                             )}
                                         </div>
                                     </div>
