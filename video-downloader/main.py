@@ -660,10 +660,10 @@ def render_viral_clip(request: RenderClipRequest):
                 pulse_start = max(0, pulse_start)
                 pulse_end = min(duration, pulse_end)
 
-                # Smooth sine pulse: 0 → peak (0.25) → 0 over 0.5 seconds
+                # Smooth sine pulse: 0 → peak (0.45) → 0 over 0.5 seconds
                 # sin(π * (t - start) / duration) creates half-sine wave
-                # Multiply by 0.25 for 25% max zoom boost on trigger words
-                trigger_sum += f"+0.25*between(t,{pulse_start:.2f},{pulse_end:.2f})*sin(3.14159*(t-{pulse_start:.2f})/0.5)"
+                # Multiply by 0.45 for BIG 45% max zoom boost on trigger words
+                trigger_sum += f"+0.45*between(t,{pulse_start:.2f},{pulse_end:.2f})*sin(3.14159*(t-{pulse_start:.2f})/0.5)"
 
         # Pulse Expr (CPU Dynamic)
         zoom_base = "min(1+0.001*t,1.5)"
@@ -733,37 +733,41 @@ def render_viral_clip(request: RenderClipRequest):
         subprocess.run(cmd_mega, check=True)
 
         # 3.5. Chromatic Aberration Pass (MoviePy) - RGB split effect
-        # ALWAYS add 2 intro pulses at the start, plus keyword trigger hits
+        # ALWAYS add 4 intro pulses at the start, plus BIG keyword trigger hits
         report_status(request.status_webhook_url, "Processing: RGB Glitch")
 
         trigger_windows = []
 
-        # INTRO PULSES: Two RGB glitch hits at the very start (0.0-0.3s and 0.5-0.8s)
+        # INTRO PULSES: Four RGB glitch hits at the very start
         # Creates that signature "glitchy intro" viral clip look
-        trigger_windows.append((0.0, 0.3))   # First intro pulse
-        trigger_windows.append((0.5, 0.8))   # Second intro pulse
+        trigger_windows.append((0.0, 0.3))    # First intro pulse
+        trigger_windows.append((0.4, 0.7))    # Second intro pulse
+        trigger_windows.append((0.9, 1.2))    # Third intro pulse
+        trigger_windows.append((1.4, 1.7))    # Fourth intro pulse
 
-        # KEYWORD TRIGGERS: Add pulses for each trigger word (using fresh timestamps)
+        # KEYWORD TRIGGERS: Add BIG pulses for each trigger word (using fresh timestamps)
         if fresh_trigger_words:
             for trig in fresh_trigger_words[:20]:
                 # Fresh timestamps are already clip-relative (no adjustment needed)
                 t_start = trig.get('start', 0)
                 t_end = trig.get('end', t_start + 0.5)
                 t_center = (t_start + t_end) / 2
-                pulse_start = max(0, t_center - 0.25)
-                pulse_end = min(duration, t_center + 0.25)
+                # Wider pulse window for more impact (0.4s total instead of 0.5s)
+                pulse_start = max(0, t_center - 0.2)
+                pulse_end = min(duration, t_center + 0.2)
                 if pulse_end > 0 and pulse_start < duration:
-                    # Avoid overlap with intro pulses
-                    if pulse_start >= 1.0:
+                    # Avoid overlap with intro pulses (now 4 pulses until ~1.7s)
+                    if pulse_start >= 2.0:
                         trigger_windows.append((pulse_start, pulse_end))
 
         temp_chroma = temp_dir / f"temp_chroma_{uid}.mp4"
         cleanup_files.append(temp_chroma)
         try:
-            apply_chromatic_aberration(str(temp_main), str(temp_chroma), trigger_windows, max_shift=20)
+            # max_shift=35 for BIGGER RGB glitch effect
+            apply_chromatic_aberration(str(temp_main), str(temp_chroma), trigger_windows, max_shift=35)
             # Replace temp_main with chromatic version
             subprocess.run(["mv", str(temp_chroma), str(temp_main)], check=True)
-            print(f"Applied {len(trigger_windows)} RGB glitch pulses (2 intro + {len(trigger_windows)-2} keywords)")
+            print(f"Applied {len(trigger_windows)} RGB glitch pulses (4 intro + {len(trigger_windows)-4} keywords)")
         except Exception as e:
             print(f"WARNING: Chromatic aberration failed, continuing without: {e}")
             # Continue with unmodified temp_main
