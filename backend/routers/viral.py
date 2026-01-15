@@ -77,11 +77,11 @@ async def fetch_videos(id: int, background_tasks: BackgroundTasks, db: Session =
                     if not exists:
                         new_video = InfluencerVideo(
                             influencer_id=id,
-                            platform_video_id=v["id"],
-                            title=v["title"],
-                            url=v["url"],
-                            thumbnail_url=v["thumbnail"],
-                            duration=v["duration"],
+                            platform_video_id=v.get("id"),
+                            title=v.get("title"),
+                            url=v.get("url"),
+                            thumbnail_url=v.get("thumbnail"),
+                            duration=v.get("duration"),
                             publication_date=datetime.strptime(v["upload_date"], "%Y%m%d") if v.get("upload_date") else None,
                             view_count=v.get("view_count", 0),
                             status="pending"
@@ -127,22 +127,42 @@ async def analyze_video(id: int, db: Session = Depends(get_db)):
     if not video:
          raise HTTPException(status_code=404)
     
-    # video.status = "processing" 
-    # FIX: Do not overwrite 'transcribed' or 'downloaded' status, 
+    def _video_file_exists(local_path: Optional[str]) -> bool:
+        if not local_path:
+            return False
+        check_path = local_path
+        if check_path.startswith("/downloads/"):
+            check_path = check_path.replace("/downloads/", "/app/assets/videos/")
+        return os.path.exists(check_path)
+
+    file_exists = _video_file_exists(video.local_path)
+
+    if video.transcript_json and file_exists:
+        video.status = "transcribed"
+        db.commit()
+        from tasks.viral import process_viral_video_analyze
+        process_viral_video_analyze.delay(id)
+        return {"message": "Analysis pipeline started (Analyze only)"}
+
+    if file_exists:
+        video.status = "downloaded"
+        db.commit()
+        from tasks.viral import process_viral_video_transcribe
+        process_viral_video_transcribe.delay(id)
+        return {"message": "Analysis pipeline started (Transcribe -> Analyze)"}
+
+    # video.status = "processing"
+    # FIX: Do not overwrite 'transcribed' or 'downloaded' status,
     # otherwise the shortcut logic in tasks/viral.py will fail to detect them!
     if video.status not in ["transcribed", "downloaded"]:
         video.status = "processing"
-    
+
     db.commit()
-    
+
     # Trigger Celery pipeline (Download -> Transcribe -> Analyze)
-    # If already downloaded, we could skip, but the task chain handles logic best if we start at download (it checks existence usually)
-    # or we can check status here. For now, assume full re-process or check inside tasks.
-    # The tasks/viral.py assumes we start from scratch or pick up? 
-    # Let's import the first task.
     from tasks.viral import process_viral_video_download
     process_viral_video_download.delay(id)
-    
+
     return {"message": "Analysis pipeline started (Download -> Transcribe -> Analyze)"}
 
 
@@ -156,7 +176,12 @@ def list_influencer_videos(id: int, db: Session = Depends(get_db)):
         "url": v.url,
         "status": v.status,
         "thumbnail_url": v.thumbnail_url,
+        "duration": v.duration,
+        "error_message": v.error_message,
+        "publication_date": v.publication_date,
+        "created_at": v.created_at,
         "upload_date": v.publication_date,
+        "processing_started_at": v.processing_started_at.isoformat() if v.processing_started_at else None,
         "clips": [{
             "id": c.id,
             "title": c.title,
@@ -178,19 +203,6 @@ def list_viral_clips(db: Session = Depends(get_db)):
         "source_video_id": c.source_video_id,
         "edited_video_path": c.edited_video_path
     } for c in clips]
-
-
-@router.post("/viral-clips/{id}/render")
-def render_viral_clip_endpoint(id: int, db: Session = Depends(get_db)):
-    clip = db.query(ViralClip).filter(ViralClip.id == id).first()
-    if not clip:
-        raise HTTPException(status_code=404)
-        
-    from tasks.viral import process_viral_clip_render
-    process_viral_clip_render.delay(id)
-    
-    
-    return {"message": "Rendering started"}
 
 
 from fastapi.responses import FileResponse
@@ -243,5 +255,3 @@ def get_music_file(filename: str):
         raise HTTPException(status_code=404, detail="File not found")
         
     return FileResponse(file_path)
-
-

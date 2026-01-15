@@ -138,6 +138,11 @@ services:
     image: socialgen-video-processor:latest
     container_name: SocialGen_video_processor
     restart: unless-stopped
+    ipc: host
+    shm_size: '8gb'
+    ulimits:
+      memlock: -1
+      stack: 67108864
     ports:
       - "8080:8080"
     volumes:
@@ -148,6 +153,7 @@ services:
       - ./assets/captions:/captions
       - ./assets/music:/music
       - ./assets:/assets
+      - whisper_cache:/root/.cache/whisper
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     deploy:
@@ -158,6 +164,25 @@ services:
               count: all
               capabilities: [ gpu ]
 
+  vpn:
+    image: qmcgaw/gluetun
+    container_name: SocialGen_vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - 8888:8888/tcp # HTTP Proxy
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=wireguard
+      # REQUIRED: Get your Private Key from NordVPN Dashboard (Manual Setup -> WireGuard)
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - SERVER_COUNTRIES=United States
+      - HTTPPROXY=on # Enables the Local HTTP Proxy on port 8888
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  whisper_cache:

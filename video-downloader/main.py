@@ -49,6 +49,19 @@ MUSIC_DIR = Path("/music")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# Trigger words for pulse/glitch effects (matched to TradWest style)
+TRAD_TRIGGER_WORDS = [
+    "god", "jesus", "christ", "church", "faith", "pray", "win", "fight",
+    "war", "strength", "power", "glory", "honor", "tradition", "men",
+    "women", "family", "nation", "west", "save", "revive", "build",
+    "create", "beauty", "truth", "justice", "freedom", "liberty",
+    "order", "chaos", "evil", "good", "money", "rich", "wealth",
+    "hustle", "grind", "success", "victory", "champion", "king",
+    "lord", "spirit", "holy", "bible", "cross", "love", "hate",
+    "fear", "death", "life", "soul", "mind", "heart", "body",
+    "blood", "sweat", "tears", "pain", "gain", "gym", "train",
+    "work", "hard", "focus", "discipline"
+]
 
 # ============ MODELS ============
 
@@ -108,13 +121,22 @@ class ExtractClipRequest(BaseModel):
     end_time: float
     output_filename: Optional[str] = None
 
+# Available TikTok-style fonts for viral clips
+VIRAL_FONTS = [
+    "Honk",           # Playful & Expressive
+    "Pirata One",     # Vintage Gothic
+    "Rubik Vinyl",    # Retro Groovy
+    "Rubik 80s Fade", # Neon Retro
+    "Rubik Dirt",     # Grungy Distressed
+]
+
 class RenderClipRequest(BaseModel):
     video_path: str
     start_time: float
     end_time: float
     transcript_segments: list[dict] = []
     style_preset: str = "trad_west"
-    font: str = "Arial"
+    font: str = "random"  # "random" picks from VIRAL_FONTS, or specify exact font name
     output_filename: Optional[str] = None
     outro_path: Optional[str] = None
     channel_handle: Optional[str] = None
@@ -141,6 +163,29 @@ def get_whisper_model():
         device = "cuda" if torch.cuda.is_available() else "cpu"
         whisper_model = whisper.load_model("medium", device=device)
     return whisper_model
+
+def safe_transcribe(audio_path: str, word_timestamps: bool = True):
+    """
+    Safely transcribe audio, resetting decoder KV cache to prevent
+    'Key and Value must have the same sequence length' errors.
+    """
+    import torch
+    model = get_whisper_model()
+
+    # Reset decoder KV cache to prevent stale state errors
+    # This fixes the "Key and Value must have the same sequence length" bug
+    if hasattr(model, 'decoder'):
+        for block in model.decoder.blocks:
+            if hasattr(block, 'attn') and hasattr(block.attn, 'kv_cache'):
+                block.attn.kv_cache = None
+            if hasattr(block, 'cross_attn') and hasattr(block.cross_attn, 'kv_cache'):
+                block.cross_attn.kv_cache = None
+
+    # Clear CUDA cache to prevent memory fragmentation
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return model.transcribe(audio_path, word_timestamps=word_timestamps)
 
 # ============ HELPER FUNCTIONS (LEGACY & NEW) ============
 
@@ -193,9 +238,115 @@ def create_cross_image():
     draw.text(((size[0] - w) / 2, (size[1] - h) / 2), "†", font=font, fill=(128, 0, 128))
     cross_path = OUTPUT_DIR / f"cross_{uuid.uuid4().hex[:8]}.png"
     img.save(cross_path)
-    return str(cross_path)
+    return cross_path
 
-def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Arial"):
+def apply_chromatic_aberration(video_path: str, output_path: str, trigger_windows: list, max_shift: int = 15):
+    """
+    Apply RGB chromatic aberration (glitch/VHS effect) during trigger word windows.
+    Uses MoviePy for per-frame numpy manipulation.
+
+    trigger_windows: list of (start_time, end_time) tuples
+    max_shift: max pixel shift for R/B channels at peak intensity
+    """
+    if not trigger_windows:
+        # No triggers, just copy the file
+        subprocess.run(["cp", video_path, output_path], check=True)
+        return
+
+    print(f"Applying chromatic aberration to {len(trigger_windows)} trigger windows...")
+
+    clip = VideoFileClip(video_path)
+
+    def rgb_shift_effect(get_frame, t):
+        """Per-frame RGB channel shift based on trigger windows."""
+        frame = get_frame(t)
+
+        # Calculate intensity based on trigger windows
+        # Use smooth sine pulse matching the zoom pulse timing
+        intensity = 0.0
+        for start, end in trigger_windows:
+            if start <= t <= end:
+                # Smooth sine wave: 0 → 1 → 0 over the window
+                duration = end - start
+                progress = (t - start) / duration
+                intensity = max(intensity, np.sin(np.pi * progress))
+
+        if intensity < 0.01:
+            return frame  # No effect needed
+
+        # Calculate pixel shift based on intensity
+        shift = int(max_shift * intensity)
+        if shift < 1:
+            return frame
+
+        # Split into RGB channels
+        r_channel = frame[:, :, 0]
+        g_channel = frame[:, :, 1]
+        b_channel = frame[:, :, 2]
+
+        # Shift R left (negative), B right (positive) for classic VHS glitch
+        # Use numpy roll with edge padding
+        r_shifted = np.roll(r_channel, -shift, axis=1)
+        b_shifted = np.roll(b_channel, shift, axis=1)
+
+        # Fix edge artifacts from roll (fill with edge values)
+        r_shifted[:, -shift:] = r_channel[:, -1:]
+        b_shifted[:, :shift] = b_channel[:, :1]
+
+        # Recombine
+        result = np.stack([r_shifted, g_channel, b_shifted], axis=2)
+        return result.astype(np.uint8)
+
+    # Apply the effect using transform (fl is deprecated in moviepy 2.x)
+    processed = clip.transform(rgb_shift_effect)
+
+    # Write output with GPU encoding if available
+    processed.write_videofile(
+        output_path,
+        codec='libx264',  # Use CPU codec for reliability
+        preset='ultrafast',
+        audio_codec='aac',
+        logger=None  # Suppress progress bar
+    )
+
+    clip.close()
+    processed.close()
+    print(f"Chromatic aberration applied successfully")
+
+def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None):
+    """
+    Generate ASS karaoke captions with enhanced trigger word effects.
+
+    Trigger words get:
+    - 3x size scale (300%)
+    - RGB glitch color (cyan/magenta alternating)
+    - Shake effect via shadow blur
+    """
+    # Build trigger word lookup (by time range)
+    trigger_windows = []
+    if trigger_words:
+        for trig in trigger_words:
+            t_start = trig.get('start', 0) - start_offset
+            t_end = trig.get('end', t_start + 0.5) - start_offset
+            word = trig.get('word', '').lower()
+            trigger_windows.append((t_start, t_end, word))
+
+    def is_trigger_word(w_start, w_end, w_text):
+        """Check if word matches any trigger window"""
+        w_start_rel = w_start - start_offset
+        w_end_rel = w_end - start_offset
+        w_lower = w_text.lower().strip('.,!?;:')
+
+        for t_start, t_end, t_word in trigger_windows:
+            # Check time overlap AND word match
+            if w_start_rel < t_end and w_end_rel > t_start:
+                if t_word in w_lower or w_lower in t_word:
+                    return True
+            # Also check if word text matches regardless of timing
+            if t_word and (t_word in w_lower or w_lower in t_word):
+                return True
+        return False
+
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -203,13 +354,15 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,{font},80,&H00FFFF00,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,10,10,100,1
+Style: Karaoke,{font},100,&H00FFFFFF,&H00FF00FF,&H00000000,&HAA000000,-1,0,0,0,100,100,2,0,1,4,2,2,20,20,120,1
+Style: TriggerWord,{font},100,&H00FFFF00,&H00FF00FF,&H000000FF,&HAA000000,-1,0,0,0,300,300,2,0,1,6,3,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     events = []
-    def fmt_time(t): 
+
+    def fmt_time(t):
         t = max(0, t - start_offset)
         h = int(t // 3600)
         m = int((t % 3600) // 60)
@@ -221,20 +374,45 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         s_start, s_end = seg['start'], seg['end']
         words = seg.get('words', [{'start': s_start, 'end': s_end, 'word': seg['text']}])
         if not words: continue
-        
+
         karaoke = ""
+        current_time = s_start
+
         for w in words:
             w_start, w_end, w_text = w['start'], w['end'], w['word'].strip()
-            # Duration in centiseconds
+
+            # Check for gap between current position and this word's start
+            gap = w_start - current_time
+            if gap > 0.05:
+                gap_cs = int(gap * 100)
+                karaoke += f"{{\\k{gap_cs}}}"
+
+            # Duration of this word in centiseconds
             dur_cs = int((w_end - w_start) * 100)
-            if dur_cs < 1: dur_cs = 1 
-            karaoke += f"{{\\k{dur_cs}}}{w_text} "
-        
-        line_entry = f"Dialogue: 0,{fmt_time(s_start)},{fmt_time(s_end)},Karaoke,,0,0,0,,{karaoke}"
+            if dur_cs < 1: dur_cs = 1
+
+            # Check if this is a trigger word
+            if is_trigger_word(w_start, w_end, w_text):
+                # TRIGGER WORD: 3x size + RGB color + shake
+                # \fscx300\fscy300 = 3x scale
+                # \c&H00FFFF& = Cyan color (BGR format)
+                # \bord6\shad3 = thick border + shadow for impact
+                # \t(0,{dur},\fscx100\fscy100) = animate back to normal size
+                trigger_fx = f"\\fscx300\\fscy300\\c&H00FFFF&\\bord6\\shad3\\t(0,{dur_cs*10},\\fscx100\\fscy100\\c&HFFFFFF&)"
+                karaoke += f"{{\\k{dur_cs}{trigger_fx}}}{w_text.upper()} {{\\r}}"
+            else:
+                # Normal word
+                karaoke += f"{{\\k{dur_cs}}}{w_text} "
+
+            current_time = w_end
+
+        line_entry = f"Dialogue: 0,{fmt_time(s_start)},{fmt_time(s_end)},Karaoke,,0,0,0,,{{\\blur2}}{karaoke}"
         events.append(line_entry)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(header + "\n".join(events))
+
+    print(f"Generated karaoke ASS with {len(trigger_windows)} trigger word enhancements")
 
 
 # ============ ENDPOINTS ============
@@ -245,41 +423,56 @@ async def health_check():
 
 @app.post("/download", response_model=DownloadResponse)
 async def download_video(request: DownloadRequest):
-    # LEGACY WRAPPER (Reuse code structure from old main.py via explicit copy to avoid import deps)
-    # For brevity, implementing the core yt-dlp call directly here as usage is simple
     base_filename = request.filename or str(uuid.uuid4())[:8]
     output_path = DOWNLOAD_DIR / f"{base_filename}.{request.format}"
-    
     if output_path.exists(): output_path.unlink()
-    
-    platform_opts = []
-    if "tiktok" in request.url: platform_opts = ["--impersonate", "chrome"]
-    if "rumble" in request.url: platform_opts = ["--impersonate", "safari"]
-    if "instagram" in request.url: platform_opts = ["--impersonate", "chrome"]
 
-    cmd = [
-        "yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "-o", str(output_path), "--no-playlist", "--merge-output-format", "mp4",
-        "--no-warnings", "--print-json", *platform_opts, request.url
+    strategies = [
+        [],  # Default (Direct)
+        ["--proxy", "http://vpn:8888"], # VPN Direct
+        ["--proxy", "http://vpn:8888", "--impersonate", "safari"], # VPN + Safari
+        ["--proxy", "http://vpn:8888", "--impersonate", "chrome"], # VPN + Chrome
+        ["--impersonate", "safari"], # Direct + Safari (Fallback)
     ]
-    
-    try:
-        # 90m timeout
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5400)
-        if result.returncode == 0 and output_path.exists():
-            return DownloadResponse(success=True, filename=output_path.name, path=str(output_path), size=output_path.stat().st_size)
-    except Exception as e:
-        print(f"Download Error: {e}")
-        
-    raise HTTPException(status_code=500, detail="Download failed")
+
+    last_error = None
+
+    for strategy in strategies:
+        try:
+            print(f"Download strategy: {strategy} for {request.url}")
+            cmd = [
+                "yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "-o", str(output_path), "--no-playlist", "--merge-output-format", "mp4",
+                "--no-warnings", "--print-json", "--no-progress",
+                *strategy, 
+                request.url
+            ]
+            
+            # 90m timeout
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5400)
+            
+            if result.returncode == 0:
+                # File existence check
+                if output_path.exists():
+                    return DownloadResponse(success=True, filename=output_path.name, path=str(output_path), size=output_path.stat().st_size)
+                else: 
+                     last_error = "yt-dlp success but file missing"
+            else:
+                 last_error = f"Return {result.returncode}: {result.stderr}"
+                 
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    print(f"All download strategies failed: {last_error}")     
+    raise HTTPException(status_code=500, detail=f"Download failed: {last_error}")
 
 @app.post("/transcribe-whisper")
 async def transcribe_whisper(request: TranscribeRequest):
     try:
-        model = get_whisper_model()
         if not os.path.exists(request.audio_path):
              raise HTTPException(status_code=404, detail=f"File not found")
-        result = model.transcribe(request.audio_path, word_timestamps=True)
+        result = safe_transcribe(request.audio_path, word_timestamps=True)
         if request.output_format == "json": return result
         return {"text": result["text"], "segments": result["segments"]}
     except Exception as e:
@@ -287,21 +480,60 @@ async def transcribe_whisper(request: TranscribeRequest):
 
 @app.post("/fetch-channel")
 async def fetch_channel_videos(request: FetchChannelRequest):
-    # Basic wrap
-    cmd = ["yt-dlp", "--dump-json", "--playlist-end", str(request.limit), "--no-warnings", request.url]
-    if request.platform == "rumble": cmd.extend(["--impersonate", "safari"])
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        videos = []
-        for line in result.stdout.strip().split('\n'):
-            if line:
-                try:
-                    data = json.loads(line)
-                    videos.append({"id": data.get("id"), "title": data.get("title"), "url": data.get("webpage_url")})
-                except: pass
-        return {"success": True, "videos": videos}
-    except Exception as e:
-         raise HTTPException(status_code=500, detail=str(e))
+    strategies = [
+        [],  # Default (Direct)
+        ["--proxy", "http://vpn:8888"], # VPN Direct
+        ["--proxy", "http://vpn:8888", "--impersonate", "safari"], # VPN + Safari
+        ["--proxy", "http://vpn:8888", "--impersonate", "chrome"], # VPN + Chrome
+        ["--impersonate", "safari"], # Direct + Safari (Fallback)
+    ]
+
+    last_error = None
+    
+    for strategy in strategies:
+        try:
+            cmd = ["yt-dlp", "--dump-json", "--playlist-end", str(request.limit), "--no-warnings", request.url]
+            cmd.extend(strategy)
+            
+            print(f"Fetch strategy: {strategy} for {request.url}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                videos = []
+                for line in result.stdout.strip().split('\n'):
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            thumbnail = data.get("thumbnail")
+                            if not thumbnail:
+                                thumbs = data.get("thumbnails") or []
+                                if thumbs:
+                                    last_thumb = thumbs[-1]
+                                    if isinstance(last_thumb, dict):
+                                        thumbnail = last_thumb.get("url")
+                                    elif isinstance(last_thumb, str):
+                                        thumbnail = last_thumb
+                            videos.append({
+                                "id": data.get("id"),
+                                "title": data.get("title"),
+                                "url": data.get("webpage_url") or data.get("original_url"),
+                                "thumbnail": thumbnail,
+                                "duration": data.get("duration"),
+                                "upload_date": data.get("upload_date"),
+                                "view_count": data.get("view_count"),
+                            })
+                        except: pass
+                if videos:
+                     return {"success": True, "videos": videos}
+            else:
+                 last_error = f"Return {result.returncode}: {result.stderr}"
+                 
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    raise HTTPException(status_code=500, detail=f"All fetch strategies failed. Last error: {last_error}")
+    # End of strategies loop
 
 @app.post("/compose")
 async def compose_video(request: ComposeRequest):
@@ -328,25 +560,70 @@ def render_viral_clip(request: RenderClipRequest):
     ass_path = temp_dir / f"temp_{uid}.ass"
     cross_path = create_cross_image() 
 
-    cleanup_files = [temp_audio, temp_main, temp_outro, temp_grid, temp_concat_list, ass_path]
+    cleanup_files = [temp_audio, temp_main, temp_outro, temp_grid, temp_concat_list, ass_path, cross_path]
     encoder, gpu_opts = get_gpu_encoder()
 
     try:
         report_status(request.status_webhook_url, "Processing: Setup")
-        # 1. Setup: Duration (Removed audio extraction, using direct stream for sync)
+        # 1. Setup: Duration
         duration = request.end_time - request.start_time
-        # cmd_extract removed to ensure A/V sync from same input container
 
-        # 2. Prepare Resources
+        # 2. EXTRACT CLIP FIRST (needed for per-clip transcription)
+        temp_extracted = temp_dir / f"temp_extract_{uid}.mp4"
+        cleanup_files.append(temp_extracted)
+
+        report_status(request.status_webhook_url, "Processing: Extracting Clip")
+        cmd_extract = [
+            "ffmpeg", "-y", "-threads", "0",
+            "-ss", str(request.start_time),  # INPUT seeking = fast (seeks to keyframe)
+            "-i", request.video_path,
+            "-t", str(duration),
+            "-c:v", "h264_nvenc", "-preset", "p1",
+            "-c:a", "aac",
+            "-avoid_negative_ts", "make_zero",  # Fix PTS issues from input seeking
+            str(temp_extracted)
+        ]
+        print(f"DEBUG EXTRACT CMD: {' '.join(cmd_extract)}")
+        subprocess.run(cmd_extract, check=True)
+
+        # 3. PER-CLIP TRANSCRIPTION - Fresh Whisper for perfect sync
+        # This eliminates timestamp drift from long-video transcription
+        report_status(request.status_webhook_url, "Processing: Fresh Transcription")
+        print(f"Running fresh Whisper transcription on extracted clip...")
+        whisper_result = safe_transcribe(str(temp_extracted), word_timestamps=True)
+        fresh_segments = whisper_result.get("segments", [])
+        print(f"Fresh transcription: {len(fresh_segments)} segments")
+
+        # Build fresh trigger words from TRAD_TRIGGER_WORDS list
+        fresh_trigger_words = []
+        for seg in fresh_segments:
+            words = seg.get("words", [])
+            for word_obj in words:
+                w_text = word_obj.get("word", "").lower().strip(".,!?;:'\"")
+                if w_text in TRAD_TRIGGER_WORDS:
+                    fresh_trigger_words.append({
+                        "start": word_obj["start"],
+                        "end": word_obj["end"],
+                        "word": w_text
+                    })
+        print(f"Found {len(fresh_trigger_words)} trigger words in fresh transcript")
+
+        # 4. Prepare Resources
         # BGM
         bgm_path = None
         if MUSIC_DIR.exists():
             music_files = list(MUSIC_DIR.glob("*.mp3")) + list(MUSIC_DIR.glob("*.wav"))
             if music_files: bgm_path = random.choice(music_files)
 
-        # Karaoke ASS Generation
-        report_status(request.status_webhook_url, "Processing: Karaoke")
-        generate_karaoke_ass(request.transcript_segments, ass_path, request.start_time, request.font)
+        # Font Selection - "random" picks from VIRAL_FONTS list
+        selected_font = request.font
+        if request.font.lower() == "random":
+            selected_font = random.choice(VIRAL_FONTS)
+            print(f"DEBUG: Random font selected: {selected_font}")
+
+        # 5. Karaoke ASS Generation with FRESH timestamps (offset=0 since clip starts at 0)
+        report_status(request.status_webhook_url, f"Processing: Karaoke ({selected_font})")
+        generate_karaoke_ass(fresh_segments, ass_path, 0.0, selected_font, fresh_trigger_words)
 
         # 3. MEGA-FILTER CHAIN (V5: CUDA NATIVE)
         # Architecture: 
@@ -359,17 +636,38 @@ def render_viral_clip(request: RenderClipRequest):
         # 3. Trigger Kicks: Massive jump (0.15) during trigger words
         
         trigger_sum = ""
-        if request.trigger_words:
+        # Use FRESH trigger words from per-clip transcription (already clip-relative, starting at 0)
+        if fresh_trigger_words:
             # We limit to 20 triggers to avoid command line overflow
-            for trig in request.trigger_words[:20]:
+            for trig in fresh_trigger_words[:20]:
+                # Fresh timestamps are already relative to clip start (no adjustment needed)
                 t_start = trig.get('start', 0)
                 t_end = trig.get('end', t_start + 0.5)
-                # "between(t, start, end)" returns 1.0 or 0.0
-                trigger_sum += f"+0.10*between(t,{t_start},{t_end})"
+
+                # Calculate center of trigger word
+                t_center = (t_start + t_end) / 2
+
+                # Create a smooth 0.5s pulse centered on the word
+                # Pulse window: 0.25s before center to 0.25s after center
+                pulse_start = t_center - 0.25
+                pulse_end = t_center + 0.25
+
+                # Skip triggers that fall outside the clip range
+                if pulse_end < 0 or pulse_start > duration:
+                    continue
+
+                # Clamp to clip bounds
+                pulse_start = max(0, pulse_start)
+                pulse_end = min(duration, pulse_end)
+
+                # Smooth sine pulse: 0 → peak (0.25) → 0 over 0.5 seconds
+                # sin(π * (t - start) / duration) creates half-sine wave
+                # Multiply by 0.25 for 25% max zoom boost on trigger words
+                trigger_sum += f"+0.25*between(t,{pulse_start:.2f},{pulse_end:.2f})*sin(3.14159*(t-{pulse_start:.2f})/0.5)"
 
         # Pulse Expr (CPU Dynamic)
         zoom_base = "min(1+0.001*t,1.5)"
-        heartbeat = "0.012*sin(2*3.14159*t*1.5)"
+        heartbeat = "0.003*sin(2*3.14159*t*1.5)"
         
         # Combined Scale Factor
         scale_factor = f"({zoom_base}+{heartbeat}{trigger_sum})"
@@ -381,18 +679,38 @@ def render_viral_clip(request: RenderClipRequest):
         
         # Grade Expr (CPU)
         grade_filter = "eq=contrast=1.15:brightness=0.03:saturation=1.25"
-        
+
+        # Chromatic Aberration - DISABLED (rgbashift/colorbalance don't support time expressions)
+        # The smooth pulse zoom effect is the main visual impact.
+        # TODO: Implement via sendcmd filter with pre-computed intervals for RGB shift
+        chromatic_filter = None
+
         # Escape path for ASS filter
         escaped_ass = str(ass_path).replace(":", "\\:").replace("'", "\\'")
 
         # V7.0 ROBUST CPU SCALING (Legacy Bottleneck Accepted for Stability)
-        # [GPU Decode] -> hwdownload -> [CPU] -> scale(Fill) -> scale(Pulse) -> crop -> eq -> ass -> hwupload -> [GPU Encode]
+        # [GPU Decode] -> hwdownload -> [CPU] -> scale(Fill) -> scale(Pulse) -> crop -> chromatic -> eq -> ass -> hwupload -> [GPU Encode]
         # logic: scale_cuda filters failed expression parsing. Reverting to CPU scaling.
+        chromatic_stage = f"{chromatic_filter}," if chromatic_filter else ""
         filter_complex = (
             f"[0:v]hwdownload,format=nv12,format=yuv420p,"
             f"scale=-2:1920,"
             f"scale={zoom_expr}:eval=frame,"
-            f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2,"
+            f"crop=1080:1920:(iw-1080)/2+250:(ih-1920)/2,"
+            f"{chromatic_stage}"
+            f"{grade_filter},"
+            f"ass='{escaped_ass}',"
+            f"hwupload_cuda[v];"
+            f"[0:a]volume=1.0[a]"
+        )
+
+        # Apply effects to extracted clip (already extracted above for transcription)
+        # temp_extracted starts at t=0, fresh transcript also starts at t=0 = perfect sync
+        filter_complex_effects = (
+            f"[0:v]hwdownload,format=nv12,format=yuv420p,"
+            f"scale=-2:1920,"
+            f"scale={zoom_expr}:eval=frame,"
+            f"crop=1080:1920:(iw-1080)/2+250:(ih-1920)/2,"
             f"{grade_filter},"
             f"ass='{escaped_ass}',"
             f"hwupload_cuda[v];"
@@ -401,11 +719,11 @@ def render_viral_clip(request: RenderClipRequest):
 
         cmd_mega = [
             "ffmpeg", "-y", "-threads", "0",
-            "-hwaccel", "cuda", "-hwaccel_output_format", "cuda", # V5 Trigger
-            "-ss", str(request.start_time), "-t", str(duration), "-i", request.video_path, # Input 0
-            "-filter_complex", filter_complex,
+            "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+            "-i", str(temp_extracted),
+            "-filter_complex", filter_complex_effects,
             "-map", "[v]", "-map", "[a]",
-            "-c:v", encoder, *gpu_opts, 
+            "-c:v", encoder, *gpu_opts,
             "-c:a", "aac",
             str(temp_main)
         ]
@@ -413,6 +731,42 @@ def render_viral_clip(request: RenderClipRequest):
         print(f"DEBUG MEGA CMD: {' '.join(cmd_mega)}")
         report_status(request.status_webhook_url, "Processing: GPU FX")
         subprocess.run(cmd_mega, check=True)
+
+        # 3.5. Chromatic Aberration Pass (MoviePy) - RGB split effect
+        # ALWAYS add 2 intro pulses at the start, plus keyword trigger hits
+        report_status(request.status_webhook_url, "Processing: RGB Glitch")
+
+        trigger_windows = []
+
+        # INTRO PULSES: Two RGB glitch hits at the very start (0.0-0.3s and 0.5-0.8s)
+        # Creates that signature "glitchy intro" viral clip look
+        trigger_windows.append((0.0, 0.3))   # First intro pulse
+        trigger_windows.append((0.5, 0.8))   # Second intro pulse
+
+        # KEYWORD TRIGGERS: Add pulses for each trigger word (using fresh timestamps)
+        if fresh_trigger_words:
+            for trig in fresh_trigger_words[:20]:
+                # Fresh timestamps are already clip-relative (no adjustment needed)
+                t_start = trig.get('start', 0)
+                t_end = trig.get('end', t_start + 0.5)
+                t_center = (t_start + t_end) / 2
+                pulse_start = max(0, t_center - 0.25)
+                pulse_end = min(duration, t_center + 0.25)
+                if pulse_end > 0 and pulse_start < duration:
+                    # Avoid overlap with intro pulses
+                    if pulse_start >= 1.0:
+                        trigger_windows.append((pulse_start, pulse_end))
+
+        temp_chroma = temp_dir / f"temp_chroma_{uid}.mp4"
+        cleanup_files.append(temp_chroma)
+        try:
+            apply_chromatic_aberration(str(temp_main), str(temp_chroma), trigger_windows, max_shift=20)
+            # Replace temp_main with chromatic version
+            subprocess.run(["mv", str(temp_chroma), str(temp_main)], check=True)
+            print(f"Applied {len(trigger_windows)} RGB glitch pulses (2 intro + {len(trigger_windows)-2} keywords)")
+        except Exception as e:
+            print(f"WARNING: Chromatic aberration failed, continuing without: {e}")
+            # Continue with unmodified temp_main
 
         # 4. Outro Generation (V4 CPU-Threaded for safety)
         final_video_path = str(temp_main)
@@ -472,9 +826,9 @@ def render_viral_clip(request: RenderClipRequest):
         if bgm_path:
             report_status(request.status_webhook_url, "Processing: Audio Mix")
             # Vol Ramp Expr (Applied to MUSIC now)
-            # Ramp from 0.3 to 0.8 starting 5s from end
+            # Ramp from 0.45 to 0.95 starting 5s from end (+15% boost)
             ramp_start = max(0, duration - 5)
-            vol_expr = f"'if(gte(t,{ramp_start}),0.3+( (t-{ramp_start}) / 5 )*0.5,0.3)'"
+            vol_expr = f"'if(gte(t,{ramp_start}),0.45+( (t-{ramp_start}) / 5 )*0.5,0.45)'"
 
             final_mix = temp_dir / f"final_mix_{uid}.mp4"
             cmd_mix = [

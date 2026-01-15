@@ -67,6 +67,17 @@ const ViralManager = () => {
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
 
+    // Calculate transcription progress based on elapsed time and video duration
+    const getTranscriptionProgress = (video) => {
+        if (!video.processing_started_at || !video.duration) return null;
+        const started = new Date(video.processing_started_at);
+        const elapsed = (Date.now() - started.getTime()) / 1000; // seconds
+        // GPU Whisper is roughly 20-30x real-time, use 25x as estimate
+        const estimatedTotal = video.duration / 25;
+        const progress = Math.min(99, Math.round((elapsed / estimatedTotal) * 100));
+        return progress;
+    };
+
     const handleSelectInfluencer = async (inf) => {
         setSelectedInfluencer(inf);
         setActiveTab('videos');
@@ -124,9 +135,11 @@ const ViralManager = () => {
         // if (!window.confirm("...")) return; 
         try {
             const res = await analyzeVideo(videoId);
-            console.log(res.message); // Log instead of alert
-            // alert(res.message); // Removed success alert
-            // setActiveTab('clips'); // Don't switch prematurely. Let user watch status.
+            console.log(res.message);
+            // Refresh videos to trigger the polling loop (which checks for 'downloading' etc)
+            if (selectedInfluencer) {
+                loadVideos(selectedInfluencer.id);
+            }
             loadClips();
         } catch (e) {
             alert(e.message);
@@ -214,7 +227,12 @@ const ViralManager = () => {
                                                                     v.status?.toLowerCase().includes('analyzing')) && (
                                                                         <span className="spinner-small"></span>
                                                                     )}
-                                                                {v.status}
+                                                                <span className="status-text-large">
+                                                                    {v.status}
+                                                                    {v.status?.toLowerCase().includes('transcribing') && getTranscriptionProgress(v) !== null && (
+                                                                        <span className="progress-percent"> ({getTranscriptionProgress(v)}%)</span>
+                                                                    )}
+                                                                </span>
                                                             </div>
                                                         )}
                                                         {v.status === 'error' && <p className="error-text" title={v.error_message}>{v.error_message}</p>}
@@ -251,7 +269,11 @@ const ViralManager = () => {
                                                                             <span className="clip-title" title={c.title}>{c.title}</span>
                                                                         </div>
                                                                         <div className="mini-actions">
-                                                                            {(['rendering', 'processing'].some(s => c.status?.toLowerCase().includes(s))) && <span className="spinner-small"></span>}
+                                                                            <div className="status-display">
+                                                                                {(['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s))) && <span className="spinner-small"></span>}
+                                                                                <span className="status-text" title={c.status}>{c.status}</span>
+                                                                            </div>
+
                                                                             {isReady && (
                                                                                 <button
                                                                                     className="play-clip-btn"
@@ -263,9 +285,8 @@ const ViralManager = () => {
                                                                                     Play
                                                                                 </button>
                                                                             )}
-                                                                            {!isReady && !['rendering', 'processing'].some(s => c.status?.toLowerCase().includes(s)) && (
+                                                                            {!isReady && !['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s)) && (
                                                                                 <div className="pending-actions">
-                                                                                    {c.status !== 'pending' && <span className="status-text">{c.status}</span>}
                                                                                     {(c.status === 'pending' || c.status === 'error' || c.status === 'failed') && (
                                                                                         <button
                                                                                             className={`render-btn-mini ${['error', 'failed'].includes(c.status) ? 'retry-btn' : ''}`}
@@ -311,7 +332,12 @@ const ViralManager = () => {
                                                 <button onClick={() => handleRender(c.id)}>Render (CapCut Style)</button>
                                             )}
                                             {c.status === 'ready' && (
-                                                <button onClick={() => window.open(`/api/viral/file/${c.edited_video_path?.split('/').pop()}`, '_blank')}>Download</button>
+                                                <button onClick={() => {
+                                                    const filename = c.edited_video_path?.split('/').pop();
+                                                    if (!filename) return;
+                                                    const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
+                                                    window.open(downloadUrl, '_blank');
+                                                }}>Download</button>
                                             )}
                                         </div>
                                     </div>

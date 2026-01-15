@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y imagemagick fonts-dejavu fonts-liberati
     sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml && \
     rm -rf /var/lib/apt/lists/*
 
+# Install custom fonts for viral TikTok-style captions
+COPY fonts/ /usr/share/fonts/truetype/custom/
+RUN fc-cache -fv
+
 # Install NEW dependencies for Viral Clips (Whisper, MoviePy)
 # Existing image already contains: ffmpeg, yt-dlp, fastapi, curl_cffi
 RUN pip install --no-cache-dir \

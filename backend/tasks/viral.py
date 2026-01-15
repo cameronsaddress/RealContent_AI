@@ -4,6 +4,7 @@ Handles downloading, transcribing, and analyzing influencer videos.
 """
 import os
 import asyncio
+from datetime import datetime
 from typing import Dict, Any
 
 # Keywords for pulse effect
@@ -18,6 +19,16 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 VIDEO_PROCESSOR_URL = "http://video-processor:8080" # internal docker network
+
+def _map_video_path(video_path: str) -> str:
+    if video_path and video_path.startswith("/downloads/"):
+        return video_path.replace("/downloads/", "/app/assets/videos/")
+    return video_path
+
+def _video_file_exists(video_path: str) -> bool:
+    if not video_path:
+        return False
+    return os.path.exists(_map_video_path(video_path))
 
 def get_db():
     db = SessionLocal()
@@ -36,23 +47,17 @@ async def _download_video_async(video_id: int):
             return
 
         # --- SHORTCUT LOGIC ---
-        # If already transcribed (and we have the JSON), skip to analysis
-        if video.status == "transcribed" and video.transcript_json:
-            # Check if file actually exists (Repair Scenario)
-            import os
-            if os.path.exists(video.local_path):
-                logger.info(f"Video {video_id} transcribed AND file exists. Skipping to Analysis.")
+        if _video_file_exists(video.local_path):
+            if video.transcript_json:
+                logger.info(f"Video {video_id} transcript + file present. Skipping to Analysis.")
                 process_viral_video_analyze.delay(video_id)
                 return
-            else:
-                logger.info(f"Video {video_id} is transcribed but FILE MISSING. Proceeding to Download.")
-                # Fall through to download...
+            logger.info(f"Video {video_id} file present. Skipping to Transcription.")
+            process_viral_video_transcribe.delay(video_id)
+            return
 
-        # If already downloaded, skip download
-        if video.status == "downloaded" and video.local_path:
-             logger.info(f"Video {video_id} already downloaded. Skipping to Transcription.")
-             process_viral_video_transcribe.delay(video_id)
-             return
+        if video.local_path:
+            logger.info(f"Video {video_id} local_path set but file missing. Proceeding to Download.")
         # ----------------------
 
         video.status = "downloading"
@@ -117,6 +122,7 @@ async def _transcribe_video_async(video_id: int):
         # ----------------------
 
         video.status = "transcribing (whisper)"
+        video.processing_started_at = datetime.utcnow()  # For progress tracking
         db.commit()
 
         # Check if we need to extract audio first? 
@@ -125,7 +131,7 @@ async def _transcribe_video_async(video_id: int):
         # However, the dockerfile installs ffmpeg, and openai-whisper usually uses ffmpeg to load audio from video.
         # Let's pass the video path directly to transcribe-whisper.
         
-        async with httpx.AsyncClient(timeout=1200.0) as client: # Long timeout for whisper
+        async with httpx.AsyncClient(timeout=5400.0) as client: # 90min timeout for long videos
             response = await client.post(
                 f"{VIDEO_PROCESSOR_URL}/transcribe-whisper",
                 json={"audio_path": video.local_path, "output_format": "json"}
@@ -286,14 +292,40 @@ async def _render_clip_async(clip_id: int):
         # We assume video.transcript_json is set
         full_segments = video.transcript_json.get("segments", [])
         clip_segments = []
+        clip_start = clip.start_time
+        clip_end = clip.end_time
         for s in full_segments:
             # Include if overlaps with clip range
-            if s["start"] < clip.end_time and s["end"] > clip.start_time:
+            if s["start"] < clip_end and s["end"] > clip_start:
+                seg_start = max(s["start"], clip_start)
+                seg_end = min(s["end"], clip_end)
+                words = s.get("words", [])
+                if words:
+                    filtered_words = []
+                    for word_obj in words:
+                        w_start = word_obj.get("start")
+                        w_end = word_obj.get("end")
+                        if w_start is None or w_end is None:
+                            continue
+                        if w_start < clip_end and w_end > clip_start:
+                            w_start = max(w_start, clip_start)
+                            w_end = min(w_end, clip_end)
+                            if w_end <= w_start:
+                                continue
+                            trimmed_word = dict(word_obj)
+                            trimmed_word["start"] = w_start
+                            trimmed_word["end"] = w_end
+                            filtered_words.append(trimmed_word)
+                    if not filtered_words:
+                        continue
+                    seg_start = filtered_words[0]["start"]
+                    seg_end = filtered_words[-1]["end"]
+                    words = filtered_words
                 clip_segments.append({
-                    "start": s["start"], 
-                    "end": s["end"], 
+                    "start": seg_start,
+                    "end": seg_end,
                     "text": s["text"],
-                    "words": s.get("words", [])
+                    "words": words,
                 })
 
         # Extract trigger words for pulse effect from clip_segments
@@ -321,14 +353,25 @@ async def _render_clip_async(clip_id: int):
                         # If no word timestamps or not found in words (fuzzy match), use segment range
                         if not found_precise:
                              trigger_words.append({"start": s["start"], "end": s["end"], "word": w})
-        
-        async with httpx.AsyncClient(timeout=600.0) as client:
+
+        # Get font settings from LLM settings
+        font_random_setting = db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_FONT_RANDOM").first()
+        font_setting = db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CAPTION_FONT").first()
+
+        # Default to random if not set or if explicitly set to random
+        if not font_random_setting or font_random_setting.value != 'false':
+            selected_font = "random"
+        else:
+            selected_font = font_setting.value if font_setting else "Honk"
+
+        async with httpx.AsyncClient(timeout=3600.0) as client:  # 60min for extraction + per-clip transcription
             payload = {
                 "video_path": video.local_path,
                 "start_time": clip.start_time,
                 "end_time": clip.end_time,
                 "transcript_segments": clip_segments,
                 "style_preset": "trad_west", # Could come from ClipPersona
+                "font": selected_font,
                 "output_filename": f"clip_{clip.id}_{video.id}.mp4",
                 "outro_path": "/assets/outro.mp4",
                 "trigger_words": trigger_words,

@@ -348,9 +348,6 @@ class LLMSettings(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
 class InfluencerPlatformType(str, enum.Enum):
     youtube = "youtube"
     rumble = "rumble"
@@ -424,9 +421,10 @@ class InfluencerVideo(Base):
     local_path = Column(Text)  # Path to downloaded .mp4
     transcript_json = Column(JSONB)  # Whisper word-level output
     analysis_json = Column(JSONB)  # Grok analysis results
-    
+
     status = Column(String, default="pending")  # pending, downloaded, transcribed, analyzed, error
     error_message = Column(Text)
+    processing_started_at = Column(DateTime(timezone=True))  # For progress tracking
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
