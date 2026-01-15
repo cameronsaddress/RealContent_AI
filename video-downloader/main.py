@@ -49,19 +49,29 @@ MUSIC_DIR = Path("/music")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Trigger words for pulse/glitch effects (matched to TradWest style)
-TRAD_TRIGGER_WORDS = [
-    "god", "jesus", "christ", "church", "faith", "pray", "win", "fight",
-    "war", "strength", "power", "glory", "honor", "tradition", "men",
-    "women", "family", "nation", "west", "save", "revive", "build",
-    "create", "beauty", "truth", "justice", "freedom", "liberty",
-    "order", "chaos", "evil", "good", "money", "rich", "wealth",
-    "hustle", "grind", "success", "victory", "champion", "king",
-    "lord", "spirit", "holy", "bible", "cross", "love", "hate",
-    "fear", "death", "life", "soul", "mind", "heart", "body",
-    "blood", "sweat", "tears", "pain", "gain", "gym", "train",
-    "work", "hard", "focus", "discipline"
+# Trigger words for pulse/glitch effects - HARSH words only
+# Curse words, negative connotation, destruction, violence
+HARSH_TRIGGER_WORDS = [
+    # Curse words
+    "fuck", "fucking", "fucked", "shit", "bitch", "bitches", "ass", "damn", "damned",
+    "hell", "crap", "bastard", "bullshit", "piss", "dick", "asshole",
+    # Violence/destruction
+    "kill", "killed", "killing", "murder", "destroy", "destroyed", "destruction",
+    "death", "dead", "die", "dying", "war", "attack", "fight", "fighting",
+    "blood", "violent", "violence", "slaughter", "massacre", "annihilate",
+    # Negative/intense
+    "hate", "hated", "hatred", "evil", "wicked", "corrupt", "corruption",
+    "chaos", "insane", "crazy", "brutal", "savage", "vicious", "ruthless",
+    "toxic", "pathetic", "disgusting", "disgrace", "disaster", "catastrophe",
+    # Power/dominance (aggressive context)
+    "dominate", "crush", "crushed", "obliterate", "demolish", "wreck", "wrecked",
+    "smash", "smashed", "burn", "burning", "explode", "explosion",
+    # Confrontational
+    "enemy", "enemies", "loser", "losers", "idiot", "idiots", "stupid",
+    "moron", "fool", "fools", "liar", "liars", "traitor", "coward"
 ]
+# Alias for backwards compatibility
+TRAD_TRIGGER_WORDS = HARSH_TRIGGER_WORDS
 
 # ============ MODELS ============
 
@@ -186,6 +196,72 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
         torch.cuda.empty_cache()
 
     return model.transcribe(audio_path, word_timestamps=word_timestamps)
+
+def detect_beats(audio_path: str, max_duration: float = None) -> list:
+    """
+    Detect beat times in audio file using onset detection.
+    Returns list of beat timestamps in seconds.
+    """
+    import subprocess
+    import tempfile
+
+    # Extract audio to WAV for analysis
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+        tmp_wav = tmp.name
+
+    try:
+        # Extract audio, limit to clip duration if specified
+        duration_args = ["-t", str(max_duration)] if max_duration else []
+        subprocess.run([
+            "ffmpeg", "-y", "-i", audio_path,
+            *duration_args,
+            "-ac", "1", "-ar", "22050",  # Mono, 22kHz for faster processing
+            tmp_wav
+        ], capture_output=True, check=True)
+
+        # Load audio with scipy
+        from scipy.io import wavfile
+        sample_rate, audio_data = wavfile.read(tmp_wav)
+
+        # Convert to float
+        if audio_data.dtype == np.int16:
+            audio_data = audio_data.astype(np.float32) / 32768.0
+        elif audio_data.dtype == np.int32:
+            audio_data = audio_data.astype(np.float32) / 2147483648.0
+
+        # Onset detection using energy envelope
+        # Compute short-time energy with hop size ~23ms (512 samples at 22kHz)
+        hop_size = 512
+        frame_size = 1024
+
+        # Compute RMS energy per frame
+        num_frames = (len(audio_data) - frame_size) // hop_size + 1
+        energy = np.zeros(num_frames)
+        for i in range(num_frames):
+            start = i * hop_size
+            frame = audio_data[start:start + frame_size]
+            energy[i] = np.sqrt(np.mean(frame ** 2))
+
+        # Normalize energy
+        if energy.max() > 0:
+            energy = energy / energy.max()
+
+        # Detect onsets: local maxima above threshold with minimum distance
+        # Use scipy's find_peaks for robust peak detection
+        min_beat_gap = int(0.3 * sample_rate / hop_size)  # Minimum 0.3s between beats
+        peaks, _ = find_peaks(energy, height=0.15, distance=min_beat_gap, prominence=0.05)
+
+        # Convert frame indices to timestamps
+        beat_times = peaks * hop_size / sample_rate
+
+        return beat_times.tolist()
+
+    finally:
+        # Cleanup temp file
+        try:
+            os.unlink(tmp_wav)
+        except:
+            pass
 
 # ============ HELPER FUNCTIONS (LEGACY & NEW) ============
 
@@ -634,9 +710,9 @@ def render_viral_clip(request: RenderClipRequest):
         
         # Pulse Logic
         # 1. Base Zoom: Slow growth over time (min(1+0.001*t, 1.5))
-        # 2. Base Pulse: 1.5Hz heartbeat (0.015*sin(...))
-        # 3. Trigger Kicks: Massive jump (0.15) during trigger words
-        
+        # 2. Beat Pulse: Sync to BGM beats (detected via scipy)
+        # 3. Trigger Kicks: SNAP ZOOM (quick punch-in) on harsh words
+
         trigger_sum = ""
         # Use FRESH trigger words from per-clip transcription (already clip-relative, starting at 0)
         if fresh_trigger_words:
@@ -646,30 +722,48 @@ def render_viral_clip(request: RenderClipRequest):
                 t_start = trig.get('start', 0)
                 t_end = trig.get('end', t_start + 0.5)
 
-                # Calculate center of trigger word
-                t_center = (t_start + t_end) / 2
-
-                # Create a smooth 0.5s pulse centered on the word
-                # Pulse window: 0.25s before center to 0.25s after center
-                pulse_start = t_center - 0.25
-                pulse_end = t_center + 0.25
+                # SNAP ZOOM: Quick punch-in centered on the word
+                # Fast attack (0.08s), short hold, quick release (0.15s)
+                snap_time = (t_start + t_end) / 2
+                snap_start = snap_time - 0.04  # Start just before word
+                snap_peak = snap_time + 0.04   # Peak right after word starts
+                snap_end = snap_time + 0.20    # Release over 0.15s
 
                 # Skip triggers that fall outside the clip range
-                if pulse_end < 0 or pulse_start > duration:
+                if snap_end < 0 or snap_start > duration:
                     continue
 
                 # Clamp to clip bounds
-                pulse_start = max(0, pulse_start)
-                pulse_end = min(duration, pulse_end)
+                snap_start = max(0, snap_start)
+                snap_end = min(duration, snap_end)
 
-                # Smooth sine pulse: 0 → peak (0.45) → 0 over 0.5 seconds
-                # sin(π * (t - start) / duration) creates half-sine wave
-                # Multiply by 0.45 for BIG 45% max zoom boost on trigger words
-                trigger_sum += f"+0.45*between(t,{pulse_start:.2f},{pulse_end:.2f})*sin(3.14159*(t-{pulse_start:.2f})/0.5)"
+                # SNAP ZOOM expression: quick attack, slower decay
+                # Attack phase: 0 → 0.5 in 0.08s (steep ramp)
+                # Decay phase: 0.5 → 0 in 0.15s (exponential-ish decay)
+                # Using piecewise: attack uses steep ramp, decay uses inverted quadratic
+                attack_dur = 0.08
+                decay_dur = 0.15
+                # 50% zoom punch on harsh words
+                trigger_sum += f"+0.50*between(t,{snap_start:.3f},{snap_peak:.3f})*((t-{snap_start:.3f})/{attack_dur})"
+                trigger_sum += f"+0.50*between(t,{snap_peak:.3f},{snap_end:.3f})*(1-((t-{snap_peak:.3f})/{decay_dur}))"
+
+        # Beat-synced pulse from background music
+        beat_pulse = ""
+        if bgm_path:
+            try:
+                beat_times = detect_beats(str(bgm_path), duration)
+                print(f"Detected {len(beat_times)} beats in BGM for pulse sync")
+                # Add subtle pulse on each beat (10% zoom, quick decay)
+                for bt in beat_times[:100]:  # Limit to avoid FFmpeg expr overflow
+                    beat_pulse += f"+0.10*between(t,{bt:.3f},{bt+0.15:.3f})*(1-((t-{bt:.3f})/0.15))"
+            except Exception as e:
+                print(f"Beat detection failed, using fallback heartbeat: {e}")
+                beat_pulse = "0.008*sin(2*3.14159*t*2.0)"  # 2Hz fallback
 
         # Pulse Expr (CPU Dynamic)
         zoom_base = "min(1+0.001*t,1.5)"
-        heartbeat = "0.003*sin(2*3.14159*t*1.5)"
+        # Use beat pulse if available, otherwise subtle heartbeat
+        heartbeat = beat_pulse if beat_pulse else "0.005*sin(2*3.14159*t*2.0)"
         
         # Combined Scale Factor
         scale_factor = f"({zoom_base}+{heartbeat}{trigger_sum})"
