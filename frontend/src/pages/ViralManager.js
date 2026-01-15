@@ -137,13 +137,12 @@ const ViralManager = () => {
         setRenderingClips(prev => ({ ...prev, [clipId]: true }));
         try {
             await api.post(`/api/viral/viral-clips/${clipId}/render`);
-            // Optimistic update or just wait for poll
-            // Force refresh of video list to see status change
             if (selectedInfluencer) {
                 loadVideos(selectedInfluencer.id, true);
             }
         } catch (e) {
             alert("Render error: " + e.message);
+        } finally {
             setRenderingClips(prev => ({ ...prev, [clipId]: false }));
         }
     };
@@ -243,7 +242,7 @@ const ViralManager = () => {
                                                     {v.clips && v.clips.length > 0 && (
                                                         <div className="clips-mini-list">
                                                             <h5>Generated Clips ({v.clips.length})</h5>
-                                                            {v.clips.map(c => {
+                                                            {v.clips.sort((a, b) => a.id - b.id).map(c => {
                                                                 const isReady = ['completed', 'ready'].includes(c.status?.toLowerCase());
                                                                 return (
                                                                     <div key={c.id} className="clip-mini-item">
@@ -261,12 +260,12 @@ const ViralManager = () => {
                                                                                         setViewingClip(c);
                                                                                     }}
                                                                                 >
-                                                                                    ▶️ Play
+                                                                                    Play
                                                                                 </button>
                                                                             )}
                                                                             {!isReady && !['rendering', 'processing'].some(s => c.status?.toLowerCase().includes(s)) && (
                                                                                 <div className="pending-actions">
-                                                                                    <span className="status-text">{c.status}</span>
+                                                                                    {c.status !== 'pending' && <span className="status-text">{c.status}</span>}
                                                                                     {(c.status === 'pending' || c.status === 'error' || c.status === 'failed') && (
                                                                                         <button
                                                                                             className={`render-btn-mini ${['error', 'failed'].includes(c.status) ? 'retry-btn' : ''}`}

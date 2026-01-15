@@ -101,17 +101,12 @@ class FetchChannelRequest(BaseModel):
 
 class RenderClipRequest(BaseModel):
     video_path: str
+    clip_id: str
     start_time: float
     end_time: float
-    transcript_segments: list[dict] = []
-    style_preset: str = "trad_west"
+    style: str = "split_screen" 
+    caption_style: str = "karaoke"
     font: str = "Arial"
-    output_filename: Optional[str] = None
-    outro_path: Optional[str] = None
-    channel_handle: Optional[str] = None
-    trigger_words: Optional[List[dict]] = None
-    mood: Optional[str] = None
-
 
 # ============ LAZY LOADERS ============
 whisper_model = None
@@ -132,6 +127,13 @@ def get_gpu_encoder() -> tuple[str, list]:
     Encode: NVENC on DGX when available.
     MoviePy will call ffmpeg; we pass these as ffmpeg_params in write_videofile.
     """
+    # FIRST: Check if GPU is actually alive (prevent NVML errors)
+    try:
+        subprocess.run(["nvidia-smi"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        print("⚠️ GPU not detected by nvidia-smi. Falling back to CPU.")
+        return "libx264", ["-preset", "fast", "-crf", "20", "-b:v", "8M"]
+
     try:
         result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, timeout=10)
         if "h264_nvenc" in result.stdout:
@@ -667,14 +669,57 @@ async def download_video(request: DownloadRequest):
 @app.post("/transcribe-whisper")
 async def transcribe_whisper(request: TranscribeRequest):
     try:
+        # 1. Explicitly extract audio to 16kHz WAV first (Much faster/safer than Whisper's internal ffmpeg)
+        # This isolates the heavy I/O and ffmpeg work from the GPU inference
+        import uuid
+        temp_audio_filename = f"temp_whisper_{uuid.uuid4().hex[:8]}.wav"
+        temp_audio_path = OUTPUT_DIR / temp_audio_filename
+        
+        # Optimized FFmpeg command for audio extraction
+        # -vn: Drop video (no decode needed!) -> Fastest way
+        # -ar 16000: NATIVE resolution for Whisper AI (Lossless for this model, prevents aliasing)
+        # -ac 1: NATIVE channel count for Whisper AI
+        # -threads 32: Utilize DGX CPU power for rapid processing
+        extract_cmd = [
+            "ffmpeg", "-y",
+            "-threads", "32", 
+            "-i", request.audio_path,
+            "-vn", 
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            str(temp_audio_path)
+        ]
+        
+        print(f"Extracting 16k audio for Whisper: {' '.join(extract_cmd)}")
+        # Run extraction in thread to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: subprocess.run(extract_cmd, check=True))
+        
+        if not temp_audio_path.exists():
+             raise Exception("Audio extraction failed")
+
         model = get_whisper_model()
-        if not os.path.exists(request.audio_path):
-            raise HTTPException(status_code=404, detail=f"File not found")
-        result = model.transcribe(request.audio_path, word_timestamps=True)
+        
+        # 2. Run Inference in ThreadPool to prevent blocking FastAPI heartbeat/other requests
+        # This prevents the "ReadTimeout" or "Server disconnected" errors on large files
+        def _run_inference():
+            return model.transcribe(str(temp_audio_path), word_timestamps=True)
+            
+        print(f"Starting GPU Inference on: {temp_audio_path}")
+        result = await loop.run_in_executor(None, _run_inference)
+        
+        # Cleanup
+        try:
+            os.unlink(temp_audio_path)
+        except:
+            pass
+
         if request.output_format == "json":
             return result
         return {"text": result["text"], "segments": result["segments"]}
     except Exception as e:
+        print(f"Transcription Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/fetch-channel")
@@ -709,175 +754,6 @@ async def render_viral_clip(request: RenderClipRequest):
       - Pulse zoom (Resize with callable)
       - Keyword hits:
           * quick pulse (already in zoom scale)
-          * fuzzy VHS effect for 0.5s (NEW)
-      - TikTok-style captions (TextClip overlays)
-      - NVENC encode on DGX (ffmpeg_params)
-    """
-    temp_dir = Path("/dev/shm") if Path("/dev/shm").exists() else OUTPUT_DIR
-    output_filename = request.output_filename or f"viral_{uuid.uuid4().hex[:8]}.mp4"
-    output_path = OUTPUT_DIR / output_filename
-
-    uid = uuid.uuid4().hex[:8]
-    cross_path = None
-
-    encoder, gpu_opts = get_gpu_encoder()
-
-    try:
-        # ---- Inputs
-        duration = float(request.end_time - request.start_time)
-        if duration <= 0.05:
-            raise HTTPException(status_code=400, detail="Invalid clip duration")
-
-        if duration <= 0.05:
-            raise HTTPException(status_code=400, detail="Invalid clip duration")
-
-        # FIX: Pre-cut clip using FFmpeg to ensure A/V Sync.
-        # HWAccel in MoviePy directly often causes seek inaccuracies (keyframe snapping).
-        precut_filename = f"precut_{uid}.mp4"
-        precut_path = temp_dir / precut_filename
-        
-        # Fast precise cut (re-encoding to ensure keyframes at start)
-        # Using -ss before -i for fast seek, but re-encoding to force precise start
-        cut_cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(request.start_time),
-            "-i", request.video_path,
-            "-t", str(duration),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18", # Fast high quality intermediate
-            "-c:a", "aac",
-            str(precut_path)
-        ]
-        
-        print(f"Pre-cutting video for sync: {' '.join(cut_cmd)}")
-        subprocess.run(cut_cmd, check=True)
-
-        if not precut_path.exists():
-             raise Exception("Pre-cut failed: output file not found")
-             
-        # Now load the PERFECTLY trimmed clip (no hwaccel needed for short clip, keeps it simple)
-        base = VideoFileClip(str(precut_path))
-        # No subclipped() needed; it is already cut.
-
-
-        # Force vertical 9:16 output (TikTok)
-        # If input is already vertical, keep; otherwise crop/resize to 1080x1920
-        target_w, target_h = 1080, 1920
-        iw, ih = base.w, base.h
-        # Resize to fill then center-crop
-        scale = max(target_w / iw, target_h / ih)
-        resized = base.with_effects([Resize(scale)])
-        x1 = int((resized.w - target_w) / 2)
-        y1 = int((resized.h - target_h) / 2)
-        framed = resized.cropped(x1=x1, y1=y1, x2=x1 + target_w, y2=y1 + target_h)
-
-        # ---- Trigger windows
-        # Since 'base' is now a pre-cut clip starting at 0.0, we just need triggers relative to clip start.
-        # Our triggers in request are absolute source times.
-        raw_intervals = build_trigger_intervals(request.trigger_words)
-        trigger_intervals = []
-        for a, b in raw_intervals:
-            # Shift absolute times to clip relative
-            aa = max(0.0, a - request.start_time)
-            bb = max(0.0, b - request.start_time)
-            if bb > 0 and aa < duration:
-                trigger_intervals.append((aa, min(duration, bb)))
-
-        # ---- TikTok looks (grade/vignette)
-        styled = apply_tiktok_looks(framed, request.style_preset)
-
-        # ---- Pulse zoom (includes quick pulse hits)
-        scale_fn = tiktok_pulse_scale_fn(base_sin_hz=1.5, trigger_intervals=trigger_intervals)
-        pulsed = styled.with_effects([Resize(lambda t: scale_fn(t))]).cropped(
-            x_center=target_w / 2,
-            y_center=target_h / 2,
-            width=target_w,
-            height=target_h
-        )
-
-        # ---- NEW: VHS fuzz effect for 0.5s on triggers (in addition to pulse)
-        vhsd = apply_vhs_fuzz_effect(pulsed, trigger_intervals)
-
-        # ---- Captions (TikTok style)
-        # make_tiktok_captions expects absolute segment times and subtracts delay.
-        # Since our video is pre-cut (starts at 0 relative), but segments are absolute,
-        # we still pass 'request.start_time' so the function can subtract it to align with 0.0 start.
-        caption_layers = make_tiktok_captions(
-            transcript_segments=request.transcript_segments,
-            clip_start_offset=request.start_time,
-            clip_duration=duration,
-            font=request.font,
-            preset=request.style_preset
-        )
-
-        # ---- Optional outro grid/cross is still handled by FFmpeg in your old flow.
-        # Here we keep it simple: add cross + handle for last 2s (MoviePy overlay).
-        handle = request.channel_handle or "TRAD_WEST"
-        cross_path = create_cross_image()
-        cross = (
-            ImageClip(cross_path)
-            .with_duration(min(2.0, duration))
-            .with_position(("center", "center"))
-            .with_start(max(0.0, duration - 2.0))
-        )
-
-        try:
-            handle_txt = (
-                TextClip(
-                    text=f"@{handle}",
-                    font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                    font_size=70,
-                    color="white",
-                    stroke_color="black",
-                    stroke_width=6,
-                    method="caption",
-                    size=(980, None),
-                )
-                .with_start(max(0.0, duration - 2.0))
-                .with_end(duration)
-                .with_position(("center", 0.62), relative=True)
-            )
-        except Exception:
-            handle_txt = (
-                TextClip(
-                    text=f"@{handle}",
-                    font="Arial",
-                    font_size=70,
-                    color="white",
-                    stroke_color="black",
-                    stroke_width=6,
-                )
-                .with_start(max(0.0, duration - 2.0))
-                .with_end(duration)
-                .with_position(("center", 0.62), relative=True)
-            )
-
-        # ---- BGM (optional)
-        audio = vhsd.audio
-        if audio is None:
-            audio = AudioFileClip(request.video_path).subclipped(request.start_time, request.end_time)
-
-        bgm_path = None
-        beat_times = []
-        
-        # Smart selection based on transcript or explicit mood
-        transcript_text = " ".join([s.get("text", "") for s in request.transcript_segments])
-        bgm_path = select_background_music(transcript_text, request.mood)
-        
-        # Fallback if no smart match or undefined
-        if not bgm_path:
-             music_files = list(MUSIC_DIR.glob("*.mp3")) + list(MUSIC_DIR.glob("*.wav"))
-             if music_files:
-                 bgm_path = str(random.choice(music_files))
-
-        if bgm_path:
-            print(f"Using Background Music: {bgm_path}")
-            # Detect beats for pulse sync
-            beat_times = detect_beats(bgm_path)
-            print(f"Detected {len(beat_times)} beats for pulse sync.")
-            
-            bgm = AudioFileClip(bgm_path)
-            # loop bgm to match duration
-            if bgm.duration < duration:
                 # simple loop by concatenation - USE AUDIO CONCAT
                 loops = int(np.ceil(duration / max(1e-6, bgm.duration)))
                 bgm = concatenate_audioclips([bgm] * loops)

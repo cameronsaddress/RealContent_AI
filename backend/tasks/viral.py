@@ -332,7 +332,8 @@ async def _render_clip_async(clip_id: int):
                 "output_filename": f"clip_{clip.id}_{video.id}.mp4",
                 "outro_path": "/assets/outro.mp4",
                 "trigger_words": trigger_words,
-                "channel_handle": db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CHANNEL_HANDLE").first().value if db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CHANNEL_HANDLE").first() else "TheRealClipFactory"
+                "channel_handle": db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CHANNEL_HANDLE").first().value if db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CHANNEL_HANDLE").first() else "TheRealClipFactory",
+                "status_webhook_url": f"http://backend:8000/api/viral/viral-clips/{clip.id}/status"
             }
             
             response = await client.post(

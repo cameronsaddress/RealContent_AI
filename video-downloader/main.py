@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, List
 from enum import Enum
 import random
+import urllib.request
 
 # Monkey patch for Pillow 10+ (removes ANTIALIAS) used by moviepy 1.0.3
 import PIL.Image
@@ -118,6 +119,15 @@ class RenderClipRequest(BaseModel):
     outro_path: Optional[str] = None
     channel_handle: Optional[str] = None
     trigger_words: Optional[List[dict]] = None
+    status_webhook_url: Optional[str] = None
+
+def report_status(webhook_url: str, status: str):
+    if not webhook_url: return
+    try:
+        data = json.dumps({"status": status}).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=data, headers={'Content-Type': 'application/json'}, method='PUT')
+        with urllib.request.urlopen(req, timeout=2) as f: pass
+    except: pass
 
 
 # ============ LAZY LOADERS ============
@@ -300,10 +310,11 @@ async def compose_video(request: ComposeRequest):
 
 
 @app.post("/render-viral-clip")
-async def render_viral_clip(request: RenderClipRequest):
+def render_viral_clip(request: RenderClipRequest):
     # V5 OPTIMIZATION: DGX Native (CUDA Filters)
     # Using /dev/shm for instant IO
-    temp_dir = Path("/dev/shm") if Path("/dev/shm").exists() else OUTPUT_DIR
+    # Switch to /tmp (disk) to avoid /dev/shm (64MB) overflow on large renders
+    temp_dir = Path("/tmp")
     output_filename = request.output_filename or f"viral_{uuid.uuid4().hex[:8]}.mp4"
     output_path = OUTPUT_DIR / output_filename
     
@@ -321,6 +332,7 @@ async def render_viral_clip(request: RenderClipRequest):
     encoder, gpu_opts = get_gpu_encoder()
 
     try:
+        report_status(request.status_webhook_url, "Processing: Setup")
         # 1. Setup: Duration (Removed audio extraction, using direct stream for sync)
         duration = request.end_time - request.start_time
         # cmd_extract removed to ensure A/V sync from same input container
@@ -333,6 +345,7 @@ async def render_viral_clip(request: RenderClipRequest):
             if music_files: bgm_path = random.choice(music_files)
 
         # Karaoke ASS Generation
+        report_status(request.status_webhook_url, "Processing: Karaoke")
         generate_karaoke_ass(request.transcript_segments, ass_path, request.start_time, request.font)
 
         # 3. MEGA-FILTER CHAIN (V5: CUDA NATIVE)
@@ -354,7 +367,7 @@ async def render_viral_clip(request: RenderClipRequest):
                 # "between(t, start, end)" returns 1.0 or 0.0
                 trigger_sum += f"+0.10*between(t,{t_start},{t_end})"
 
-        # Pulse Expr (GPU Dynamic)
+        # Pulse Expr (CPU Dynamic)
         zoom_base = "min(1+0.001*t,1.5)"
         heartbeat = "0.012*sin(2*3.14159*t*1.5)"
         
@@ -362,21 +375,25 @@ async def render_viral_clip(request: RenderClipRequest):
         scale_factor = f"({zoom_base}+{heartbeat}{trigger_sum})"
         
         # We vary Width(w) and Height(h) using the expression.
-        zoom_expr = f"w='iw*{scale_factor}':h='ih*{scale_factor}'"
+        # Force even dimensions (2-aligned) for YUV420P / CUDA compatibility
+        # Ensure factor >= 1 using max(1, ...) to prevent crop failure
+        zoom_expr = f"w='2*trunc(iw*max(1,{scale_factor})/2)':h='2*trunc(ih*max(1,{scale_factor})/2)'"
         
-        # Grade Expr (GPU)
-        grade_filter = "eq_cuda=contrast=1.15:brightness=0.03:saturation=1.25"
+        # Grade Expr (CPU)
+        grade_filter = "eq=contrast=1.15:brightness=0.03:saturation=1.25"
         
         # Escape path for ASS filter
         escaped_ass = str(ass_path).replace(":", "\\:").replace("'", "\\'")
 
-        # Complex Filter Construction
-        # Note: scale_cuda automatically handles interpolation (linear/cubic)
-        # Using [0:a] directly ensures A/V sync is preserved from input 0
+        # V7.0 ROBUST CPU SCALING (Legacy Bottleneck Accepted for Stability)
+        # [GPU Decode] -> hwdownload -> [CPU] -> scale(Fill) -> scale(Pulse) -> crop -> eq -> ass -> hwupload -> [GPU Encode]
+        # logic: scale_cuda filters failed expression parsing. Reverting to CPU scaling.
         filter_complex = (
-            f"[0:v]scale_cuda={zoom_expr},"
+            f"[0:v]hwdownload,format=nv12,format=yuv420p,"
+            f"scale=-2:1920,"
+            f"scale={zoom_expr}:eval=frame,"
+            f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2,"
             f"{grade_filter},"
-            f"hwdownload,format=nv12,"
             f"ass='{escaped_ass}',"
             f"hwupload_cuda[v];"
             f"[0:a]volume=1.0[a]"
@@ -394,6 +411,7 @@ async def render_viral_clip(request: RenderClipRequest):
         ]
         
         print(f"DEBUG MEGA CMD: {' '.join(cmd_mega)}")
+        report_status(request.status_webhook_url, "Processing: GPU FX")
         subprocess.run(cmd_mega, check=True)
 
         # 4. Outro Generation (V4 CPU-Threaded for safety)
@@ -412,9 +430,15 @@ async def render_viral_clip(request: RenderClipRequest):
             # High-Speed Grid 
             grid_filter = (
                 "split=9[a][b][c][d][e][f][g][h][i];"
-                "[a]scale=iw*1.0:ih*1.0[a1];[b]scale=iw*1.05:ih*1.05[b1];[c]scale=iw*1.1:ih*1.1[c1];"
-                "[d]scale=iw*1.05:ih*1.05[d1];[e]scale=iw*1.0:ih*1.0[e1];[f]scale=iw*1.05:ih*1.05[f1];"
-                "[g]scale=iw*1.1:ih*1.1[g1];[h]scale=iw*1.05:ih*1.05[h1];[i]scale=iw*1.0:ih*1.0[i1];"
+                "[a]scale=iw*1.0:ih*1.0[a1];"
+                "[b]scale=iw*1.05:ih*1.05,crop=1080:1920[b1];"
+                "[c]scale=iw*1.1:ih*1.1,crop=1080:1920[c1];"
+                "[d]scale=iw*1.05:ih*1.05,crop=1080:1920[d1];"
+                "[e]scale=iw*1.0:ih*1.0[e1];"
+                "[f]scale=iw*1.05:ih*1.05,crop=1080:1920[f1];"
+                "[g]scale=iw*1.1:ih*1.1,crop=1080:1920[g1];"
+                "[h]scale=iw*1.05:ih*1.05,crop=1080:1920[h1];"
+                "[i]scale=iw*1.0:ih*1.0[i1];"
                 "[a1][b1][c1]hstack=3[row1];[d1][e1][f1]hstack=3[row2];[g1][h1][i1]hstack=3[row3];"
                 "[row1][row2][row3]vstack=3,scale=1080:1920"
             )
@@ -425,12 +449,13 @@ async def render_viral_clip(request: RenderClipRequest):
                 "ffmpeg", "-y", "-threads", "0",
                 "-i", str(temp_outro), "-i", str(cross_path),
                 "-filter_complex", f"{grid_filter}[grid];[grid][1:v]overlay=(W-w)/2:(H-h)/2[bg];[bg]drawtext=text='@{handle}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=70:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=1200,fade=t=out:st=1:d=1",
-                "-c:v", encoder, *gpu_opts, "-c:a", "copy",
+                "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
                 str(temp_grid)
             ]
             subprocess.run(cmd_outro_process, check=True)
 
             # 5. Concat (RAM Disk)
+            report_status(request.status_webhook_url, "Processing: Merging")
             temp_main_trim = temp_dir / f"temp_trim_{uid}.mp4"
             subprocess.run(["ffmpeg", "-y", "-threads", "0", "-i", str(temp_main), "-t", str(total_dur - 2), "-c", "copy", str(temp_main_trim)], check=True)
             cleanup_files.append(temp_main_trim)
@@ -445,6 +470,7 @@ async def render_viral_clip(request: RenderClipRequest):
 
         # 6. BGM Mix (Final Pass)
         if bgm_path:
+            report_status(request.status_webhook_url, "Processing: Audio Mix")
             # Vol Ramp Expr (Applied to MUSIC now)
             # Ramp from 0.3 to 0.8 starting 5s from end
             ramp_start = max(0, duration - 5)

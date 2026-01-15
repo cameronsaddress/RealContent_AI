@@ -195,6 +195,21 @@ def render_viral_clip_endpoint(id: int, db: Session = Depends(get_db)):
 
 from fastapi.responses import FileResponse
 
+class StatusUpdate(BaseModel):
+    status: str
+
+@router.put("/viral-clips/{id}/status")
+def update_viral_clip_status(id: int, status_update: StatusUpdate, db: Session = Depends(get_db)):
+    clip = db.query(ViralClip).filter(ViralClip.id == id).first()
+    if not clip:
+        raise HTTPException(status_code=404)
+        
+    # Prevent overwriting final states unless explicitly requested?
+    # For now, just trust the worker.
+    clip.status = status_update.status
+    db.commit()
+    return {"status": "updated"}
+
 @router.get("/file/{filename}")
 def get_viral_file(filename: str):
     # Security: basic check to prevent traversal

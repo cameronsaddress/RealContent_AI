@@ -63,7 +63,7 @@ services:
     container_name: SocialGen_celery_worker
     restart: unless-stopped
     working_dir: /app
-    command: celery -A celery_app worker --loglevel=info --concurrency=2
+    command: celery -A celery_app worker --loglevel=info --concurrency=8
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=redis://redis:6379/0
