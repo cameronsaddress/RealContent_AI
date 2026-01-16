@@ -4,7 +4,8 @@ import {
   getVideoSettings, updateVideoSettings,
   getLLMSettings, updateLLMSetting,
   getBrandPersona, updateBrandPersona,
-  getViralMusic, getViralFonts, deleteViralFont, downloadGoogleFont
+  getViralMusic, getViralFonts, deleteViralFont, downloadGoogleFont,
+  API_URL
 } from '../api';
 
 export default function Settings() {
@@ -1752,16 +1753,40 @@ export default function Settings() {
           <span className="slider-hint">Enter exact font name from fonts.google.com</span>
         </div>
 
+        {/* Font face declarations for previews */}
+        <style>
+          {fonts.map((font, i) => `
+            @font-face {
+              font-family: 'Preview-${font.name.replace(/\s+/g, '')}';
+              src: url('${API_URL}/api/viral/fonts/${font.filename}/file') format('${font.filename.endsWith('.ttf') ? 'truetype' : 'opentype'}');
+              font-display: swap;
+            }
+          `).join('\n')}
+        </style>
+
         {/* Installed Fonts List */}
         <div className="music-list">
           {fonts.length === 0 ? (
             <p className="no-music">No custom fonts found.</p>
           ) : (
             fonts.map((font, i) => (
-              <div key={i} className="music-item">
-                <div className="music-info">
+              <div key={i} className="music-item" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div className="music-info" style={{ minWidth: '150px' }}>
                   <span className="music-name">{font.name}</span>
                   <span className="file-size">{font.filename}</span>
+                </div>
+                <div
+                  className="font-preview"
+                  style={{
+                    fontFamily: `'Preview-${font.name.replace(/\s+/g, '')}', sans-serif`,
+                    fontSize: '32px',
+                    color: 'var(--text-primary)',
+                    flex: 1,
+                    textAlign: 'center',
+                    letterSpacing: '1px'
+                  }}
+                >
+                  America First
                 </div>
                 <button
                   onClick={() => handleDeleteFont(font.filename)}

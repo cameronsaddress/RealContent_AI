@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, List
 from enum import Enum
 import random
+import re
 import urllib.request
 
 # Monkey patch for Pillow 10+ (removes ANTIALIAS) used by moviepy 1.0.3
@@ -72,6 +73,13 @@ HARSH_TRIGGER_WORDS = [
 ]
 # Alias for backwards compatibility
 TRAD_TRIGGER_WORDS = HARSH_TRIGGER_WORDS
+
+# CURSE WORDS - These get FULL intensity RGB glitch effect
+# Other trigger words get reduced (1/4 to 1/2) intensity randomly
+CURSE_WORDS = {
+    "fuck", "fucking", "fucked", "shit", "bitch", "bitches", "ass", "damn", "damned",
+    "hell", "crap", "bastard", "bullshit", "piss", "dick", "asshole", "whore", "slut"
+}
 
 # ============ MODELS ============
 
@@ -313,7 +321,7 @@ def get_video_info(path: str) -> dict:
     if result.returncode != 0:
         # Fallback empty
         return {"duration": 0, "size": 0, "width": 0, "height": 0}
-        
+
     data = json.loads(result.stdout)
     video_stream = next((s for s in data.get("streams", []) if s["codec_type"] == "video"), {})
     return {
@@ -324,6 +332,51 @@ def get_video_info(path: str) -> dict:
         "codec": video_stream.get("codec_name", "unknown"),
         "size": int(data.get("format", {}).get("size", 0))
     }
+
+
+def detect_audio_volume(path: str, max_duration: float = 60) -> dict:
+    """
+    Detect audio volume levels using FFmpeg's volumedetect filter.
+    Returns mean_volume and max_volume in dB.
+
+    Args:
+        path: Path to audio/video file
+        max_duration: Max seconds to analyze (for long files)
+
+    Returns:
+        dict with 'mean_volume' and 'max_volume' in dB (negative values)
+    """
+    try:
+        # Analyze first N seconds for speed
+        cmd = [
+            "ffmpeg", "-hide_banner", "-i", path,
+            "-t", str(max_duration),
+            "-af", "volumedetect",
+            "-f", "null", "-"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+        # Parse output for volume stats
+        output = result.stderr
+        mean_vol = -20.0  # Default fallback
+        max_vol = -10.0
+
+        for line in output.split('\n'):
+            if 'mean_volume:' in line:
+                try:
+                    mean_vol = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                except:
+                    pass
+            if 'max_volume:' in line:
+                try:
+                    max_vol = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                except:
+                    pass
+
+        return {"mean_volume": mean_vol, "max_volume": max_vol}
+    except Exception as e:
+        print(f"Volume detection failed: {e}")
+        return {"mean_volume": -20.0, "max_volume": -10.0}
 
 def create_cross_image():
     # Use the Chi Rho symbol image (pre-processed with transparency)
@@ -354,7 +407,8 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
     Apply RGB chromatic aberration (glitch/VHS effect) during trigger word windows.
     Uses MoviePy for per-frame numpy manipulation.
 
-    trigger_windows: list of (start_time, end_time) tuples
+    trigger_windows: list of tuples - either (start, end) or (start, end, intensity_multiplier)
+                     intensity_multiplier: 1.0 = full intensity, 0.25-0.5 = reduced
     max_shift: max pixel shift for R/B channels at peak intensity
     """
     if not trigger_windows:
@@ -373,12 +427,20 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
         # Calculate intensity based on trigger windows
         # Use smooth sine pulse matching the zoom pulse timing
         intensity = 0.0
-        for start, end in trigger_windows:
+        for window in trigger_windows:
+            # Support both (start, end) and (start, end, multiplier) formats
+            if len(window) >= 3:
+                start, end, multiplier = window[0], window[1], window[2]
+            else:
+                start, end, multiplier = window[0], window[1], 1.0
+
             if start <= t <= end:
                 # Smooth sine wave: 0 → 1 → 0 over the window
                 duration = end - start
                 progress = (t - start) / duration
-                intensity = max(intensity, np.sin(np.pi * progress))
+                # Apply the intensity multiplier for this window
+                window_intensity = np.sin(np.pi * progress) * multiplier
+                intensity = max(intensity, window_intensity)
 
         if intensity < 0.01:
             return frame  # No effect needed
@@ -422,6 +484,314 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
     processed.close()
     print(f"Chromatic aberration applied successfully")
 
+
+def apply_vintage_vhs_effects(video_path: str, output_path: str, duration: float, rgb_trigger_windows: list = None):
+    """
+    Apply vintage VHS effects after each RGB glitch trigger, plus a continuous VHS head error.
+
+    Effects (triggered after RGB glitches):
+    1. VHS Tracking Wrinkle - wavy horizontal distortion band rolling up screen
+    2. Static Burst - TV snow/noise overlay
+    3. Horizontal Tear - part of frame shifts horizontally
+    4. Tape Dropout - random black horizontal lines
+    5. Brightness Pump - brightness flash/surge
+
+    Continuous effect:
+    - VHS Head Error - small distortion in top right corner on 5 second loop
+
+    Args:
+        video_path: Input video file
+        output_path: Output video file
+        duration: Clip duration in seconds
+        rgb_trigger_windows: List of (start, end, intensity) tuples from RGB glitch pass
+    """
+    # Schedule vintage effects to trigger 0.2-0.5s after each RGB glitch ends
+    triggers = []
+    if rgb_trigger_windows:
+        for i, window in enumerate(rgb_trigger_windows):
+            rgb_end = window[1]  # End time of RGB glitch
+
+            # Skip intro glitches (first 4 are intro pulses at 0-1.7s)
+            if rgb_end < 2.0:
+                continue
+
+            # Schedule vintage effect 0.2-0.5s after RGB glitch ends
+            delay = random.uniform(0.2, 0.5)
+            t_start = rgb_end + delay
+            t_duration = random.uniform(0.5, 1.0)  # 0.5-1.0 second duration
+            t_end = min(t_start + t_duration, duration - 2.0)
+
+            # Make sure it fits
+            if t_start < duration - 2.5 and t_end > t_start:
+                # Randomly select effect type (0-4)
+                effect_type = random.randint(0, 4)
+                triggers.append((t_start, t_end, effect_type))
+
+    effect_names = ["Tracking Wrinkle", "Static Burst", "Horizontal Tear", "Tape Dropout", "Brightness Pump"]
+    for t_start, t_end, effect_type in triggers:
+        print(f"  Vintage effect: {effect_names[effect_type]} at {t_start:.1f}s-{t_end:.1f}s")
+
+    print(f"  VHS Head Error: continuous (random position each 5s cycle)")
+
+    clip = VideoFileClip(video_path)
+
+    def vintage_effect(get_frame, t):
+        """Apply vintage VHS effects at trigger times + continuous head error."""
+        frame = get_frame(t)
+
+        # CONTINUOUS: VHS Head Error in top right corner (5 second loop)
+        frame = _apply_vhs_head_error(frame, t)
+
+        # TRIGGERED: Vintage effects after RGB glitches
+        for t_start, t_end, effect_type in triggers:
+            if t_start <= t <= t_end:
+                # Calculate intensity (ramp up then down)
+                effect_duration = t_end - t_start
+                progress = (t - t_start) / effect_duration
+                # Smooth sine envelope
+                intensity = np.sin(np.pi * progress)
+
+                if effect_type == 0:
+                    # VHS TRACKING WRINKLE - wavy horizontal band rolling up
+                    frame = _apply_tracking_wrinkle(frame, t, t_start, intensity)
+                elif effect_type == 1:
+                    # STATIC BURST - TV snow overlay
+                    frame = _apply_static_burst(frame, intensity)
+                elif effect_type == 2:
+                    # HORIZONTAL TEAR - part of frame shifts
+                    frame = _apply_horizontal_tear(frame, intensity)
+                elif effect_type == 3:
+                    # TAPE DROPOUT - black horizontal lines
+                    frame = _apply_tape_dropout(frame, intensity)
+                elif effect_type == 4:
+                    # BRIGHTNESS PUMP - flash/surge
+                    frame = _apply_brightness_pump(frame, intensity)
+
+                break  # Only apply one effect at a time
+
+        return frame
+
+    processed = clip.transform(vintage_effect)
+
+    processed.write_videofile(
+        output_path,
+        codec='libx264',
+        preset='ultrafast',
+        audio_codec='aac',
+        logger=None
+    )
+
+    clip.close()
+    processed.close()
+    print(f"Applied {len(triggers)} vintage VHS effects + continuous head error successfully")
+
+
+def _apply_tracking_wrinkle(frame, t, t_start, intensity):
+    """VHS tracking error - wavy horizontal distortion band that rolls up the screen."""
+    h, w = frame.shape[:2]
+    result = frame.copy()
+
+    # Band position rolls up the screen over time
+    time_offset = (t - t_start) * 0.5  # Speed of roll
+    band_center = int(h * (1.0 - (time_offset % 1.0)))  # Roll from bottom to top
+    band_height = int(80 * intensity)  # Band thickness
+
+    if band_height < 5:
+        return frame
+
+    # Apply wavy distortion in the band region
+    for y in range(max(0, band_center - band_height), min(h, band_center + band_height)):
+        # Distance from band center (0 to 1)
+        dist = abs(y - band_center) / band_height
+        # Wave amplitude decreases toward edges
+        wave_amp = int(15 * intensity * (1 - dist))
+        # Horizontal wave offset
+        wave_offset = int(wave_amp * np.sin(y * 0.1 + t * 10))
+
+        if wave_offset != 0:
+            # Shift this row horizontally
+            if wave_offset > 0:
+                result[y, wave_offset:, :] = frame[y, :-wave_offset, :]
+                result[y, :wave_offset, :] = frame[y, 0:1, :]  # Fill edge
+            else:
+                result[y, :wave_offset, :] = frame[y, -wave_offset:, :]
+                result[y, wave_offset:, :] = frame[y, -1:, :]  # Fill edge
+
+    return result
+
+
+def _apply_static_burst(frame, intensity):
+    """TV static/snow noise overlay."""
+    h, w = frame.shape[:2]
+
+    # Generate noise
+    noise_intensity = int(80 * intensity)
+    noise = np.random.randint(-noise_intensity, noise_intensity + 1, (h, w, 3), dtype=np.int16)
+
+    # Blend noise with frame
+    result = np.clip(frame.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+
+    # Add some scanline-like horizontal variation
+    for y in range(0, h, 2):
+        if np.random.random() < 0.3 * intensity:
+            brightness_shift = np.random.randint(-30, 30)
+            result[y] = np.clip(result[y].astype(np.int16) + brightness_shift, 0, 255).astype(np.uint8)
+
+    return result
+
+
+def _apply_horizontal_tear(frame, intensity):
+    """Horizontal tear/glitch - part of frame shifts horizontally."""
+    h, w = frame.shape[:2]
+    result = frame.copy()
+
+    # Random tear position and size
+    tear_y = int(h * (0.3 + 0.4 * np.random.random()))  # Middle 40% of frame
+    tear_height = int(h * 0.1 * intensity)  # 10% of frame height max
+    shift = int(50 * intensity * (1 if np.random.random() > 0.5 else -1))
+
+    if abs(shift) < 3 or tear_height < 5:
+        return frame
+
+    # Shift the tear region
+    y_start = max(0, tear_y - tear_height // 2)
+    y_end = min(h, tear_y + tear_height // 2)
+
+    if shift > 0:
+        result[y_start:y_end, shift:, :] = frame[y_start:y_end, :-shift, :]
+        result[y_start:y_end, :shift, :] = 0  # Black edge
+    else:
+        result[y_start:y_end, :shift, :] = frame[y_start:y_end, -shift:, :]
+        result[y_start:y_end, shift:, :] = 0  # Black edge
+
+    return result
+
+
+def _apply_tape_dropout(frame, intensity):
+    """Tape dropout - random thin black horizontal lines."""
+    h, w = frame.shape[:2]
+    result = frame.copy()
+
+    # Number of dropout lines
+    num_lines = int(5 + 10 * intensity)
+
+    for _ in range(num_lines):
+        if np.random.random() < intensity:
+            y = np.random.randint(0, h)
+            line_height = np.random.randint(1, 4)
+            line_width = int(w * (0.3 + 0.7 * np.random.random()))  # 30-100% width
+            x_start = np.random.randint(0, max(1, w - line_width))
+
+            y_end = min(h, y + line_height)
+            x_end = min(w, x_start + line_width)
+
+            # Black or white dropout
+            if np.random.random() > 0.7:
+                result[y:y_end, x_start:x_end, :] = 255  # White speckle
+            else:
+                result[y:y_end, x_start:x_end, :] = 0  # Black dropout
+
+    return result
+
+
+def _apply_brightness_pump(frame, intensity):
+    """Brightness pump/flash - sudden brightness surge."""
+    # Increase brightness based on intensity
+    brightness_boost = int(60 * intensity)
+
+    result = np.clip(frame.astype(np.int16) + brightness_boost, 0, 255).astype(np.uint8)
+
+    # Also slightly desaturate during flash (move toward white)
+    if intensity > 0.5:
+        gray = np.mean(result, axis=2, keepdims=True)
+        blend = (intensity - 0.5) * 0.4  # 0-20% desaturation
+        result = np.clip(result * (1 - blend) + gray * blend, 0, 255).astype(np.uint8)
+
+    return result
+
+
+def _apply_vhs_head_error(frame, t, loop_seconds: float = 5.0):
+    """
+    Apply a small VHS head switching error at random positions.
+    Loops on a configurable cycle (default 5 seconds).
+    Position changes each cycle but stays consistent within a cycle.
+
+    The effect creates a small distortion area that mimics VHS head
+    switching artifacts - horizontal noise bars and color distortion.
+    """
+    h, w = frame.shape[:2]
+    result = frame.copy()
+
+    # Calculate which loop cycle we're in and position within it
+    loop_cycle = int(t // loop_seconds)
+    loop_pos = t % loop_seconds  # 0 to 5
+
+    # The head error appears for ~0.3s every 5 seconds
+    # Error window: 2.5s to 2.8s in the loop (mid-cycle)
+    error_start = loop_seconds / 2  # 2.5s
+    error_duration = 0.3
+
+    if error_start <= loop_pos <= error_start + error_duration:
+        # Calculate intensity (fade in/out within the 0.3s window)
+        progress = (loop_pos - error_start) / error_duration
+        intensity = np.sin(np.pi * progress)
+
+        # Region size (small: ~150x80 pixels)
+        region_w = 150
+        region_h = 80
+        margin = 30  # Margin from edges
+
+        # Use loop_cycle as seed for consistent position within each cycle
+        rng = np.random.RandomState(seed=loop_cycle + 42)
+        x_start = rng.randint(margin, w - region_w - margin)
+        y_start = rng.randint(margin, h - region_h - margin)
+        x_end = x_start + region_w
+        y_end = y_start + region_h
+
+        # Apply distortion effects to the region
+        region = result[y_start:y_end, x_start:x_end, :].copy()
+
+        # Effect 1: Horizontal noise bars
+        num_bars = int(3 + 5 * intensity)
+        for _ in range(num_bars):
+            bar_y = np.random.randint(0, region_h)
+            bar_height = np.random.randint(1, 3)
+            bar_y_end = min(bar_y + bar_height, region_h)
+
+            # Random horizontal shift for this bar
+            shift = int(np.random.randint(-10, 10) * intensity)
+            if shift != 0:
+                if shift > 0:
+                    region[bar_y:bar_y_end, shift:, :] = region[bar_y:bar_y_end, :-shift, :]
+                    region[bar_y:bar_y_end, :shift, :] = 0
+                else:
+                    region[bar_y:bar_y_end, :shift, :] = region[bar_y:bar_y_end, -shift:, :]
+                    region[bar_y:bar_y_end, shift:, :] = 0
+
+        # Effect 2: Color channel bleeding (slight RGB shift)
+        if intensity > 0.3:
+            small_shift = int(2 * intensity)
+            if small_shift > 0:
+                # Shift red channel slightly
+                r = region[:, :, 0].copy()
+                region[:, small_shift:, 0] = r[:, :-small_shift]
+
+        # Effect 3: Add noise speckles
+        noise_mask = np.random.random((region_h, region_w)) < (0.1 * intensity)
+        noise_values = np.random.randint(0, 255, (region_h, region_w, 3), dtype=np.uint8)
+        for c in range(3):
+            region[:, :, c] = np.where(noise_mask, noise_values[:, :, c], region[:, :, c])
+
+        # Effect 4: Slight brightness flicker
+        brightness_shift = int(20 * intensity * (np.random.random() - 0.5))
+        region = np.clip(region.astype(np.int16) + brightness_shift, 0, 255).astype(np.uint8)
+
+        # Apply the distorted region back
+        result[y_start:y_end, x_start:x_end, :] = region
+
+    return result
+
+
 def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None):
     """
     Generate ASS karaoke captions with enhanced trigger word effects.
@@ -463,8 +833,8 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,{font},175,&H00FFFFFF,&H00FF00FF,&H00000000,&HAA000000,-1,0,0,0,100,100,2,0,1,5,2,2,20,20,120,1
-Style: TriggerWord,{font},175,&H00FFFF00,&H00FF00FF,&H000000FF,&HAA000000,-1,0,0,0,300,300,2,0,1,8,3,2,20,20,120,1
+Style: Karaoke,{font},149,&H00FFFFFF,&H00FF00FF,&H00000000,&HAA000000,-1,0,0,0,100,100,2,0,1,5,2,2,20,20,120,1
+Style: TriggerWord,{font},149,&H00FFFF00,&H00FF00FF,&H000000FF,&HAA000000,-1,0,0,0,300,300,2,0,1,8,3,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -708,10 +1078,16 @@ def render_viral_clip(request: RenderClipRequest):
         for seg in fresh_segments:
             words = seg.get("words", [])
             for word_obj in words:
-                # Strip whitespace AND punctuation - Whisper often returns " word" with leading space
-                w_text = word_obj.get("word", "").lower().strip().strip(".,!?;:'\"()-")
+                raw_word = word_obj.get("word", "")
+                # Aggressive cleaning: lowercase, strip whitespace, remove ALL punctuation
+                w_text = raw_word.lower().strip()
+                # Remove all punctuation including unicode variants
+                w_text = re.sub(r"[^\w\s]", "", w_text)  # Keep only letters, numbers, spaces
+                w_text = re.sub(r"'s$|'s$", "", w_text)  # Remove possessive (both quote types)
+                w_text = w_text.strip()
+
                 if w_text in TRAD_TRIGGER_WORDS:
-                    print(f"  TRIGGER HIT: '{w_text}' at {word_obj.get('start', 0):.2f}s")
+                    print(f"  TRIGGER HIT: '{w_text}' (raw: '{raw_word.strip()}') at {word_obj.get('start', 0):.2f}s")
                     fresh_trigger_words.append({
                         "start": word_obj["start"],
                         "end": word_obj["end"],
@@ -882,19 +1258,24 @@ def render_viral_clip(request: RenderClipRequest):
 
         trigger_windows = []
 
-        # INTRO PULSES: Four RGB glitch hits at the very start
+        # INTRO PULSES: Four RGB glitch hits at the very start (full intensity)
         # Creates that signature "glitchy intro" viral clip look
-        trigger_windows.append((0.0, 0.3))    # First intro pulse
-        trigger_windows.append((0.4, 0.7))    # Second intro pulse
-        trigger_windows.append((0.9, 1.2))    # Third intro pulse
-        trigger_windows.append((1.4, 1.7))    # Fourth intro pulse
+        trigger_windows.append((0.0, 0.3, 1.0))    # First intro pulse
+        trigger_windows.append((0.4, 0.7, 1.0))    # Second intro pulse
+        trigger_windows.append((0.9, 1.2, 1.0))    # Third intro pulse
+        trigger_windows.append((1.4, 1.7, 1.0))    # Fourth intro pulse
 
-        # KEYWORD TRIGGERS: Add BIG pulses for each trigger word (using fresh timestamps)
+        # KEYWORD TRIGGERS: Add pulses for each trigger word
+        # CURSE WORDS get full intensity, others get random 1/4 to 1/2
+        curse_count = 0
+        reduced_count = 0
+        skipped_early = 0
         if fresh_trigger_words:
             for trig in fresh_trigger_words[:20]:
                 # Fresh timestamps are already clip-relative (no adjustment needed)
                 t_start = trig.get('start', 0)
                 t_end = trig.get('end', t_start + 0.5)
+                word = trig.get('word', '').lower().strip()
                 t_center = (t_start + t_end) / 2
                 # Wider pulse window for more impact (0.4s total instead of 0.5s)
                 pulse_start = max(0, t_center - 0.2)
@@ -902,7 +1283,21 @@ def render_viral_clip(request: RenderClipRequest):
                 if pulse_end > 0 and pulse_start < duration:
                     # Avoid overlap with intro pulses (now 4 pulses until ~1.7s)
                     if pulse_start >= 2.0:
-                        trigger_windows.append((pulse_start, pulse_end))
+                        # CURSE WORDS = full intensity (1.0), others = random 0.25-0.5
+                        is_curse = word in CURSE_WORDS
+                        if is_curse:
+                            intensity = 1.0
+                            curse_count += 1
+                            print(f"  RGB CURSE: '{word}' at {t_start:.1f}s -> FULL intensity")
+                        else:
+                            intensity = random.uniform(0.25, 0.5)
+                            reduced_count += 1
+                            print(f"  RGB OTHER: '{word}' at {t_start:.1f}s -> {intensity:.2f} intensity")
+                        trigger_windows.append((pulse_start, pulse_end, intensity))
+                    else:
+                        skipped_early += 1
+                        print(f"  RGB SKIP (early): '{word}' at {t_start:.1f}s (< 2.0s)")
+        print(f"RGB glitch: {curse_count} curse (full), {reduced_count} other (reduced), {skipped_early} skipped (early)")
 
         temp_chroma = temp_dir / f"temp_chroma_{uid}.mp4"
         cleanup_files.append(temp_chroma)
@@ -914,6 +1309,18 @@ def render_viral_clip(request: RenderClipRequest):
             print(f"Applied {len(trigger_windows)} RGB glitch pulses (4 intro + {len(trigger_windows)-4} keywords)")
         except Exception as e:
             print(f"WARNING: Chromatic aberration failed, continuing without: {e}")
+            # Continue with unmodified temp_main
+
+        # 3.6. Vintage VHS Effects Pass - triggered after each RGB glitch + continuous head error
+        report_status(request.status_webhook_url, "Processing: Vintage FX")
+        temp_vintage = temp_dir / f"temp_vintage_{uid}.mp4"
+        cleanup_files.append(temp_vintage)
+        try:
+            apply_vintage_vhs_effects(str(temp_main), str(temp_vintage), duration, rgb_trigger_windows=trigger_windows)
+            # Replace temp_main with vintage effects version
+            subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True)
+        except Exception as e:
+            print(f"WARNING: Vintage VHS effects failed, continuing without: {e}")
             # Continue with unmodified temp_main
 
         # 4. Outro Generation (V4 CPU-Threaded for safety)
@@ -965,25 +1372,57 @@ def render_viral_clip(request: RenderClipRequest):
             with open(temp_concat_list, "w") as f:
                 f.write(f"file '{temp_main_trim}'\nfile '{temp_grid}'\n")
             
-            subprocess.run(["ffmpeg", "-y", "-threads", "0", "-f", "concat", "-safe", "0", "-i", str(temp_concat_list), "-c", "copy", str(output_path)], check=True)
+            # Re-encode audio to fix timestamp issues from concat (Non-monotonic DTS)
+            subprocess.run(["ffmpeg", "-y", "-threads", "0", "-fflags", "+genpts", "-f", "concat", "-safe", "0", "-i", str(temp_concat_list), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-avoid_negative_ts", "make_zero", str(output_path)], check=True)
 
         else:
             subprocess.run(["cp", str(temp_main), str(output_path)], check=True)
 
-        # 6. BGM Mix (Final Pass)
+        # 6. BGM Mix (Final Pass) with AUTO VOLUME DETECTION
         if bgm_path:
             report_status(request.status_webhook_url, "Processing: Audio Mix")
-            # Vol Ramp Expr (Applied to MUSIC now)
-            # Ramp from 0.45 to 0.95 starting 5s from end (+15% boost)
+
+            # Detect volume levels of video (voice) and music
+            print("Detecting audio levels...")
+            video_vol = detect_audio_volume(str(output_path), max_duration=min(60, duration))
+            music_vol = detect_audio_volume(str(bgm_path), max_duration=60)
+
+            video_mean_db = video_vol["mean_volume"]
+            music_mean_db = music_vol["mean_volume"]
+
+            print(f"  Video voice: {video_mean_db:.1f} dB (mean)")
+            print(f"  Music track: {music_mean_db:.1f} dB (mean)")
+
+            # Calculate volume adjustment to make music 10% quieter than voice
+            # Target: music should be (video_mean - 3dB) which is roughly 30% quieter
+            # -3dB ≈ 70% volume, -6dB ≈ 50% volume
+            target_music_db = video_mean_db - 3  # Music 3dB below voice (about 30% quieter)
+            db_adjustment = target_music_db - music_mean_db
+
+            # Convert dB adjustment to linear volume multiplier
+            # volume = 10^(dB/20)
+            import math
+            base_volume = math.pow(10, db_adjustment / 20)
+
+            # Clamp to reasonable range (0.1 to 1.5)
+            base_volume = max(0.1, min(1.5, base_volume))
+
+            print(f"  Target music: {target_music_db:.1f} dB -> adjustment: {db_adjustment:.1f} dB -> volume: {base_volume:.2f}")
+
+            # Volume ramp: start at base_volume, ramp up to base_volume * 2 in final 5 seconds
             ramp_start = max(0, duration - 5)
-            vol_expr = f"'if(gte(t,{ramp_start}),0.45+( (t-{ramp_start}) / 5 )*0.5,0.45)'"
+            end_volume = min(1.0, base_volume * 2)  # Cap at 1.0 for end ramp
+
+            vol_expr = f"'if(gte(t,{ramp_start}),{base_volume:.3f}+((t-{ramp_start})/5)*{end_volume - base_volume:.3f},{base_volume:.3f})'"
+
+            print(f"  BGM volume: {base_volume:.2f} -> {end_volume:.2f} (ramp at {ramp_start:.1f}s)")
 
             final_mix = temp_dir / f"final_mix_{uid}.mp4"
             cmd_mix = [
                 "ffmpeg", "-y", "-threads", "0",
-                "-i", str(output_path), 
-                "-i", str(bgm_path), 
-                "-filter_complex", 
+                "-i", str(output_path),
+                "-i", str(bgm_path),
+                "-filter_complex",
                 f"[1:a]volume=eval=frame:volume={vol_expr},aloop=loop=-1:size=2147483647[bgm];[0:a][bgm]amix=inputs=2:duration=first",
                 "-map", "0:v", "-c:v", "copy", "-c:a", "aac", str(final_mix)
             ]
@@ -1022,6 +1461,27 @@ def list_fonts():
             })
     return {"fonts": fonts, "directory": str(FONTS_DIR)}
 
+@app.get("/fonts/{filename}/file")
+def serve_font_file(filename: str):
+    """Serve a font file for browser loading."""
+    from fastapi.responses import FileResponse
+
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    font_path = FONTS_DIR / filename
+    if not font_path.exists():
+        raise HTTPException(status_code=404, detail="Font not found")
+
+    # Determine MIME type
+    mime_type = "font/ttf" if filename.endswith(".ttf") else "font/otf"
+
+    return FileResponse(
+        font_path,
+        media_type=mime_type,
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
 @app.delete("/fonts/{filename}")
 def delete_font(filename: str):
     """Delete a custom font."""
@@ -1042,58 +1502,63 @@ def delete_font(filename: str):
 
 @app.post("/fonts/google")
 async def download_google_font(req: GoogleFontRequest):
-    """Download a font from Google Fonts."""
+    """Download a font from Google Fonts via CSS API."""
     import urllib.parse
 
     font_name = req.font_name.strip()
     if not font_name:
         raise HTTPException(status_code=400, detail="Font name required")
 
-    # Google Fonts API URL
-    api_url = f"https://fonts.google.com/download?family={urllib.parse.quote(font_name)}"
-
     try:
-        # Download the font zip
-        import tempfile
-        import zipfile
+        # Step 1: Fetch CSS to get TTF URL
+        # Google Fonts uses + for spaces in family names (don't URL-encode the +)
+        css_url = f"https://fonts.googleapis.com/css2?family={font_name.replace(' ', '+')}"
 
-        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
-            tmp_path = tmp.name
-
-        # Use curl for reliable download
+        # Use curl with browser user-agent to get TTF format (not woff2)
         result = subprocess.run(
-            ["curl", "-L", "-o", tmp_path, api_url],
+            ["curl", "-sL", "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", css_url],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0 or "font-face" not in result.stdout:
+            raise HTTPException(status_code=404, detail=f"Font '{font_name}' not found on Google Fonts")
+
+        # Step 2: Extract TTF URL from CSS
+        import re
+        ttf_match = re.search(r'url\((https://fonts\.gstatic\.com/[^)]+\.ttf)\)', result.stdout)
+        if not ttf_match:
+            raise HTTPException(status_code=404, detail=f"Could not find TTF URL for '{font_name}'")
+
+        ttf_url = ttf_match.group(1)
+
+        # Step 3: Download TTF file
+        # Create clean filename from font name
+        clean_name = font_name.replace(' ', '')
+        dest_path = FONTS_DIR / f"{clean_name}.ttf"
+
+        dl_result = subprocess.run(
+            ["curl", "-sL", "-o", str(dest_path), ttf_url],
             capture_output=True,
             timeout=30
         )
 
-        if result.returncode != 0:
-            raise HTTPException(status_code=404, detail=f"Font '{font_name}' not found on Google Fonts")
+        if dl_result.returncode != 0 or not dest_path.exists():
+            raise HTTPException(status_code=500, detail=f"Failed to download font file")
 
-        # Extract TTF files
-        extracted = []
-        with zipfile.ZipFile(tmp_path, 'r') as zf:
-            for name in zf.namelist():
-                if name.endswith('.ttf'):
-                    # Extract to fonts dir
-                    dest = FONTS_DIR / Path(name).name
-                    with zf.open(name) as src, open(dest, 'wb') as dst:
-                        dst.write(src.read())
-                    extracted.append(Path(name).name)
-
-        # Cleanup
-        os.unlink(tmp_path)
-
-        if not extracted:
-            raise HTTPException(status_code=400, detail="No TTF files found in font package")
+        # Verify it's a valid font file
+        if dest_path.stat().st_size < 1000:
+            dest_path.unlink()
+            raise HTTPException(status_code=404, detail=f"Font '{font_name}' download failed")
 
         # Refresh font cache
         subprocess.run(["fc-cache", "-fv"], capture_output=True)
 
-        return {"success": True, "font": font_name, "files": extracted}
+        return {"success": True, "font": font_name, "files": [f"{clean_name}.ttf"]}
 
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=404, detail=f"Font '{font_name}' not found on Google Fonts")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 

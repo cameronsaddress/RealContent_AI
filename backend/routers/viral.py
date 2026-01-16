@@ -266,6 +266,25 @@ async def list_fonts():
         resp = await client.get("http://video-processor:8080/fonts")
         return resp.json()
 
+@router.get("/fonts/{filename}/file")
+async def serve_font_file(filename: str):
+    """Proxy font file from video-processor for browser loading."""
+    from fastapi.responses import Response
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"http://video-processor:8080/fonts/{filename}/file")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Font not found")
+
+        # Determine MIME type
+        mime_type = "font/ttf" if filename.endswith(".ttf") else "font/otf"
+
+        return Response(
+            content=resp.content,
+            media_type=mime_type,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
 @router.delete("/fonts/{filename}")
 async def delete_font(filename: str):
     """Delete a custom font from video-processor."""

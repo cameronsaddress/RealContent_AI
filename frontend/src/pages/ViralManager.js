@@ -168,9 +168,11 @@ const ViralManager = () => {
         setRenderingClips(prev => ({ ...prev, [clipId]: true }));
         try {
             await api.post(`/api/viral/viral-clips/${clipId}/render`);
+            // Refresh both views
             if (selectedInfluencer) {
                 loadVideos(selectedInfluencer.id, true);
             }
+            loadClips(); // Always refresh clips list
         } catch (e) {
             alert("Render error: " + e.message);
         } finally {
@@ -293,15 +295,27 @@ const ViralManager = () => {
                                                                             </div>
 
                                                                             {isReady && (
-                                                                                <button
-                                                                                    className="play-clip-btn"
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        setViewingClip(c);
-                                                                                    }}
-                                                                                >
-                                                                                    Play
-                                                                                </button>
+                                                                                <>
+                                                                                    <button
+                                                                                        className="play-clip-btn"
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            setViewingClip(c);
+                                                                                        }}
+                                                                                    >
+                                                                                        Play
+                                                                                    </button>
+                                                                                    <button
+                                                                                        className="render-btn-mini rerender-btn"
+                                                                                        disabled={renderingClips[c.id]}
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            handleRender(c.id);
+                                                                                        }}
+                                                                                    >
+                                                                                        {renderingClips[c.id] ? '...' : 'Re-render'}
+                                                                                    </button>
+                                                                                </>
                                                                             )}
                                                                             {!isReady && !['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s)) && (
                                                                                 <div className="pending-actions">
@@ -372,6 +386,13 @@ const ViralManager = () => {
                                                             const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
                                                             window.open(downloadUrl, '_blank');
                                                         }}>Download</button>
+                                                        <button
+                                                            onClick={() => handleRender(c.id)}
+                                                            disabled={renderingClips[c.id]}
+                                                            className="rerender-btn"
+                                                        >
+                                                            {renderingClips[c.id] ? 'Starting...' : 'Re-render'}
+                                                        </button>
                                                     </>
                                                 )}
                                             </div>
