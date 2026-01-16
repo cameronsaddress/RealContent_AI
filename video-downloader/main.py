@@ -326,26 +326,27 @@ def get_video_info(path: str) -> dict:
     }
 
 def create_cross_image():
-    # Generate the Purple Cross overlay - 2x larger
-    size = (400, 400)
-    img = Image.new('RGBA', size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    # Try system fonts
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    try:
-        font = ImageFont.truetype(font_path, 300)
-    except:
-        font = ImageFont.load_default()
+    # Use the Chi Rho symbol image (pre-processed with transparency)
+    chi_rho_source = Path("/app/chi_rho.png")
+    cross_path = OUTPUT_DIR / f"chi_rho_{uuid.uuid4().hex[:8]}.png"
 
-    try:
-        bbox = draw.textbbox((0, 0), "†", font=font)
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    except:
-        w, h = 200, 200
+    if chi_rho_source.exists():
+        # Copy the Chi Rho image to output dir
+        import shutil
+        shutil.copy(chi_rho_source, cross_path)
+    else:
+        # Fallback: generate simple cross if Chi Rho not found
+        size = (400, 400)
+        img = Image.new('RGBA', size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        try:
+            font = ImageFont.truetype(font_path, 300)
+        except:
+            font = ImageFont.load_default()
+        draw.text((100, 50), "☧", font=font, fill=(128, 0, 128))
+        img.save(cross_path)
 
-    draw.text(((size[0] - w) / 2, (size[1] - h) / 2), "†", font=font, fill=(128, 0, 128))
-    cross_path = OUTPUT_DIR / f"cross_{uuid.uuid4().hex[:8]}.png"
-    img.save(cross_path)
     return cross_path
 
 def apply_chromatic_aberration(video_path: str, output_path: str, trigger_windows: list, max_shift: int = 15):

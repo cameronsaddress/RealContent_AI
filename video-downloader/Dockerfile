@@ -22,8 +22,9 @@ RUN pip install --no-cache-dir \
     scipy \
     numpy
 
-# Copy the API server
+# Copy the API server and assets
 COPY main.py .
+COPY chi_rho.png /app/chi_rho.png
 
 # Create directories
 RUN mkdir -p /downloads /outputs && chmod 777 /downloads /outputs
