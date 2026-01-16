@@ -116,6 +116,24 @@ const ViralManager = () => {
         return () => clearInterval(interval);
     }, [videos, selectedInfluencer]);
 
+    // Auto-refresh for clips tab
+    useEffect(() => {
+        if (activeTab !== 'clips') return;
+
+        const hasActiveClips = clips.some(c => {
+            const cs = c.status?.toLowerCase() || '';
+            return cs.includes('rendering') || cs.includes('processing') || cs.includes('queued');
+        });
+
+        let interval;
+        if (hasActiveClips) {
+            interval = setInterval(() => {
+                loadClips();
+            }, 3000);
+        }
+        return () => clearInterval(interval);
+    }, [clips, activeTab]);
+
     const handleFetchVideos = async () => {
         if (!selectedInfluencer) return;
         setLoadingVideos(true);
@@ -322,29 +340,44 @@ const ViralManager = () => {
                         <div className="clips-panel">
                             <button onClick={loadClips}>Refresh Clips</button>
                             <div className="card-grid">
-                                {clips.map(c => (
-                                    <div key={c.id} className="card clip-card">
-                                        <h4>{c.title}</h4>
-                                        <span className={`status ${c.status}`}>{c.status}</span>
-                                        <p>Type: {c.clip_type}</p>
-                                        <div className="actions">
-                                            {c.status === 'pending' && (
-                                                <button onClick={() => handleRender(c.id)}>Render (CapCut Style)</button>
-                                            )}
-                                            {c.status === 'ready' && (
-                                                <>
-                                                    <button onClick={() => setViewingClip(c)}>▶ Play</button>
-                                                    <button onClick={() => {
-                                                        const filename = c.edited_video_path?.split('/').pop();
-                                                        if (!filename) return;
-                                                        const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
-                                                        window.open(downloadUrl, '_blank');
-                                                    }}>Download</button>
-                                                </>
-                                            )}
+                                {clips.map(c => {
+                                    const isReady = ['completed', 'ready'].includes(c.status?.toLowerCase());
+                                    const isRendering = ['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s));
+                                    const canRender = c.status === 'pending' || c.status === 'error' || c.status === 'failed';
+
+                                    return (
+                                        <div key={c.id} className="card clip-card">
+                                            <h4>{c.title}</h4>
+                                            <div className="status-row">
+                                                {isRendering && <span className="spinner-small"></span>}
+                                                <span className={`status ${c.status}`}>{c.status}</span>
+                                            </div>
+                                            <p>Type: {c.clip_type}</p>
+                                            <div className="actions">
+                                                {canRender && (
+                                                    <button
+                                                        onClick={() => handleRender(c.id)}
+                                                        disabled={renderingClips[c.id]}
+                                                        className={['error', 'failed'].includes(c.status) ? 'retry-btn' : ''}
+                                                    >
+                                                        {renderingClips[c.id] ? 'Starting...' : (['error', 'failed'].includes(c.status) ? 'Retry' : 'Render')}
+                                                    </button>
+                                                )}
+                                                {isReady && (
+                                                    <>
+                                                        <button onClick={() => setViewingClip(c)}>▶ Play</button>
+                                                        <button onClick={() => {
+                                                            const filename = c.edited_video_path?.split('/').pop();
+                                                            if (!filename) return;
+                                                            const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
+                                                            window.open(downloadUrl, '_blank');
+                                                        }}>Download</button>
+                                                    </>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )
