@@ -9,7 +9,7 @@ from pathlib import Path
 
 from models import (
     get_db, Influencer, InfluencerVideo, ViralClip, ClipPersona,
-    InfluencerPlatformType
+    InfluencerPlatformType, RenderTemplate
 )
 from pydantic import BaseModel
 
@@ -187,7 +187,9 @@ def list_influencer_videos(id: int, db: Session = Depends(get_db)):
             "title": c.title,
             "status": c.status,
             "clip_type": c.clip_type,
-            "edited_video_path": c.edited_video_path
+            "edited_video_path": c.edited_video_path,
+            "template_id": c.template_id,
+            "recommended_template_id": c.recommended_template_id
         } for c in v.clips]
     } for v in videos]
     
@@ -201,7 +203,11 @@ def list_viral_clips(db: Session = Depends(get_db)):
         "clip_type": c.clip_type,
         "status": c.status,
         "source_video_id": c.source_video_id,
-        "edited_video_path": c.edited_video_path
+        "edited_video_path": c.edited_video_path,
+        "template_id": c.template_id,
+        "recommended_template_id": c.recommended_template_id,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None
     } for c in clips]
 
 
@@ -308,3 +314,467 @@ async def download_google_font(req: GoogleFontDownload):
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=resp.json().get("detail", "Failed"))
         return resp.json()
+
+# --- Render Templates ---
+
+class TemplateCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    broll_categories: List[str] = []
+    broll_enabled: bool = True
+    effect_settings: dict = {}
+    keywords: List[str] = []
+    is_default: bool = False
+
+class TemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    broll_categories: Optional[List[str]] = None
+    broll_enabled: Optional[bool] = None
+    effect_settings: Optional[dict] = None
+    keywords: Optional[List[str]] = None
+    is_default: Optional[bool] = None
+
+@router.get("/templates", response_model=List[dict])
+def list_templates(db: Session = Depends(get_db)):
+    """List all render templates."""
+    templates = db.query(RenderTemplate).order_by(RenderTemplate.sort_order).all()
+    return [{
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "broll_categories": t.broll_categories or [],
+        "broll_enabled": t.broll_enabled,
+        "effect_settings": t.effect_settings or {},
+        "keywords": t.keywords or [],
+        "is_default": t.is_default,
+        "sort_order": t.sort_order
+    } for t in templates]
+
+@router.get("/templates/{id}")
+def get_template(id: int, db: Session = Depends(get_db)):
+    """Get a single template by ID."""
+    t = db.query(RenderTemplate).filter(RenderTemplate.id == id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "broll_categories": t.broll_categories or [],
+        "broll_enabled": t.broll_enabled,
+        "effect_settings": t.effect_settings or {},
+        "keywords": t.keywords or [],
+        "is_default": t.is_default,
+        "sort_order": t.sort_order
+    }
+
+@router.post("/templates")
+def create_template(template: TemplateCreate, db: Session = Depends(get_db)):
+    """Create a new render template."""
+    # If setting as default, unset other defaults
+    if template.is_default:
+        db.query(RenderTemplate).update({"is_default": False})
+
+    # Get max sort_order
+    max_order = db.query(RenderTemplate).count()
+
+    new_template = RenderTemplate(
+        name=template.name,
+        description=template.description,
+        broll_categories=template.broll_categories,
+        broll_enabled=template.broll_enabled,
+        effect_settings=template.effect_settings,
+        keywords=template.keywords,
+        is_default=template.is_default,
+        sort_order=max_order + 1
+    )
+    db.add(new_template)
+    db.commit()
+    db.refresh(new_template)
+    return {"id": new_template.id, "name": new_template.name}
+
+@router.put("/templates/{id}")
+def update_template(id: int, template: TemplateUpdate, db: Session = Depends(get_db)):
+    """Update a render template."""
+    t = db.query(RenderTemplate).filter(RenderTemplate.id == id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # If setting as default, unset other defaults
+    if template.is_default:
+        db.query(RenderTemplate).filter(RenderTemplate.id != id).update({"is_default": False})
+
+    if template.name is not None:
+        t.name = template.name
+    if template.description is not None:
+        t.description = template.description
+    if template.broll_categories is not None:
+        t.broll_categories = template.broll_categories
+    if template.broll_enabled is not None:
+        t.broll_enabled = template.broll_enabled
+    if template.effect_settings is not None:
+        t.effect_settings = template.effect_settings
+    if template.keywords is not None:
+        t.keywords = template.keywords
+    if template.is_default is not None:
+        t.is_default = template.is_default
+
+    db.commit()
+    return {"id": t.id, "name": t.name, "updated": True}
+
+@router.delete("/templates/{id}")
+def delete_template(id: int, db: Session = Depends(get_db)):
+    """Delete a render template."""
+    t = db.query(RenderTemplate).filter(RenderTemplate.id == id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    db.delete(t)
+    db.commit()
+    return {"deleted": True, "id": id}
+
+@router.put("/viral-clips/{clip_id}/template")
+def set_clip_template(clip_id: int, template_id: int, db: Session = Depends(get_db)):
+    """Set or change the template for a viral clip."""
+    clip = db.query(ViralClip).filter(ViralClip.id == clip_id).first()
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    if template_id > 0:
+        template = db.query(RenderTemplate).filter(RenderTemplate.id == template_id).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        clip.template_id = template_id
+    else:
+        clip.template_id = None  # Clear template
+
+    db.commit()
+    return {"clip_id": clip_id, "template_id": clip.template_id}
+
+
+# =============================================================================
+# B-ROLL MANAGEMENT ENDPOINTS
+# =============================================================================
+
+class BRollUploadRequest(BaseModel):
+    youtube_url: str
+    clip_duration: float = 2.0  # Duration of each clip in seconds
+
+# In-memory job tracking (for simplicity - could use Redis for persistence)
+broll_upload_jobs = {}
+
+@router.get("/broll")
+def list_broll_clips():
+    """
+    List all B-roll clips with their metadata and categories.
+    Returns clip info from metadata.json if available.
+    """
+    import json
+    broll_dir = Path("/app/assets/broll")
+    metadata_path = broll_dir / "metadata.json"
+
+    # Load metadata if exists
+    metadata = None
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        except:
+            pass
+
+    # Build response
+    clips = []
+    if metadata and "clips" in metadata:
+        for clip_data in metadata["clips"]:
+            clips.append({
+                "filename": clip_data.get("filename"),
+                "caption": clip_data.get("caption", ""),
+                "categories": clip_data.get("categories", []),
+                "duration": clip_data.get("duration", 2.0),
+                "tagged": True
+            })
+    else:
+        # No metadata - just list files
+        if broll_dir.exists():
+            for f in broll_dir.glob("*.mp4"):
+                if not f.name.startswith("pexels_"):
+                    clips.append({
+                        "filename": f.name,
+                        "caption": "",
+                        "categories": [],
+                        "duration": 2.0,
+                        "tagged": False
+                    })
+
+    # Get category counts
+    category_counts = {}
+    if metadata and "category_counts" in metadata:
+        category_counts = metadata["category_counts"]
+
+    return {
+        "clips": clips,
+        "metadata": {
+            "total_clips": len(clips),
+            "tagged_clips": sum(1 for c in clips if c.get("tagged")),
+            "category_counts": category_counts,
+            "generated_at": metadata.get("generated_at") if metadata else None
+        }
+    }
+
+@router.post("/broll/upload-youtube")
+async def upload_youtube_broll(request: BRollUploadRequest, background_tasks: BackgroundTasks):
+    """
+    Upload a YouTube video and split it into B-roll clips.
+
+    Process:
+    1. Download video via video-processor
+    2. Split into 2-second clips
+    3. Tag each clip with AI (BLIP + CLIP)
+    4. Add to metadata.json
+
+    Returns job_id to track progress.
+    """
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
+
+    # Initialize job status
+    broll_upload_jobs[job_id] = {
+        "status": "queued",
+        "youtube_url": request.youtube_url,
+        "clip_duration": request.clip_duration,
+        "progress": 0,
+        "message": "Job queued",
+        "clips_created": 0
+    }
+
+    # Run in background
+    background_tasks.add_task(
+        process_broll_upload,
+        job_id,
+        request.youtube_url,
+        request.clip_duration
+    )
+
+    return {"job_id": job_id, "status": "queued"}
+
+@router.get("/broll/status/{job_id}")
+def get_broll_upload_status(job_id: str):
+    """Get the status of a B-roll upload job."""
+    if job_id not in broll_upload_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return broll_upload_jobs[job_id]
+
+@router.post("/broll/retag")
+async def retag_all_broll(background_tasks: BackgroundTasks):
+    """
+    Re-run AI tagging on all B-roll clips.
+    This regenerates metadata.json with fresh BLIP captions and CLIP categories.
+    """
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
+
+    broll_upload_jobs[job_id] = {
+        "status": "queued",
+        "task": "retag",
+        "progress": 0,
+        "message": "Retagging job queued"
+    }
+
+    background_tasks.add_task(process_broll_retag, job_id)
+
+    return {"job_id": job_id, "status": "queued", "message": "Retagging started"}
+
+
+async def process_broll_upload(job_id: str, youtube_url: str, clip_duration: float):
+    """Background task to download and process YouTube video into B-roll clips."""
+    import subprocess
+    import json
+
+    broll_dir = Path("/app/assets/broll")
+    broll_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        broll_upload_jobs[job_id]["status"] = "downloading"
+        broll_upload_jobs[job_id]["message"] = "Downloading video..."
+
+        # Step 1: Download video via video-processor
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            response = await client.post(
+                "http://video-processor:8080/download",
+                json={
+                    "url": youtube_url,
+                    "filename": f"broll_source_{job_id}",
+                    "format": "mp4"
+                }
+            )
+            if response.status_code != 200:
+                raise Exception(f"Download failed: {response.text}")
+
+            download_result = response.json()
+            source_path = download_result.get("path", "").replace("/downloads/", "/app/assets/videos/")
+
+        broll_upload_jobs[job_id]["status"] = "splitting"
+        broll_upload_jobs[job_id]["message"] = "Splitting into clips..."
+        broll_upload_jobs[job_id]["progress"] = 20
+
+        # Step 2: Get video duration
+        probe = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", source_path
+        ], capture_output=True, text=True)
+        total_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0
+
+        if total_duration < clip_duration:
+            raise Exception("Video too short")
+
+        # Step 3: Split into clips
+        num_clips = int(total_duration / clip_duration)
+        clips_created = []
+
+        # Generate safe base name from URL
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9]', '_', youtube_url.split('/')[-1])[:20]
+
+        for i in range(min(num_clips, 500)):  # Max 500 clips per video
+            start_time = i * clip_duration
+            output_name = f"{safe_name}_{i:03d}.mp4"
+            output_path = broll_dir / output_name
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(start_time),
+                "-i", source_path,
+                "-t", str(clip_duration),
+                "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+                "-c:v", "libx264", "-preset", "fast",
+                "-an",  # No audio for B-roll
+                str(output_path)
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0 and output_path.exists():
+                clips_created.append(output_name)
+
+            # Update progress
+            progress = 20 + int(60 * (i + 1) / num_clips)
+            broll_upload_jobs[job_id]["progress"] = progress
+            broll_upload_jobs[job_id]["clips_created"] = len(clips_created)
+
+        broll_upload_jobs[job_id]["status"] = "tagging"
+        broll_upload_jobs[job_id]["message"] = f"AI tagging {len(clips_created)} clips..."
+        broll_upload_jobs[job_id]["progress"] = 80
+
+        # Step 4: Run AI tagging via video-processor
+        # This calls the tag_broll.py script
+        async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 min for tagging
+            response = await client.post(
+                "http://video-processor:8080/tag-broll",
+                json={"limit": len(clips_created)}
+            )
+            # Tagging is optional - don't fail if it doesn't work
+
+        # Clean up source video
+        if Path(source_path).exists():
+            Path(source_path).unlink()
+
+        broll_upload_jobs[job_id]["status"] = "completed"
+        broll_upload_jobs[job_id]["message"] = f"Created {len(clips_created)} B-roll clips"
+        broll_upload_jobs[job_id]["progress"] = 100
+        broll_upload_jobs[job_id]["clips_created"] = len(clips_created)
+
+    except Exception as e:
+        broll_upload_jobs[job_id]["status"] = "error"
+        broll_upload_jobs[job_id]["message"] = str(e)
+
+
+async def process_broll_retag(job_id: str):
+    """Background task to retag all B-roll clips."""
+    try:
+        broll_upload_jobs[job_id]["status"] = "running"
+        broll_upload_jobs[job_id]["message"] = "Running AI tagging..."
+
+        async with httpx.AsyncClient(timeout=3600.0) as client:  # 60 min
+            response = await client.post(
+                "http://video-processor:8080/tag-broll",
+                json={"force": True}
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                broll_upload_jobs[job_id]["status"] = "completed"
+                broll_upload_jobs[job_id]["message"] = f"Tagged {result.get('clips_tagged', 0)} clips"
+            else:
+                raise Exception(f"Tagging failed: {response.text}")
+
+    except Exception as e:
+        broll_upload_jobs[job_id]["status"] = "error"
+        broll_upload_jobs[job_id]["message"] = str(e)
+
+
+@router.get("/broll/file/{filename}")
+def get_broll_file(filename: str):
+    """Serve a B-roll video file."""
+    broll_dir = Path("/app/assets/broll")
+    file_path = broll_dir / filename
+
+    # Security: prevent directory traversal
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="video/mp4",
+        filename=filename
+    )
+
+
+@router.delete("/broll/{filename}")
+def delete_broll_clip(filename: str):
+    """Delete a B-roll clip and remove from metadata."""
+    import json
+
+    broll_dir = Path("/app/assets/broll")
+    file_path = broll_dir / filename
+    metadata_path = broll_dir / "metadata.json"
+
+    # Security: prevent directory traversal
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # Delete the file
+    if file_path.exists():
+        file_path.unlink()
+
+    # Update metadata.json to remove the clip
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+
+            # Remove clip from clips list
+            if "clips" in metadata:
+                metadata["clips"] = [c for c in metadata["clips"] if c.get("filename") != filename]
+                metadata["total_clips"] = len(metadata["clips"])
+
+            # Rebuild category index
+            category_index = {}
+            for clip in metadata.get("clips", []):
+                for cat in clip.get("categories", []):
+                    if cat not in category_index:
+                        category_index[cat] = []
+                    category_index[cat].append(clip["filename"])
+
+            metadata["category_index"] = category_index
+            metadata["category_counts"] = {k: len(v) for k, v in category_index.items()}
+
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+        except Exception as e:
+            logger.error(f"Error updating metadata after delete: {e}")
+
+    return {"success": True, "deleted": filename}

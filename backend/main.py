@@ -179,18 +179,15 @@ async def update_content_idea(idea_id: int, idea: ContentIdeaUpdate, db: Session
         if db_idea.viral_score == 0 or not db_idea.pillar:
             print(f"DEBUG: Analyzing idea {idea_id} with LLM before pipeline...")
             try:
-                import asyncio
                 from services.scraper import ScraperService
                 scraper = ScraperService()
-                analysis = asyncio.get_event_loop().run_until_complete(
-                    scraper.analyze_single_idea(
-                        idea_id=idea_id,
-                        title=db_idea.original_text or "",
-                        url=db_idea.source_url or "",
-                        platform=db_idea.source_platform or "unknown",
-                        views=db_idea.views or 0,
-                        likes=db_idea.likes or 0
-                    )
+                analysis = await scraper.analyze_single_idea(
+                    idea_id=idea_id,
+                    title=db_idea.original_text or "",
+                    url=db_idea.source_url or "",
+                    platform=db_idea.source_platform or "unknown",
+                    views=db_idea.views or 0,
+                    likes=db_idea.likes or 0
                 )
                 # Update idea with analysis
                 db_idea.viral_score = analysis.get("viral_score", 7)

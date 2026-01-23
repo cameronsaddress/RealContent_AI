@@ -14,13 +14,17 @@ RUN apt-get update && apt-get install -y imagemagick fonts-dejavu fonts-liberati
 COPY fonts/ /usr/share/fonts/truetype/custom/
 RUN fc-cache -fv
 
-# Install NEW dependencies for Viral Clips (Whisper, MoviePy)
+# Install NEW dependencies for Viral Clips (Whisper, MoviePy, AI tagging)
 # Existing image already contains: ffmpeg, yt-dlp, fastapi, curl_cffi
 RUN pip install --no-cache-dir \
     openai-whisper \
     moviepy \
     scipy \
-    numpy
+    numpy \
+    transformers \
+    Pillow \
+    accelerate \
+    opencv-python-headless
 
 # Copy the API server and assets
 COPY main.py .

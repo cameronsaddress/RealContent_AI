@@ -353,4 +353,28 @@ export const downloadGoogleFont = async (fontName) => {
   return data;
 };
 
+// B-Roll Management
+export const getBrollClips = async () => {
+  const { data } = await api.get('/api/viral/broll');
+  return data;
+};
 
+export const uploadBrollFromYoutube = async (youtubeUrl, category = null) => {
+  const { data } = await api.post('/api/viral/broll/upload-youtube', { youtube_url: youtubeUrl, category });
+  return data;
+};
+
+export const getBrollUploadStatus = async (jobId) => {
+  const { data } = await api.get(`/api/viral/broll/status/${jobId}`);
+  return data;
+};
+
+export const retagBrollClips = async (force = false, limit = 0) => {
+  const { data } = await api.post('/api/viral/broll/retag', { force, limit });
+  return data;
+};
+
+export const deleteBrollClip = async (filename) => {
+  const { data } = await api.delete(`/api/viral/broll/${filename}`);
+  return data;
+};

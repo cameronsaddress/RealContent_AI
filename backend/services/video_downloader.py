@@ -237,10 +237,23 @@ class VideoDownloaderService(BaseService):
                 raise ValueError(f"Video processor failed: {response.text}")
 
             result = response.json()
-            downloaded_path = result.get("path")
+            downloaded_path_raw = result.get("path") or result.get("file_path") or ""
+            downloaded_path = Path(downloaded_path_raw) if downloaded_path_raw else None
+            if not downloaded_path:
+                filename = result.get("filename")
+                if filename:
+                    downloaded_path = asset_paths.videos_dir / filename
 
             if not downloaded_path:
                 raise ValueError("No path in response")
+
+            if not downloaded_path.exists():
+                mapped_path = asset_paths.videos_dir / downloaded_path.name
+                if mapped_path.exists():
+                    downloaded_path = mapped_path
+
+            if not downloaded_path.exists():
+                raise FileNotFoundError(f"Downloaded file not found: {downloaded_path}")
 
             # Copy to assets directory
             import shutil
@@ -287,20 +300,28 @@ class VideoDownloaderService(BaseService):
             follow_redirects=True,
             headers=headers
         ) as client:
-            response = await client.get(video_url)
+            file_size = 0
+            try:
+                async with client.stream("GET", video_url) as response:
+                    # Check for non-success status codes
+                    if response.status_code == 204:
+                        raise ValueError("CDN returned 204 No Content - URL may be expired or blocked")
+                    if response.status_code != 200:
+                        raise ValueError(f"Download failed with status {response.status_code}")
 
-            # Check for non-success status codes
-            if response.status_code == 204:
-                raise ValueError(f"CDN returned 204 No Content - URL may be expired or blocked")
-            if response.status_code != 200:
-                raise ValueError(f"Download failed with status {response.status_code}")
+                    with open(output_path, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            file_size += len(chunk)
 
-            content = response.content
-            if len(content) < 1000:
-                raise ValueError(f"Downloaded content too small ({len(content)} bytes)")
-
-            with open(output_path, "wb") as f:
-                f.write(content)
+                if file_size < 1000:
+                    raise ValueError(f"Downloaded content too small ({file_size} bytes)")
+            except Exception:
+                if output_path.exists():
+                    output_path.unlink()
+                raise
 
         file_size = output_path.stat().st_size
 

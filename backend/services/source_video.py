@@ -78,7 +78,20 @@ class SourceVideoService(BaseService):
                 raise Exception(result.get("error", "Download failed"))
 
             # The video-downloader saves to its own path, we need to copy/move it
-            downloaded_path = Path(result.get("file_path", ""))
+            downloaded_path_raw = result.get("path") or result.get("file_path") or ""
+            downloaded_path = Path(downloaded_path_raw) if downloaded_path_raw else None
+            if not downloaded_path:
+                filename = result.get("filename")
+                if filename:
+                    downloaded_path = asset_paths.videos_dir / filename
+
+            if not downloaded_path:
+                raise FileNotFoundError("Downloaded file not found: missing path")
+
+            if not downloaded_path.exists():
+                mapped_path = asset_paths.videos_dir / downloaded_path.name
+                if mapped_path.exists():
+                    downloaded_path = mapped_path
 
             if downloaded_path.exists():
                 # Copy to our assets directory

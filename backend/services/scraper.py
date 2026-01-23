@@ -239,29 +239,28 @@ class ScraperService(BaseService):
         tasks = []
 
         if "tiktok" in params.platforms:
-            tasks.append(self._scrape_tiktok(params.hashtags, params.results_per_platform))
+            tasks.append(("tiktok", self._scrape_tiktok(params.hashtags, params.results_per_platform)))
 
         if "instagram" in params.platforms:
-            tasks.append(self._scrape_instagram(params.hashtags, params.results_per_platform))
+            tasks.append(("instagram", self._scrape_instagram(params.hashtags, params.results_per_platform)))
 
         if "youtube" in params.platforms:
-            tasks.append(self._scrape_youtube(params.hashtags, params.results_per_platform))
+            tasks.append(("youtube", self._scrape_youtube(params.hashtags, params.results_per_platform)))
 
         if not tasks:
             logger.warning("No platforms selected for scraping")
             return []
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*(task for _, task in tasks), return_exceptions=True)
 
         # Flatten results, skipping errors
         all_items = []
-        for i, result in enumerate(results):
+        for (platform, _), result in zip(tasks, results):
             if isinstance(result, Exception):
-                platform = ["tiktok", "instagram", "youtube"][i] if i < 3 else "unknown"
                 logger.error(f"{platform} scrape failed: {result}")
                 continue
             all_items.extend(result)
-            logger.info(f"Got {len(result)} items from platform")
+            logger.info(f"Got {len(result)} items from {platform}")
 
         return all_items
 

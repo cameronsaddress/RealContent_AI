@@ -288,6 +288,29 @@ async def _run_pipeline_async(
                     status="voice_ready",
                     duration=voice_result.duration_seconds
                 )
+            else:
+                from models import Asset
+                asset_result = await session.execute(
+                    Asset.__table__.select().where(Asset.script_id == script_id)
+                )
+                asset_row = asset_result.fetchone()
+                existing_status = asset_row._mapping.get("status") if asset_row else None
+                existing_voice_path = asset_row._mapping.get("voiceover_path") if asset_row else None
+
+                if not existing_voice_path:
+                    duration = None
+                    voice_path = asset_paths.voice_path(script_id)
+                    try:
+                        if voice_path.exists():
+                            duration = voice_svc.get_audio_duration(voice_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to read voice duration for script {script_id}: {e}")
+
+                    await voice_svc.update_asset_status(
+                        script_id, session,
+                        status=existing_status or "voice_ready",
+                        duration=duration
+                    )
             logger.info(f"Voice ready for script {script_id}")
 
             # ================================================================
@@ -643,8 +666,20 @@ async def _get_content_idea(session, content_idea_id: Optional[int] = None) -> O
 
     if content_idea_id:
         result = await session.execute(
-            ContentIdea.__table__.select().where(ContentIdea.id == content_idea_id)
+            ContentIdea.__table__.update()
+            .where(
+                ContentIdea.id == content_idea_id,
+                ContentIdea.status == "approved"
+            )
+            .values(status="script_generating")
+            .returning(ContentIdea.__table__)
         )
+        row = result.fetchone()
+        if row:
+            await session.commit()
+            return dict(row._mapping)
+        await session.rollback()
+        return None
     else:
         # Get next approved idea
         result = await session.execute(
@@ -652,11 +687,20 @@ async def _get_content_idea(session, content_idea_id: Optional[int] = None) -> O
             .where(ContentIdea.status == "approved")
             .order_by(ContentIdea.created_at.asc())
             .limit(1)
+            .with_for_update(skip_locked=True)
         )
 
     row = result.fetchone()
     if row:
+        await session.execute(
+            ContentIdea.__table__.update()
+            .where(ContentIdea.id == row._mapping["id"])
+            .values(status="script_generating")
+        )
+        await session.commit()
         return dict(row._mapping)
+
+    await session.rollback()
     return None
 
 

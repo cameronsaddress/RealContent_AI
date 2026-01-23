@@ -438,11 +438,12 @@ class ViralClip(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     source_video_id = Column(Integer, ForeignKey("influencer_videos.id", ondelete="CASCADE"))
-    
+
     # Timing
     start_time = Column(Float)
     end_time = Column(Float)
     duration = Column(Float)
+    climax_time = Column(Float)  # Peak intensity moment for B-roll montage trigger
     
     # Content
     clip_type = Column(String)  # antagonistic, funny, controversial, inspirational
@@ -456,6 +457,8 @@ class ViralClip(Base):
     status = Column(String, default="pending")  # pending, rendering, ready, published, error
     error_message = Column(Text)
     render_metadata = Column(JSONB)
+    template_id = Column(Integer, ForeignKey("render_templates.id", ondelete="SET NULL"), nullable=True)
+    recommended_template_id = Column(Integer, nullable=True)  # Grok's recommendation (before user override)
     
     # Publishing
     blotato_post_id = Column(String)
@@ -465,6 +468,61 @@ class ViralClip(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     source_video = relationship("InfluencerVideo", back_populates="clips")
+
+
+class RenderTemplate(Base):
+    """
+    Render templates for viral clips - defines visual style, B-roll categories, and effects.
+    Grok can recommend templates based on clip content, or user can manually select.
+    """
+    __tablename__ = "render_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)  # e.g., "Crusader", "Military", "Gym Bro"
+    description = Column(Text)  # Description for UI and Grok context
+
+    # B-roll configuration
+    broll_categories = Column(JSONB, default=list)  # ["crusades", "warfare", "fighter_jets"]
+    broll_enabled = Column(Boolean, default=True)
+
+    # Visual effects settings
+    effect_settings = Column(JSONB, default=dict)  # {"pulse_intensity": 0.5, "grain_intensity": 15, etc.}
+
+    # Keywords for Grok matching (helps Grok choose the right template)
+    keywords = Column(JSONB, default=list)  # ["christian", "faith", "crusade", "holy war"]
+
+    # Template ordering/priority
+    is_default = Column(Boolean, default=False)  # One template should be default
+    sort_order = Column(Integer, default=0)
+
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BRollClip(Base):
+    """
+    Cached B-roll footage from Pexels for reuse across viral clips.
+    """
+    __tablename__ = "broll_clips"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pexels_video_id = Column(String, unique=True, index=True)
+
+    # Search metadata
+    search_query = Column(String)
+    category = Column(String, index=True)  # warfare, crusades, fighter_jets, etc.
+
+    # File info
+    local_path = Column(Text)  # /app/assets/broll/{id}.mp4
+    duration = Column(Float)
+    width = Column(Integer)
+    height = Column(Integer)
+
+    # Usage tracking
+    use_count = Column(Integer, default=0)
+    last_used_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
 def get_db():

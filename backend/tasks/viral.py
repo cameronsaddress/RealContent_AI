@@ -4,6 +4,7 @@ Handles downloading, transcribing, and analyzing influencer videos.
 """
 import os
 import asyncio
+import redis
 from datetime import datetime
 from typing import Dict, Any
 
@@ -11,12 +12,92 @@ from typing import Dict, Any
 TRAD_TRIGGER_WORDS = ["god", "jesus", "christ", "church", "faith", "pray", "win", "fight", "war", "strength", "power", "glory", "honor", "tradition", "men", "women", "family", "nation", "west", "save", "revive", "build", "create", "beauty", "truth", "justice", "freedom", "liberty", "order", "chaos", "evil", "good", "money", "rich", "wealth", "hustle", "grind", "success", "victory", "champion", "king", "lord", "spirit", "holy", "bible", "cross", "love", "hate", "fear", "death", "life", "soul", "mind", "heart", "body", "blood", "sweat", "tears", "pain", "gain", "gym", "train", "work", "hard", "focus", "discipline"]
 
 from celery_app import celery_app
-from models import InfluencerVideo, ViralClip, SessionLocal, LLMSettings
+from models import InfluencerVideo, ViralClip, SessionLocal, LLMSettings, RenderTemplate
 from services.clip_analyzer import ClipAnalyzerService
 import httpx
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# ============ WHISPER GPU QUEUE (Redis Lock) ============
+# Only one Whisper transcription runs at a time to prevent GPU contention
+_redis_client = None
+WHISPER_LOCK_KEY = "whisper_transcription_lock"
+WHISPER_LOCK_TIMEOUT = 7200  # 2 hours max lock (for very long videos)
+WHISPER_QUEUE_RETRY_DELAY = 30  # Seconds to wait before retrying if locked
+
+def get_redis_client():
+    """Get or create Redis client for distributed locking."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+    return _redis_client
+
+def acquire_whisper_lock(video_id: int) -> bool:
+    """Try to acquire the Whisper GPU lock. Returns True if acquired."""
+    r = get_redis_client()
+    # SET NX (only if not exists) with expiry
+    acquired = r.set(WHISPER_LOCK_KEY, str(video_id), nx=True, ex=WHISPER_LOCK_TIMEOUT)
+    return acquired is True
+
+def release_whisper_lock(video_id: int):
+    """Release the Whisper GPU lock if we hold it."""
+    r = get_redis_client()
+    # Only delete if we own the lock (check value matches our video_id)
+    current = r.get(WHISPER_LOCK_KEY)
+    if current == str(video_id):
+        r.delete(WHISPER_LOCK_KEY)
+        logger.info(f"Released Whisper lock for video {video_id}")
+
+def get_whisper_lock_holder() -> str:
+    """Get the video_id currently holding the Whisper lock, or None."""
+    r = get_redis_client()
+    return r.get(WHISPER_LOCK_KEY)
+# ========================================================
+
+# ============ RENDER GPU QUEUE (Redis Semaphore) ============
+# Limit concurrent renders to prevent GPU memory exhaustion
+RENDER_SEMAPHORE_KEY = "render_gpu_semaphore"
+MAX_CONCURRENT_RENDERS = 8
+RENDER_LOCK_TIMEOUT = 1800  # 30 min max per render
+RENDER_QUEUE_RETRY_DELAY = 15  # Seconds to wait before retrying if full
+
+def acquire_render_slot(clip_id: int) -> bool:
+    """Try to acquire a render slot. Returns True if acquired."""
+    r = get_redis_client()
+    # Get current render count
+    current_renders = r.scard(RENDER_SEMAPHORE_KEY) or 0
+    if current_renders < MAX_CONCURRENT_RENDERS:
+        # Add this clip to the active renders set with expiry
+        r.sadd(RENDER_SEMAPHORE_KEY, str(clip_id))
+        # Set per-clip timeout key for cleanup
+        r.setex(f"render_active:{clip_id}", RENDER_LOCK_TIMEOUT, "1")
+        logger.info(f"Acquired render slot for clip {clip_id} ({current_renders + 1}/{MAX_CONCURRENT_RENDERS})")
+        return True
+    return False
+
+def release_render_slot(clip_id: int):
+    """Release a render slot."""
+    r = get_redis_client()
+    r.srem(RENDER_SEMAPHORE_KEY, str(clip_id))
+    r.delete(f"render_active:{clip_id}")
+    current = r.scard(RENDER_SEMAPHORE_KEY) or 0
+    logger.info(f"Released render slot for clip {clip_id} ({current}/{MAX_CONCURRENT_RENDERS} active)")
+
+def get_active_renders() -> list:
+    """Get list of clip IDs currently rendering."""
+    r = get_redis_client()
+    return list(r.smembers(RENDER_SEMAPHORE_KEY))
+
+def cleanup_stale_renders():
+    """Remove render slots where the timeout key has expired."""
+    r = get_redis_client()
+    active = r.smembers(RENDER_SEMAPHORE_KEY) or set()
+    for clip_id in active:
+        if not r.exists(f"render_active:{clip_id}"):
+            r.srem(RENDER_SEMAPHORE_KEY, clip_id)
+            logger.info(f"Cleaned up stale render slot for clip {clip_id}")
+# ============================================================
 
 VIDEO_PROCESSOR_URL = "http://video-processor:8080" # internal docker network
 
@@ -230,10 +311,51 @@ async def _transcribe_video_async(video_id: int):
     finally:
         db.close()
 
-@celery_app.task
-def process_viral_video_transcribe(video_id: int):
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(_transcribe_video_async(video_id))
+@celery_app.task(bind=True, max_retries=None)
+def process_viral_video_transcribe(self, video_id: int):
+    """
+    Transcribe video using Whisper. Uses Redis lock to ensure only one
+    transcription runs at a time (GPU queue). If locked, requeues with delay.
+    """
+    db = SessionLocal()
+    try:
+        video = db.query(InfluencerVideo).filter(InfluencerVideo.id == video_id).first()
+        if not video:
+            logger.error(f"Video {video_id} not found")
+            return
+
+        # Shortcut: If already transcribed, skip to analysis
+        if video.transcript_json:
+            logger.info(f"Video {video_id} already has transcript. Skipping to Analysis.")
+            process_viral_video_analyze.delay(video_id)
+            return
+
+        # Try to acquire the Whisper GPU lock
+        if acquire_whisper_lock(video_id):
+            logger.info(f"Acquired Whisper lock for video {video_id}")
+            db.close()  # Close before long-running operation
+            try:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(_transcribe_video_async(video_id))
+            finally:
+                release_whisper_lock(video_id)
+        else:
+            # Lock is held by another video - queue this one
+            lock_holder = get_whisper_lock_holder()
+            logger.info(f"Whisper GPU busy (video {lock_holder}). Queueing video {video_id} for retry in {WHISPER_QUEUE_RETRY_DELAY}s")
+
+            # Update status to show queued state
+            video.status = f"queued (waiting for video {lock_holder})"
+            db.commit()
+
+            # Requeue with delay
+            raise self.retry(countdown=WHISPER_QUEUE_RETRY_DELAY)
+    except self.MaxRetriesExceededError:
+        # This shouldn't happen with max_retries=None, but handle gracefully
+        logger.error(f"Video {video_id} exceeded max retries for Whisper queue")
+    finally:
+        if db.is_active:
+            db.close()
 
 async def _analyze_video_async(video_id: int):
     db = SessionLocal()
@@ -364,6 +486,79 @@ async def _render_clip_async(clip_id: int):
         else:
             selected_font = font_setting.value if font_setting else "Honk"
 
+        # --- B-ROLL MONTAGE PREPARATION ---
+        climax_time = None
+        broll_paths = []
+        broll_duration = 0
+
+        # Extract climax_time from clip (either from column or render_metadata)
+        if clip.climax_time:
+            climax_time = clip.climax_time
+        elif clip.render_metadata and clip.render_metadata.get("climax_time"):
+            climax_time = clip.render_metadata.get("climax_time")
+
+        # Get template settings (for B-roll categories and effect settings like B&W)
+        template = None
+        effect_settings = {}
+        if clip.template_id:
+            template = db.query(RenderTemplate).filter(RenderTemplate.id == clip.template_id).first()
+            if template:
+                effect_settings = template.effect_settings or {}
+                logger.info(f"Using template '{template.name}' with effect settings: {effect_settings}")
+
+        # Check if B-roll is enabled (template setting takes priority)
+        broll_enabled = True
+        if template and template.broll_enabled is False:
+            broll_enabled = False
+            logger.info(f"B-roll disabled by template '{template.name}'")
+        elif clip.render_metadata and clip.render_metadata.get("broll_enabled") is False:
+            broll_enabled = False
+
+        if climax_time and broll_enabled:
+            # Calculate B-roll duration: from climax to 2 seconds before clip end (for outro)
+            clip_duration = clip.end_time - clip.start_time
+            climax_relative = climax_time - clip.start_time  # Convert to clip-relative time
+            broll_duration = (clip_duration - 2) - climax_relative  # Leave 2s for outro
+
+            if broll_duration >= 3:  # Only fetch B-roll if we have at least 3 seconds
+                logger.info(f"Fetching B-roll for climax montage: climax at {climax_relative:.1f}s, duration {broll_duration:.1f}s")
+                try:
+                    from services.pexels import PexelsService, DEFAULT_BROLL_CATEGORIES
+                    pexels = PexelsService()
+
+                    # With 0.5s intervals, we need 2 clips per second
+                    clips_needed = int(broll_duration * 2) + 5  # Extra for variety
+
+                    # Get B-roll categories - PRIORITY:
+                    # 1. Grok-selected categories from render_metadata
+                    # 2. Template categories
+                    # 3. Default categories
+                    categories = DEFAULT_BROLL_CATEGORIES
+                    render_meta = clip.render_metadata or {}
+                    if render_meta.get("broll_categories"):
+                        categories = render_meta["broll_categories"]
+                        logger.info(f"Using Grok-selected B-roll categories: {categories}")
+                    elif template and template.broll_categories:
+                        categories = template.broll_categories
+                        logger.info(f"Using template B-roll categories: {categories}")
+
+                    broll_paths = pexels.get_broll_clips(
+                        categories=categories,
+                        count=clips_needed
+                    )
+
+                    # Convert paths for video-processor container
+                    # Backend sees /app/assets/broll/, video-processor sees /broll/
+                    broll_paths = [p.replace("/app/assets/broll/", "/broll/") for p in broll_paths]
+
+                    logger.info(f"Fetched {len(broll_paths)} B-roll clips for climax montage")
+                except Exception as e:
+                    logger.error(f"Failed to fetch B-roll: {e}")
+                    broll_paths = []
+            else:
+                logger.info(f"B-roll duration too short ({broll_duration:.1f}s < 3s), skipping montage")
+                broll_duration = 0
+
         async with httpx.AsyncClient(timeout=3600.0) as client:  # 60min for extraction + per-clip transcription
             payload = {
                 "video_path": video.local_path,
@@ -376,7 +571,13 @@ async def _render_clip_async(clip_id: int):
                 "outro_path": "/assets/outro.mp4",
                 "trigger_words": trigger_words,
                 "channel_handle": db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CHANNEL_HANDLE").first().value if db.query(LLMSettings).filter(LLMSettings.key == "VIRAL_CHANNEL_HANDLE").first() else "TheRealClipFactory",
-                "status_webhook_url": f"http://backend:8000/api/viral/viral-clips/{clip.id}/status"
+                "status_webhook_url": f"http://backend:8000/api/viral/viral-clips/{clip.id}/status",
+                # B-roll montage parameters
+                "climax_time": climax_time,
+                "broll_paths": broll_paths,
+                "broll_duration": broll_duration if broll_paths else 0,
+                # Template effect settings (e.g., black & white mode)
+                "effect_settings": effect_settings
             }
             
             response = await client.post(
@@ -402,7 +603,46 @@ async def _render_clip_async(clip_id: int):
     finally:
         db.close()
 
-@celery_app.task
-def process_viral_clip_render(clip_id: int):
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(_render_clip_async(clip_id))
+@celery_app.task(bind=True, max_retries=None)
+def process_viral_clip_render(self, clip_id: int):
+    """
+    Render a viral clip. Uses Redis semaphore to limit concurrent renders.
+    If all render slots are full, requeues with delay.
+    """
+    db = SessionLocal()
+    try:
+        clip = db.query(ViralClip).filter(ViralClip.id == clip_id).first()
+        if not clip:
+            logger.error(f"Clip {clip_id} not found")
+            return
+
+        # Clean up any stale render slots first
+        cleanup_stale_renders()
+
+        # Try to acquire a render slot
+        if acquire_render_slot(clip_id):
+            try:
+                clip.status = "rendering"
+                db.commit()
+                db.close()  # Close before long-running operation
+
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(_render_clip_async(clip_id))
+            finally:
+                release_render_slot(clip_id)
+        else:
+            # All render slots are full - queue this one
+            active = get_active_renders()
+            logger.info(f"Render queue full ({len(active)}/{MAX_CONCURRENT_RENDERS}). Queueing clip {clip_id} for retry in {RENDER_QUEUE_RETRY_DELAY}s")
+
+            # Update status to show queued state with position info
+            clip.status = f"queued ({len(active)}/{MAX_CONCURRENT_RENDERS} rendering)"
+            db.commit()
+
+            # Requeue with delay
+            raise self.retry(countdown=RENDER_QUEUE_RETRY_DELAY)
+    except self.MaxRetriesExceededError:
+        logger.error(f"Clip {clip_id} exceeded max retries for render queue")
+    finally:
+        if db.is_active:
+            db.close()

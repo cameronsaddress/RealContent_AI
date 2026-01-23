@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import api, {
     getInfluencers, createInfluencer, fetchInfluencerVideos,
-    analyzeVideo, getVideoDetails, getInfluencerVideos, getViralClips, API_URL
+    analyzeVideo, getVideoDetails, getInfluencerVideos, getViralClips, API_URL,
+    getBrollClips, uploadBrollFromYoutube, getBrollUploadStatus, retagBrollClips, deleteBrollClip
 } from '../api';
 import './ViralManager.css'; // We'll assume standard styling or create it
 
@@ -21,9 +22,24 @@ const ViralManager = () => {
     const [clips, setClips] = useState([]);
     const [viewingClip, setViewingClip] = useState(null);
 
+    // For Templates
+    const [templates, setTemplates] = useState([]);
+
+    // For B-Roll
+    const [brollClips, setBrollClips] = useState([]);
+    const [brollMetadata, setBrollMetadata] = useState(null);
+    const [brollYoutubeUrl, setBrollYoutubeUrl] = useState('');
+    const [brollCategory, setBrollCategory] = useState('');
+    const [brollUploadJobs, setBrollUploadJobs] = useState([]);
+    const [brollLoading, setBrollLoading] = useState(false);
+    const [brollTagging, setBrollTagging] = useState(false);
+    const [brollFilter, setBrollFilter] = useState('all');
+
     useEffect(() => {
         loadInfluencers();
         loadClips();
+        loadTemplates();
+        loadBroll();
     }, []);
 
     const loadClips = async () => {
@@ -31,6 +47,125 @@ const ViralManager = () => {
             const data = await getViralClips();
             setClips(data);
         } catch (e) { console.error(e); }
+    };
+
+    const loadBroll = async () => {
+        try {
+            const data = await getBrollClips();
+            setBrollClips(data.clips || []);
+            setBrollMetadata(data.metadata || null);
+        } catch (e) { console.error('Failed to load B-roll:', e); }
+    };
+
+    const handleBrollUpload = async (e) => {
+        e.preventDefault();
+        if (!brollYoutubeUrl.trim()) return;
+
+        setBrollLoading(true);
+        try {
+            const result = await uploadBrollFromYoutube(brollYoutubeUrl, brollCategory || null);
+            setBrollUploadJobs(prev => [...prev, { job_id: result.job_id, status: 'started', url: brollYoutubeUrl }]);
+            setBrollYoutubeUrl('');
+            setBrollCategory('');
+            // Start polling for status
+            pollBrollJob(result.job_id);
+        } catch (e) {
+            alert('Upload failed: ' + (e.response?.data?.detail || e.message));
+        } finally {
+            setBrollLoading(false);
+        }
+    };
+
+    const pollBrollJob = async (jobId) => {
+        const poll = async () => {
+            try {
+                const status = await getBrollUploadStatus(jobId);
+                setBrollUploadJobs(prev => prev.map(j =>
+                    j.job_id === jobId ? { ...j, ...status } : j
+                ));
+                if (status.status === 'complete' || status.status === 'error') {
+                    loadBroll(); // Refresh clips list
+                    return;
+                }
+                setTimeout(poll, 3000);
+            } catch (e) {
+                console.error('Poll error:', e);
+            }
+        };
+        poll();
+    };
+
+    const handleRetagBroll = async (force = false) => {
+        setBrollTagging(true);
+        try {
+            const result = await retagBrollClips(force, 0);
+            alert(`Tagged ${result.clips_tagged} clips`);
+            loadBroll();
+        } catch (e) {
+            alert('Tagging failed: ' + (e.response?.data?.detail || e.message));
+        } finally {
+            setBrollTagging(false);
+        }
+    };
+
+    const handleDeleteBroll = async (filename) => {
+        if (!window.confirm(`Delete ${filename}?`)) return;
+        try {
+            await deleteBrollClip(filename);
+            loadBroll();
+        } catch (e) {
+            alert('Delete failed: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    const loadTemplates = async () => {
+        try {
+            const res = await api.get('/api/viral/templates');
+            setTemplates(res.data);
+        } catch (e) { console.error('Failed to load templates:', e); }
+    };
+
+    const handleTemplateChange = async (clipId, templateId) => {
+        try {
+            await api.put(`/api/viral/viral-clips/${clipId}/template?template_id=${templateId}`);
+            // Refresh both video clips and standalone clips list
+            if (selectedInfluencer) {
+                loadVideos(selectedInfluencer.id, true);
+            }
+            loadClips();
+        } catch (e) {
+            console.error('Failed to update template:', e);
+        }
+    };
+
+    // Template selector dropdown component
+    const TemplateSelector = ({ clip, compact = false }) => {
+        const currentTemplate = templates.find(t => t.id === clip.template_id);
+        const recommendedTemplate = templates.find(t => t.id === clip.recommended_template_id);
+
+        return (
+            <div className={`template-selector ${compact ? 'compact' : ''}`}>
+                <select
+                    value={clip.template_id || ''}
+                    onChange={(e) => handleTemplateChange(clip.id, parseInt(e.target.value) || 0)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="template-dropdown"
+                    title={currentTemplate ? currentTemplate.description : 'No template selected'}
+                >
+                    <option value="">No Template</option>
+                    {templates.map(t => (
+                        <option key={t.id} value={t.id}>
+                            {t.name}{t.id === clip.recommended_template_id ? ' ★' : ''}
+                        </option>
+                    ))}
+                </select>
+                {recommendedTemplate && !compact && clip.template_id !== clip.recommended_template_id && (
+                    <span className="template-recommendation" title={`AI recommended: ${recommendedTemplate.name}`}>
+                        💡 {recommendedTemplate.name}
+                    </span>
+                )}
+            </div>
+        );
     };
 
     const loadInfluencers = async () => {
@@ -188,6 +323,7 @@ const ViralManager = () => {
                     <button className={activeTab === 'influencers' ? 'active' : ''} onClick={() => setActiveTab('influencers')}>Influencers</button>
                     <button className={activeTab === 'videos' ? 'active' : ''} onClick={() => setActiveTab('videos')}>Videos</button>
                     <button className={activeTab === 'clips' ? 'active' : ''} onClick={() => setActiveTab('clips')}>Clips</button>
+                    <button className={activeTab === 'broll' ? 'active' : ''} onClick={() => setActiveTab('broll')}>B-Roll</button>
                 </div>
             </div>
 
@@ -287,6 +423,7 @@ const ViralManager = () => {
                                                                         <div className="clip-info">
                                                                             <span className="clip-type">{c.clip_type}</span>:
                                                                             <span className="clip-title" title={c.title}>{c.title}</span>
+                                                                            <TemplateSelector clip={c} compact={true} />
                                                                         </div>
                                                                         <div className="mini-actions">
                                                                             <div className="status-display">
@@ -354,19 +491,40 @@ const ViralManager = () => {
                         <div className="clips-panel">
                             <button onClick={loadClips}>Refresh Clips</button>
                             <div className="card-grid">
-                                {clips.map(c => {
+                                {[...clips]
+                                    .sort((a, b) => {
+                                        // Sort by updated_at (render time) first, then created_at
+                                        const aTime = new Date(a.updated_at || a.created_at || 0);
+                                        const bTime = new Date(b.updated_at || b.created_at || 0);
+                                        return bTime - aTime; // Newest first
+                                    })
+                                    .map(c => {
                                     const isReady = ['completed', 'ready'].includes(c.status?.toLowerCase());
                                     const isRendering = ['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s));
                                     const canRender = c.status === 'pending' || c.status === 'error' || c.status === 'failed';
 
+                                    // Format timestamp for display
+                                    const timestamp = c.updated_at || c.created_at;
+                                    const formattedTime = timestamp ? new Date(timestamp).toLocaleString('en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: 'numeric',
+                                        minute: '2-digit',
+                                        hour12: true
+                                    }) : '';
+
                                     return (
                                         <div key={c.id} className="card clip-card">
-                                            <h4>{c.title}</h4>
+                                            <div className="clip-header">
+                                                <h4>{c.title}</h4>
+                                                {formattedTime && <span className="clip-timestamp">{formattedTime}</span>}
+                                            </div>
                                             <div className="status-row">
                                                 {isRendering && <span className="spinner-small"></span>}
                                                 <span className={`status ${c.status}`}>{c.status}</span>
                                             </div>
                                             <p>Type: {c.clip_type}</p>
+                                            <TemplateSelector clip={c} />
                                             <div className="actions">
                                                 {canRender && (
                                                     <button
@@ -403,6 +561,188 @@ const ViralManager = () => {
                         </div>
                     )
                 }
+
+                {activeTab === 'broll' && (
+                    <div className="broll-panel">
+                        <div className="panel-header">
+                            <h3>B-Roll Library</h3>
+                            <div className="header-actions">
+                                <button onClick={loadBroll}>Refresh</button>
+                                <button
+                                    onClick={() => handleRetagBroll(false)}
+                                    disabled={brollTagging}
+                                >
+                                    {brollTagging ? 'Tagging...' : 'Tag Untagged'}
+                                </button>
+                                <button
+                                    onClick={() => handleRetagBroll(true)}
+                                    disabled={brollTagging}
+                                    className="secondary-btn"
+                                >
+                                    Re-Tag All
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Upload Form */}
+                        <div className="broll-upload-section card">
+                            <h4>Add B-Roll from YouTube</h4>
+                            <form onSubmit={handleBrollUpload} className="upload-form">
+                                <input
+                                    type="text"
+                                    placeholder="YouTube URL (video will be split into clips)"
+                                    value={brollYoutubeUrl}
+                                    onChange={e => setBrollYoutubeUrl(e.target.value)}
+                                    className="url-input"
+                                />
+                                <select
+                                    value={brollCategory}
+                                    onChange={e => setBrollCategory(e.target.value)}
+                                    className="category-select"
+                                >
+                                    <option value="">Auto-detect category</option>
+                                    <option value="war">War / Military</option>
+                                    <option value="wealth">Wealth / Success</option>
+                                    <option value="faith">Faith / Religion</option>
+                                    <option value="strength">Strength / Fitness</option>
+                                    <option value="nature">Nature / Landscapes</option>
+                                    <option value="people">People / Crowds</option>
+                                    <option value="chaos">Chaos / Destruction</option>
+                                    <option value="victory">Victory / Celebration</option>
+                                    <option value="power">Power / Authority</option>
+                                    <option value="history">History / Archive</option>
+                                </select>
+                                <button type="submit" disabled={brollLoading || !brollYoutubeUrl.trim()}>
+                                    {brollLoading ? 'Starting...' : 'Upload & Process'}
+                                </button>
+                            </form>
+
+                            {/* Active Jobs */}
+                            {brollUploadJobs.length > 0 && (
+                                <div className="upload-jobs">
+                                    <h5>Processing Jobs</h5>
+                                    {brollUploadJobs.map(job => (
+                                        <div key={job.job_id} className={`job-item ${job.status}`}>
+                                            <span className="job-url">{job.url?.substring(0, 50)}...</span>
+                                            <span className="job-status">
+                                                {job.status === 'complete' ? '✓ Complete' :
+                                                    job.status === 'error' ? '✗ Error' :
+                                                        <><span className="spinner-small"></span> {job.status}</>}
+                                            </span>
+                                            {job.clips_created && <span className="job-clips">{job.clips_created} clips</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Stats */}
+                        {brollMetadata && (
+                            <div className="broll-stats card">
+                                <h4>Library Stats</h4>
+                                <div className="stats-grid">
+                                    <div className="stat">
+                                        <span className="stat-value">{brollMetadata.total_clips || 0}</span>
+                                        <span className="stat-label">Total Clips</span>
+                                    </div>
+                                    {brollMetadata.category_counts && Object.entries(brollMetadata.category_counts).map(([cat, count]) => (
+                                        <div
+                                            key={cat}
+                                            className={`stat category-stat ${brollFilter === cat ? 'active' : ''}`}
+                                            onClick={() => setBrollFilter(brollFilter === cat ? 'all' : cat)}
+                                        >
+                                            <span className="stat-value">{count}</span>
+                                            <span className="stat-label">{cat}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Filter */}
+                        <div className="broll-filter">
+                            <span>Filter:</span>
+                            <select value={brollFilter} onChange={e => setBrollFilter(e.target.value)}>
+                                <option value="all">All Categories</option>
+                                <option value="war">War</option>
+                                <option value="wealth">Wealth</option>
+                                <option value="faith">Faith</option>
+                                <option value="strength">Strength</option>
+                                <option value="nature">Nature</option>
+                                <option value="people">People</option>
+                                <option value="chaos">Chaos</option>
+                                <option value="victory">Victory</option>
+                                <option value="power">Power</option>
+                                <option value="history">History</option>
+                                <option value="untagged">Untagged</option>
+                            </select>
+                            <span className="filter-count">
+                                {brollClips.filter(c =>
+                                    brollFilter === 'all' ? true :
+                                        brollFilter === 'untagged' ? (!c.categories || c.categories.length === 0) :
+                                            c.categories?.includes(brollFilter)
+                                ).length} clips
+                            </span>
+                        </div>
+
+                        {/* Clips Grid */}
+                        <div className="broll-grid">
+                            {brollClips
+                                .filter(c =>
+                                    brollFilter === 'all' ? true :
+                                        brollFilter === 'untagged' ? (!c.categories || c.categories.length === 0) :
+                                            c.categories?.includes(brollFilter)
+                                )
+                                .map(clip => (
+                                    <div key={clip.filename} className="broll-card card">
+                                        <div className="broll-preview">
+                                            <video
+                                                src={`${API_URL}/api/viral/broll/file/${clip.filename}`}
+                                                muted
+                                                loop
+                                                onMouseEnter={e => e.target.play().catch(() => {})}
+                                                onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }}
+                                            />
+                                        </div>
+                                        <div className="broll-info">
+                                            <span className="broll-filename" title={clip.filename}>
+                                                {clip.filename.length > 25 ? clip.filename.substring(0, 22) + '...' : clip.filename}
+                                            </span>
+                                            {clip.duration && <span className="broll-duration">{clip.duration.toFixed(1)}s</span>}
+                                            {clip.caption && (
+                                                <p className="broll-caption" title={clip.caption}>
+                                                    {clip.caption.length > 50 ? clip.caption.substring(0, 47) + '...' : clip.caption}
+                                                </p>
+                                            )}
+                                            <div className="broll-categories">
+                                                {clip.categories?.length > 0 ? (
+                                                    clip.categories.map(cat => (
+                                                        <span key={cat} className={`category-tag ${cat}`}>{cat}</span>
+                                                    ))
+                                                ) : (
+                                                    <span className="category-tag untagged">untagged</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="broll-actions">
+                                            <button
+                                                className="delete-btn"
+                                                onClick={() => handleDeleteBroll(clip.filename)}
+                                            >
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                        </div>
+
+                        {brollClips.length === 0 && (
+                            <div className="empty-state">
+                                <p>No B-roll clips yet. Upload a YouTube video to get started!</p>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div >
             {
                 showAddModal && (

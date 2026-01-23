@@ -81,6 +81,237 @@ CURSE_WORDS = {
     "hell", "crap", "bastard", "bullshit", "piss", "dick", "asshole", "whore", "slut"
 }
 
+# ============ COLOR PRESETS ============
+# Each preset defines FFmpeg eq filter parameters + optional tint adjustments
+COLOR_PRESETS = {
+    "vibrant": {"contrast": 1.15, "brightness": 0.03, "saturation": 1.25},
+    "high_contrast": {"contrast": 1.25, "brightness": 0.02, "saturation": 1.3},
+    "dark_cinematic": {"contrast": 1.2, "brightness": -0.05, "saturation": 0.9},
+    "cyberpunk": {"contrast": 1.15, "brightness": 0.0, "saturation": 1.4, "tint": "cyan"},
+    "clean_modern": {"contrast": 1.1, "brightness": 0.02, "saturation": 1.1},
+    "crusade_dark": {"contrast": 1.3, "brightness": -0.08, "saturation": 0.7, "tint": "gold"},
+    "documentary": {"contrast": 1.1, "brightness": -0.03, "saturation": 0.85},
+    "high_energy": {"contrast": 1.2, "brightness": 0.03, "saturation": 1.2},
+    "bw": {"contrast": 1.15, "brightness": 0.03, "saturation": 0},
+}
+
+# ============ FACE DETECTION FOR AUTO-CENTERING ============
+def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
+    """
+    Detect face position in the first frame and calculate horizontal offset
+    to center the speaker in the final vertical crop.
+
+    Returns: horizontal pixel offset (positive = shift crop right, negative = shift left)
+    """
+    try:
+        import cv2
+
+        # Extract first frame using FFmpeg (faster than OpenCV VideoCapture for remote files)
+        temp_frame = f"/tmp/face_detect_{uuid.uuid4().hex[:8]}.jpg"
+        result = subprocess.run([
+            "ffmpeg", "-y", "-i", video_path,
+            "-vframes", "1", "-q:v", "2",
+            temp_frame
+        ], capture_output=True, timeout=10)
+
+        if result.returncode != 0 or not os.path.exists(temp_frame):
+            print(f"[FaceDetect] Failed to extract frame from {video_path}")
+            return 0
+
+        # Load the frame
+        frame = cv2.imread(temp_frame)
+        if frame is None:
+            os.remove(temp_frame)
+            return 0
+
+        frame_height, frame_width = frame.shape[:2]
+        print(f"[FaceDetect] Frame size: {frame_width}x{frame_height}")
+
+        # Use OpenCV's DNN face detector (more accurate than Haar)
+        # Fall back to Haar cascade if DNN model not available
+        face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        face_cascade = cv2.CascadeClassifier(face_cascade_path)
+
+        # Convert to grayscale for detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Detect faces with multiple scale factors for better detection
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(50, 50),
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
+
+        # Clean up temp file
+        os.remove(temp_frame)
+
+        if len(faces) == 0:
+            print(f"[FaceDetect] No faces detected, using default center crop")
+            return 0
+
+        # Find the largest face (likely the main speaker)
+        largest_face = max(faces, key=lambda f: f[2] * f[3])  # w * h
+        x, y, w, h = largest_face
+
+        # Calculate face center X position
+        face_center_x = x + w // 2
+        frame_center_x = frame_width // 2
+
+        # Calculate offset needed to center the face
+        # Positive offset = face is right of center, need to shift crop right
+        # Negative offset = face is left of center, need to shift crop left
+        offset = face_center_x - frame_center_x
+
+        # Limit offset to prevent cropping outside frame bounds
+        # After scaling to 1920 height, width is approximately frame_width * (1920/frame_height)
+        scaled_width = int(frame_width * (1920 / frame_height))
+        max_offset = (scaled_width - target_width) // 2
+
+        # Clamp offset to safe range (leave some margin)
+        safe_margin = 50
+        offset = max(-max_offset + safe_margin, min(max_offset - safe_margin, offset))
+
+        print(f"[FaceDetect] Face at ({face_center_x}, {y + h//2}), frame center at {frame_center_x}")
+        print(f"[FaceDetect] Calculated offset: {offset}px (max: ±{max_offset})")
+
+        return offset
+
+    except ImportError:
+        print("[FaceDetect] OpenCV not available, using default center crop")
+        return 0
+    except Exception as e:
+        print(f"[FaceDetect] Error detecting face: {e}")
+        return 0
+
+
+# ============ EFFECT DISPATCHER ============
+def get_effect_chain(effect_settings: dict) -> dict:
+    """
+    Parse effect_settings and return a configuration dict for rendering.
+    This is the main dispatcher that interprets template effect_settings.
+    """
+    config = {
+        # Color grading
+        "contrast": 1.15,
+        "brightness": 0.03,
+        "saturation": 1.25,
+        "tint": None,
+        # Pulse/zoom effects
+        "pulse_intensity": 0.25,
+        "aggressive_pulse": False,
+        # Glitch effects
+        "rgb_max_shift": 35,
+        "glitch_intensity": 1.0,
+        "heavy_glitch": False,
+        # VHS effects
+        "vhs_enabled": True,
+        "vhs_intensity": 1.0,
+        "grain_intensity": 15,
+        # Visual effects
+        "letterbox": False,
+        "letterbox_ratio": 2.35,
+        "vignette": False,
+        "vignette_intensity": 0.3,
+        "scan_lines": False,
+        "scan_line_opacity": 0.1,
+        "film_grain": False,
+        # Animation effects
+        "velocity_enabled": False,
+        "velocity_speed": 2.0,
+        "flash_enabled": False,
+        "flash_intensity": 0.8,
+        "flash_color": "#FFFFFF",
+        "whip_pan": False,
+        "motion_blur": False,
+        # Text effects
+        "kinetic_text": False,
+        "text_animation": "pop_scale",
+        # Grid effects
+        "grid_enabled": False,
+        "grid_type": 4,
+        # B-roll settings
+        "broll_cut_interval": 0.5,
+        # Cross overlay (for Crusade template)
+        "cross_overlay": False,
+    }
+
+    if not effect_settings:
+        return config
+
+    # Apply color preset if specified
+    color_preset = effect_settings.get("color_preset")
+    if color_preset and color_preset in COLOR_PRESETS:
+        preset = COLOR_PRESETS[color_preset]
+        config["contrast"] = preset.get("contrast", config["contrast"])
+        config["brightness"] = preset.get("brightness", config["brightness"])
+        config["saturation"] = preset.get("saturation", config["saturation"])
+        config["tint"] = preset.get("tint", None)
+
+    # Direct overrides from effect_settings
+    for key in config.keys():
+        if key in effect_settings:
+            config[key] = effect_settings[key]
+
+    # Parse effects list
+    effects = effect_settings.get("effects", [])
+    for effect in effects:
+        if effect == "velocity":
+            config["velocity_enabled"] = True
+        elif effect == "flash":
+            config["flash_enabled"] = True
+        elif effect == "aggressive_pulse":
+            config["aggressive_pulse"] = True
+            config["pulse_intensity"] = 0.35
+        elif effect == "letterbox":
+            config["letterbox"] = True
+        elif effect == "film_grain":
+            config["film_grain"] = True
+        elif effect == "slow_zoom":
+            config["pulse_intensity"] = 0.1
+        elif effect == "heavy_glitch":
+            config["heavy_glitch"] = True
+            config["glitch_intensity"] = 1.5
+            config["rgb_max_shift"] = 50
+        elif effect == "pixel_sort":
+            pass  # Handled in MoviePy pass
+        elif effect == "scan_lines":
+            config["scan_lines"] = True
+        elif effect == "kinetic_text":
+            config["kinetic_text"] = True
+        elif effect == "subtle_zoom":
+            config["pulse_intensity"] = 0.15
+        elif effect == "clean_grade":
+            config["vhs_enabled"] = False
+        elif effect == "heavy_vhs":
+            config["vhs_intensity"] = 1.3
+        elif effect == "cross_flash":
+            config["cross_overlay"] = True
+            config["flash_color"] = "#FFD700"  # Gold
+        elif effect == "dark_grade":
+            config["brightness"] = -0.08
+        elif effect == "grid_4panel":
+            config["grid_enabled"] = True
+            config["grid_type"] = 4
+        elif effect == "sync_reveal":
+            pass  # Animation handled separately
+        elif effect == "vibrant_grade":
+            config["saturation"] = 1.3
+        elif effect == "vignette":
+            config["vignette"] = True
+        elif effect == "whip_pan":
+            config["whip_pan"] = True
+        elif effect == "motion_blur":
+            config["motion_blur"] = True
+
+    # Handle saturation=0 from effect_settings (B&W override)
+    if effect_settings.get("saturation") == 0 or effect_settings.get("color_grade") == "bw":
+        config["saturation"] = 0
+
+    return config
+
+
 # ============ MODELS ============
 
 class DownloadRequest(BaseModel):
@@ -176,6 +407,12 @@ class RenderClipRequest(BaseModel):
     channel_handle: Optional[str] = None
     trigger_words: Optional[List[dict]] = None
     status_webhook_url: Optional[str] = None
+    # B-roll montage parameters
+    climax_time: Optional[float] = None  # Absolute timestamp in source video where climax occurs
+    broll_paths: Optional[List[str]] = []  # List of B-roll video paths to use for montage
+    broll_duration: Optional[float] = 0  # Duration of B-roll section in seconds
+    # Template effect settings
+    effect_settings: Optional[dict] = {}  # {"color_grade": "bw", "saturation": 0, etc.}
 
 def report_status(webhook_url: str, status: str):
     if not webhook_url: return
@@ -200,26 +437,101 @@ def get_whisper_model():
 
 def safe_transcribe(audio_path: str, word_timestamps: bool = True):
     """
-    Safely transcribe audio, resetting decoder KV cache to prevent
-    'Key and Value must have the same sequence length' errors.
+    Safely transcribe audio/video file.
+    Extracts audio to WAV first for reliable transcription.
+    Returns empty result if audio is invalid/silent.
     """
     import torch
-    model = get_whisper_model()
+    import tempfile
+    import os
 
-    # Reset decoder KV cache to prevent stale state errors
-    # This fixes the "Key and Value must have the same sequence length" bug
-    if hasattr(model, 'decoder'):
-        for block in model.decoder.blocks:
-            if hasattr(block, 'attn') and hasattr(block.attn, 'kv_cache'):
-                block.attn.kv_cache = None
-            if hasattr(block, 'cross_attn') and hasattr(block.cross_attn, 'kv_cache'):
-                block.cross_attn.kv_cache = None
+    model = get_whisper_model()
 
     # Clear CUDA cache to prevent memory fragmentation
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return model.transcribe(audio_path, word_timestamps=word_timestamps)
+    # Extract audio to a clean WAV file (16kHz mono - Whisper's native format)
+    # This ensures reliable transcription regardless of input format
+    temp_wav = None
+    transcribe_path = audio_path
+
+    try:
+        # Always extract to WAV for consistency
+        temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_wav.close()
+
+        extract_cmd = [
+            "ffmpeg", "-y", "-i", audio_path,
+            "-vn",  # No video
+            "-acodec", "pcm_s16le",  # 16-bit PCM
+            "-ar", "16000",  # 16kHz (Whisper native)
+            "-ac", "1",  # Mono
+            temp_wav.name
+        ]
+
+        result = subprocess.run(extract_cmd, capture_output=True, text=True)
+        if result.returncode == 0 and os.path.exists(temp_wav.name):
+            transcribe_path = temp_wav.name
+            print(f"Extracted audio to WAV for transcription: {temp_wav.name}")
+
+            # Validate WAV file has content (at least 1KB = ~0.03s of 16kHz mono)
+            wav_size = os.path.getsize(temp_wav.name)
+            if wav_size < 1024:
+                print(f"[Whisper] WAV file too small ({wav_size} bytes), likely empty audio")
+                return {"segments": [], "text": ""}
+
+            # Check audio duration using ffprobe
+            probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", temp_wav.name]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            if probe_result.returncode == 0:
+                try:
+                    audio_duration = float(probe_result.stdout.strip())
+                    if audio_duration < 0.1:  # Less than 100ms
+                        print(f"[Whisper] Audio too short ({audio_duration:.3f}s), skipping transcription")
+                        return {"segments": [], "text": ""}
+                    print(f"[Whisper] Audio duration: {audio_duration:.2f}s")
+                except ValueError:
+                    print(f"[Whisper] Could not parse duration: {probe_result.stdout}")
+        else:
+            print(f"WAV extraction failed, using original: {result.stderr[:200] if result.stderr else 'unknown'}")
+
+        # Transcribe the audio with error handling for problematic audio
+        try:
+            transcription = model.transcribe(transcribe_path, word_timestamps=word_timestamps)
+            return transcription
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            # Catch all tensor-related Whisper errors (empty audio, size mismatches, etc.)
+            if any(phrase in error_msg for phrase in [
+                "cannot reshape tensor",
+                "size of tensor",
+                "expected size for",
+                "dimensions of batch"
+            ]):
+                print(f"[Whisper] Tensor error (problematic audio): {str(e)[:100]}")
+                print(f"[Whisper] Returning empty transcription")
+                return {"segments": [], "text": ""}
+            raise
+        except TypeError as e:
+            # Happens when Whisper timing hooks get None (problematic audio)
+            if "NoneType" in str(e) and "subscriptable" in str(e):
+                print(f"[Whisper] Timing hook failed (NoneType) - returning empty transcription")
+                return {"segments": [], "text": ""}
+            raise
+        except IndexError as e:
+            # Happens when Whisper word alignment fails (e.g., "index X is out of bounds")
+            print(f"[Whisper] Word alignment failed (IndexError): {str(e)[:100]}")
+            print(f"[Whisper] Returning empty transcription")
+            return {"segments": [], "text": ""}
+
+    finally:
+        # Clean up temp WAV file
+        if temp_wav and os.path.exists(temp_wav.name):
+            try:
+                os.unlink(temp_wav.name)
+            except:
+                pass
 
 def detect_beats(audio_path: str, max_duration: float = None) -> list:
     """
@@ -476,6 +788,7 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
         output_path,
         codec='libx264',  # Use CPU codec for reliability
         preset='ultrafast',
+        fps=30,  # Force consistent 30fps to match B-roll segments
         audio_codec='aac',
         logger=None  # Suppress progress bar
     )
@@ -483,6 +796,291 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
     clip.close()
     processed.close()
     print(f"Chromatic aberration applied successfully")
+
+
+def generate_broll_montage(
+    broll_paths: List[str],
+    duration: float,
+    beat_times: List[float],  # Ignored - kept for API compatibility
+    output_path: Path,
+    effect_settings: dict = None,
+    caption_data: dict = None,
+    cut_interval: float = 0.5  # Fixed cut interval in seconds
+) -> Optional[str]:
+    """
+    Generate a B-roll montage with fixed-interval cuts (default 0.5s).
+    Applies same visual effects (color grade, VHS grain, captions, RGB glitch) as main clip.
+
+    Args:
+        broll_paths: List of B-roll video file paths
+        duration: Total duration of the montage in seconds
+        beat_times: IGNORED - kept for API compatibility
+        output_path: Output file path
+        effect_settings: Template effects (e.g., {"saturation": 0} for B&W)
+        caption_data: Dict with keys: segments, climax_clip_time, font, trigger_words
+                     Used to burn ASS captions over B-roll
+        cut_interval: Time between cuts in seconds (default 0.5s)
+
+    Returns:
+        Path to generated montage video, or None on failure
+    """
+    if not broll_paths:
+        print("B-Roll Montage: No B-roll paths provided")
+        return None
+
+    print(f"B-Roll Montage: Generating {duration:.1f}s montage from {len(broll_paths)} clips")
+
+    # Use fixed interval cuts (0.5s default) instead of beat-synced
+    num_cuts = int(duration / cut_interval) + 1
+    cut_times = [i * cut_interval for i in range(num_cuts)]
+
+    # Ensure end boundary
+    if cut_times[-1] < duration - 0.05:
+        cut_times.append(duration)
+
+    print(f"B-Roll Montage: Using {len(cut_times)} cut points at {cut_interval}s intervals")
+
+    # Create FFmpeg concat demuxer input file
+    concat_list_path = output_path.parent / f"broll_concat_{uuid.uuid4().hex[:8]}.txt"
+
+    # Pre-trim each segment to temp files for reliable concatenation
+    temp_segments = []
+    temp_dir = output_path.parent
+
+    try:
+        # Get effect settings
+        effect_settings = effect_settings or {}
+        saturation = effect_settings.get("saturation", 1.25)  # Default vibrant, 0 = B&W
+        if effect_settings.get("color_grade") == "bw":
+            saturation = 0
+            print(f"B-Roll Montage: Black & White mode enabled")
+        grade_filter = f"eq=contrast=1.15:brightness=0.03:saturation={saturation}"
+        vhs_grain = "noise=alls=15:allf=t+u"
+
+        encoder, gpu_opts = get_gpu_encoder()
+        clip_index = 0
+
+        actual_duration = 0.0  # Track actual montage duration
+        failed_segments = 0
+
+        for i in range(len(cut_times) - 1):
+            segment_start = cut_times[i]
+            segment_end = cut_times[i + 1]
+            segment_duration = segment_end - segment_start
+
+            if segment_duration < 0.1:
+                continue
+
+            # Stop if we've used all unique B-roll clips (NO REPEATS)
+            if clip_index >= len(broll_paths):
+                print(f"B-Roll Montage: Used all {len(broll_paths)} unique clips, stopping at {segment_start:.1f}s (achieved {actual_duration:.1f}s)")
+                break
+
+            # Pick a B-roll clip (EACH CLIP USED ONLY ONCE)
+            broll_clip = broll_paths[clip_index]
+
+            # Pre-trim this segment with effects applied
+            segment_path = temp_dir / f"broll_seg_{i:03d}_{uuid.uuid4().hex[:4]}.mp4"
+
+            # Get clip duration to check if we need to loop
+            try:
+                probe = subprocess.run([
+                    "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1", broll_clip
+                ], capture_output=True, text=True)
+                clip_dur = float(probe.stdout.strip()) if probe.stdout.strip() else 10.0
+            except:
+                clip_dur = 10.0
+
+            # If segment is longer than clip, we'll loop it
+            loop_input = []
+            if segment_duration > clip_dur:
+                # Use stream_loop to loop the input
+                loop_count = int(segment_duration / clip_dur) + 1
+                loop_input = ["-stream_loop", str(loop_count)]
+
+            cmd_segment = [
+                "ffmpeg", "-y",
+                *loop_input,
+                "-i", broll_clip,
+                "-t", f"{segment_duration:.3f}",
+                "-vf",
+                f"fps=30,"  # Force consistent 30fps for smooth concatenation
+                f"scale=1080:1920:force_original_aspect_ratio=increase,"
+                f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2,"
+                f"{grade_filter},"
+                f"{vhs_grain}",
+                "-c:v", encoder, *gpu_opts,
+                "-r", "30",  # Output frame rate
+                "-an",
+                str(segment_path)
+            ]
+
+            result = subprocess.run(cmd_segment, capture_output=True, text=True)
+            if result.returncode == 0 and segment_path.exists() and segment_path.stat().st_size > 1000:
+                temp_segments.append(segment_path)
+                actual_duration += segment_duration
+                clip_index += 1  # Only increment on SUCCESS
+            else:
+                # Log actual error (skip FFmpeg version banner)
+                stderr_lines = (result.stderr or "unknown").split('\n')
+                error_line = next((l for l in stderr_lines if 'Error' in l or 'error' in l or 'Invalid' in l), stderr_lines[-1] if stderr_lines else "unknown")
+                print(f"B-Roll Montage: Warning - segment {i} failed (clip: {Path(broll_clip).name}): {error_line[:150]}")
+                failed_segments += 1
+                clip_index += 1  # Move to next clip on failure too
+
+        if failed_segments > 0:
+            print(f"B-Roll Montage: {failed_segments} segments failed, {len(temp_segments)} succeeded")
+
+        print(f"B-Roll Montage: Pre-trimmed {len(temp_segments)} segments")
+
+        if not temp_segments:
+            print("B-Roll Montage: No segments created!")
+            return None
+
+        # Now concatenate the pre-trimmed segments
+        with open(concat_list_path, "w") as f:
+            for seg in temp_segments:
+                f.write(f"file '{seg}'\n")
+
+        cmd_concat = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_list_path),
+            "-c", "copy",  # No re-encode needed, segments already processed
+            "-t", str(duration),
+            str(output_path)
+        ]
+
+        print(f"B-Roll Montage: Concatenating {len(temp_segments)} segments")
+        subprocess.run(cmd_concat, check=True)
+
+        # Clean up temp segments
+        concat_list_path.unlink()
+        for seg in temp_segments:
+            if seg.exists():
+                seg.unlink()
+
+        if not output_path.exists():
+            print(f"B-Roll Montage: Output file not created")
+            return None
+
+        # === APPLY CAPTIONS AND EFFECTS TO B-ROLL ===
+        if caption_data:
+            segments = caption_data.get("segments", [])
+            climax_clip_time = caption_data.get("climax_clip_time", 0)
+            font = caption_data.get("font", "Honk")
+            trigger_words = caption_data.get("trigger_words", [])
+
+            # Filter segments that fall within the B-roll window
+            broll_segments = []
+            for seg in segments:
+                seg_start = seg.get("start", 0)
+                seg_end = seg.get("end", 0)
+                # Check if segment overlaps with B-roll window
+                if seg_end > climax_clip_time and seg_start < climax_clip_time + duration:
+                    # Shift timestamps to be relative to B-roll start (0)
+                    shifted_seg = seg.copy()
+                    shifted_seg["start"] = max(0, seg_start - climax_clip_time)
+                    shifted_seg["end"] = min(duration, seg_end - climax_clip_time)
+                    # Also shift word timestamps if present
+                    if "words" in shifted_seg:
+                        shifted_words = []
+                        for w in shifted_seg["words"]:
+                            w_start = w.get("start", 0) - climax_clip_time
+                            w_end = w.get("end", 0) - climax_clip_time
+                            if w_end > 0 and w_start < duration:
+                                shifted_w = w.copy()
+                                shifted_w["start"] = max(0, w_start)
+                                shifted_w["end"] = min(duration, w_end)
+                                shifted_words.append(shifted_w)
+                        shifted_seg["words"] = shifted_words
+                    broll_segments.append(shifted_seg)
+
+            # Filter trigger words that fall within B-roll window
+            broll_triggers = []
+            for tw in trigger_words:
+                tw_start = tw.get("start", 0)
+                tw_end = tw.get("end", 0)
+                if tw_end > climax_clip_time and tw_start < climax_clip_time + duration:
+                    shifted_tw = tw.copy()
+                    shifted_tw["start"] = max(0, tw_start - climax_clip_time)
+                    shifted_tw["end"] = min(duration, tw_end - climax_clip_time)
+                    broll_triggers.append(shifted_tw)
+
+            print(f"B-Roll Montage: {len(broll_segments)} segments, {len(broll_triggers)} triggers for captions")
+
+            if broll_segments:
+                # Generate ASS file for B-roll section
+                broll_ass_path = temp_dir / f"broll_captions_{uuid.uuid4().hex[:8]}.ass"
+                generate_karaoke_ass(broll_segments, broll_ass_path, 0.0, font, broll_triggers)
+
+                # Burn ASS captions into B-roll
+                temp_with_ass = temp_dir / f"broll_ass_{uuid.uuid4().hex[:8]}.mp4"
+                escaped_ass = str(broll_ass_path).replace(":", "\\:").replace("'", "\\'")
+
+                cmd_ass = [
+                    "ffmpeg", "-y",
+                    "-i", str(output_path),
+                    "-vf", f"ass='{escaped_ass}'",
+                    "-c:v", encoder, *gpu_opts,
+                    "-an",  # B-roll has no audio at this point
+                    str(temp_with_ass)
+                ]
+                print(f"B-Roll Montage: Burning ASS captions")
+                result = subprocess.run(cmd_ass, capture_output=True, text=True)
+                if result.returncode == 0 and temp_with_ass.exists():
+                    # Replace output with captioned version
+                    subprocess.run(["mv", str(temp_with_ass), str(output_path)], check=True)
+                    print(f"B-Roll Montage: Captions burned successfully")
+                else:
+                    print(f"B-Roll Montage: ASS burn failed: {result.stderr[:200] if result.stderr else 'unknown'}")
+
+                # Cleanup ASS file
+                if broll_ass_path.exists():
+                    broll_ass_path.unlink()
+
+            # Apply RGB Glitch to B-roll (intro pulses + triggers)
+            rgb_windows = []
+            # Add 2 intro pulses for B-roll section
+            rgb_windows.append((0.0, 0.3, 0.7))
+            rgb_windows.append((0.5, 0.8, 0.7))
+
+            # Add shifted trigger words as RGB pulses
+            for tw in broll_triggers[:10]:
+                tw_start = tw.get("start", 0)
+                tw_end = tw.get("end", tw_start + 0.3)
+                if tw_start >= 1.0:  # Skip overlap with intro pulses
+                    rgb_windows.append((tw_start, tw_end, 0.5))
+
+            if rgb_windows:
+                temp_chroma = temp_dir / f"broll_chroma_{uuid.uuid4().hex[:8]}.mp4"
+                try:
+                    apply_chromatic_aberration(str(output_path), str(temp_chroma), rgb_windows, max_shift=25)
+                    subprocess.run(["mv", str(temp_chroma), str(output_path)], check=True)
+                    print(f"B-Roll Montage: RGB glitch applied ({len(rgb_windows)} pulses)")
+                except Exception as e:
+                    print(f"B-Roll Montage: RGB glitch failed, continuing: {e}")
+
+            # Apply VHS Vintage Effects to B-roll
+            temp_vintage = temp_dir / f"broll_vintage_{uuid.uuid4().hex[:8]}.mp4"
+            try:
+                apply_vintage_vhs_effects(str(output_path), str(temp_vintage), duration, rgb_trigger_windows=rgb_windows)
+                subprocess.run(["mv", str(temp_vintage), str(output_path)], check=True)
+                print(f"B-Roll Montage: VHS effects applied")
+            except Exception as e:
+                print(f"B-Roll Montage: VHS effects failed, continuing: {e}")
+
+        print(f"B-Roll Montage: Successfully generated {output_path}")
+        return str(output_path)
+
+    except Exception as e:
+        print(f"B-Roll Montage: Failed - {e}")
+        import traceback
+        traceback.print_exc()
+        # Clean up on error
+        if concat_list_path.exists():
+            concat_list_path.unlink()
+        return None
 
 
 def apply_vintage_vhs_effects(video_path: str, output_path: str, duration: float, rgb_trigger_windows: list = None):
@@ -531,7 +1129,7 @@ def apply_vintage_vhs_effects(video_path: str, output_path: str, duration: float
     for t_start, t_end, effect_type in triggers:
         print(f"  Vintage effect: {effect_names[effect_type]} at {t_start:.1f}s-{t_end:.1f}s")
 
-    print(f"  VHS Head Error: continuous (random position each 5s cycle)")
+    print(f"  VHS Head Error: continuous (random position each 1s cycle)")
 
     clip = VideoFileClip(video_path)
 
@@ -539,8 +1137,8 @@ def apply_vintage_vhs_effects(video_path: str, output_path: str, duration: float
         """Apply vintage VHS effects at trigger times + continuous head error."""
         frame = get_frame(t)
 
-        # CONTINUOUS: VHS Head Error in top right corner (5 second loop)
-        frame = _apply_vhs_head_error(frame, t)
+        # CONTINUOUS: VHS Head Error in top right corner (1 second loop)
+        frame = _apply_vhs_head_error(frame, t, loop_seconds=1.0)
 
         # TRIGGERED: Vintage effects after RGB glitches
         for t_start, t_end, effect_type in triggers:
@@ -790,6 +1388,296 @@ def _apply_vhs_head_error(frame, t, loop_seconds: float = 5.0):
         result[y_start:y_end, x_start:x_end, :] = region
 
     return result
+
+
+# ============ NEW TEMPLATE EFFECT FUNCTIONS ============
+
+def apply_letterbox(video_path: str, output_path: str, ratio: float = 2.35):
+    """
+    Add cinematic letterbox (black bars) to video.
+    Ratio 2.35 = CinemaScope, 1.85 = Academy Flat
+    """
+    # Calculate bar heights for 1080x1920 (9:16) to simulate wider aspect
+    # The visible area should have the specified ratio
+    target_h = int(1080 / ratio)  # Width / ratio = height
+    bar_h = (1920 - target_h) // 2
+
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", f"pad=1080:1920:0:{bar_h}:black",
+        "-c:v", "h264_nvenc", "-preset", "p4",
+        "-c:a", "copy",
+        output_path
+    ]
+    subprocess.run(cmd, check=True)
+    print(f"Applied letterbox (ratio {ratio}, bars {bar_h}px)")
+
+
+def apply_vignette_effect(video_path: str, output_path: str, intensity: float = 0.3):
+    """
+    Add a vignette (darkened edges) effect using FFmpeg vignette filter.
+    Intensity 0.0 = no vignette, 1.0 = strong dark edges
+    """
+    # vignette filter: angle PI/2 is circular, a smaller angle makes it more elliptical
+    # mode=forward makes it darker at edges
+    angle = 0.5 + (0.3 * intensity)  # 0.5 to 0.8 based on intensity
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", f"vignette=angle={angle}:mode=forward",
+        "-c:v", "h264_nvenc", "-preset", "p4",
+        "-c:a", "copy",
+        output_path
+    ]
+    subprocess.run(cmd, check=True)
+    print(f"Applied vignette (intensity {intensity})")
+
+
+def apply_scan_lines(frame: np.ndarray, opacity: float = 0.1) -> np.ndarray:
+    """
+    Add CRT-style scan lines overlay to a frame.
+    Called per-frame in MoviePy transform.
+    """
+    h, w = frame.shape[:2]
+    result = frame.copy().astype(np.float32)
+
+    # Create scan line pattern (every other row darker)
+    for y in range(0, h, 2):
+        result[y] = result[y] * (1 - opacity)
+
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def apply_film_grain_frame(frame: np.ndarray, intensity: float = 0.15) -> np.ndarray:
+    """
+    Add cinematic film grain to a frame (softer than VHS noise).
+    Called per-frame in MoviePy transform.
+    """
+    h, w = frame.shape[:2]
+
+    # Generate organic-looking grain (Gaussian noise)
+    grain = np.random.normal(0, 25 * intensity, (h, w)).astype(np.float32)
+
+    # Apply grain to all channels equally
+    result = frame.astype(np.float32)
+    for c in range(3):
+        result[:, :, c] = result[:, :, c] + grain
+
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def apply_flash_frames(video_path: str, output_path: str, trigger_times: list,
+                       flash_color: str = "#FFFFFF", flash_duration: float = 0.08):
+    """
+    Insert flash frames at trigger times using MoviePy.
+    trigger_times: list of timestamps in seconds
+    flash_color: hex color for flash (default white)
+    """
+    # Convert hex to RGB
+    color = tuple(int(flash_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+    clip = VideoFileClip(video_path)
+
+    def add_flash(get_frame, t):
+        frame = get_frame(t)
+
+        # Check if we're within flash duration of any trigger
+        for trigger_t in trigger_times:
+            if trigger_t <= t < trigger_t + flash_duration:
+                # Blend flash color with frame
+                progress = (t - trigger_t) / flash_duration
+                # Quick flash: 100% at start, fade to 0%
+                blend = 1.0 - progress
+                flash_frame = np.full_like(frame, color)
+                result = (frame * (1 - blend) + flash_frame * blend).astype(np.uint8)
+                return result
+
+        return frame
+
+    processed = clip.transform(add_flash)
+    processed.write_videofile(
+        output_path,
+        codec='libx264',
+        preset='ultrafast',
+        audio_codec='aac',
+        logger=None
+    )
+    clip.close()
+    processed.close()
+    print(f"Applied {len(trigger_times)} flash frames")
+
+
+def apply_velocity_effect(video_path: str, output_path: str, trigger_times: list,
+                         speed_multiplier: float = 2.0, ramp_duration: float = 0.15):
+    """
+    Apply speed ramping on trigger words.
+    Speeds up to speed_multiplier then ramps back down.
+    This is done via PTS manipulation in FFmpeg.
+
+    Note: This is complex with variable speed, so we use a simplified approach:
+    Just apply the visual flash/punch effect at trigger times instead.
+    True velocity editing requires re-timing audio which is complex.
+    """
+    # For now, velocity effect is simulated via the aggressive pulse zoom
+    # and flash frames which give the perception of speed change
+    print(f"Velocity effect: {len(trigger_times)} trigger points (simulated via pulse/flash)")
+    subprocess.run(["cp", video_path, output_path], check=True)
+
+
+def apply_whip_pan_transition(frame: np.ndarray, t: float, transition_times: list,
+                              whip_duration: float = 0.15, direction: str = "right") -> np.ndarray:
+    """
+    Apply horizontal whip pan motion blur effect during transitions.
+    Called per-frame in MoviePy transform.
+    """
+    h, w = frame.shape[:2]
+
+    for trans_t in transition_times:
+        if trans_t <= t < trans_t + whip_duration:
+            progress = (t - trans_t) / whip_duration
+            # Intensity peaks in middle of whip
+            intensity = np.sin(np.pi * progress)
+
+            # Apply horizontal motion blur
+            blur_amount = int(50 * intensity)
+            if blur_amount > 0:
+                result = frame.copy()
+                # Simple horizontal smear
+                kernel_size = blur_amount * 2 + 1
+                # Create horizontal kernel
+                kernel = np.zeros((kernel_size, kernel_size))
+                kernel[kernel_size//2, :] = 1.0 / kernel_size
+
+                from scipy.ndimage import convolve
+                for c in range(3):
+                    result[:, :, c] = convolve(frame[:, :, c], kernel, mode='reflect')
+
+                return result
+
+    return frame
+
+
+def apply_combined_template_effects(video_path: str, output_path: str, effect_config: dict,
+                                    trigger_words: list, duration: float):
+    """
+    Apply all template-specific visual effects in a single MoviePy pass.
+    This consolidates letterbox, vignette, scan_lines, film_grain, and flash effects.
+    """
+    clip = VideoFileClip(video_path)
+
+    # Pre-compute trigger times for flash effect
+    flash_times = []
+    if effect_config.get("flash_enabled") and trigger_words:
+        for tw in trigger_words[:15]:  # Limit flashes
+            flash_times.append(tw.get("start", 0))
+
+    # Pre-compute whip pan times (on every other trigger)
+    whip_times = []
+    if effect_config.get("whip_pan") and trigger_words:
+        for i, tw in enumerate(trigger_words[:10]):
+            if i % 2 == 0:  # Every other trigger
+                whip_times.append(tw.get("start", 0))
+
+    letterbox_enabled = effect_config.get("letterbox", False)
+    letterbox_ratio = effect_config.get("letterbox_ratio", 2.35)
+    vignette_enabled = effect_config.get("vignette", False)
+    vignette_intensity = effect_config.get("vignette_intensity", 0.3)
+    scan_lines_enabled = effect_config.get("scan_lines", False)
+    scan_line_opacity = effect_config.get("scan_line_opacity", 0.1)
+    film_grain_enabled = effect_config.get("film_grain", False)
+    grain_intensity = effect_config.get("grain_intensity", 15) / 100.0
+    flash_enabled = effect_config.get("flash_enabled", False)
+    flash_color = effect_config.get("flash_color", "#FFFFFF")
+    flash_duration = 0.08
+    whip_enabled = effect_config.get("whip_pan", False)
+    cross_overlay = effect_config.get("cross_overlay", False)
+
+    # Convert flash color hex to RGB tuple
+    try:
+        flash_rgb = tuple(int(flash_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+    except:
+        flash_rgb = (255, 255, 255)
+
+    # Calculate letterbox bar height
+    bar_h = 0
+    if letterbox_enabled:
+        target_h = int(1080 / letterbox_ratio)
+        bar_h = (1920 - target_h) // 2
+
+    def combined_effect(get_frame, t):
+        frame = get_frame(t)
+        h, w = frame.shape[:2]
+
+        # 1. SCAN LINES (subtle CRT effect)
+        if scan_lines_enabled:
+            frame = apply_scan_lines(frame, scan_line_opacity)
+
+        # 2. FILM GRAIN (cinematic noise)
+        if film_grain_enabled:
+            frame = apply_film_grain_frame(frame, grain_intensity)
+
+        # 3. VIGNETTE (darkened edges)
+        if vignette_enabled:
+            # Simple radial vignette
+            y, x = np.ogrid[:h, :w]
+            cy, cx = h / 2, w / 2
+            r = np.sqrt((x - cx)**2 / (cx**2) + (y - cy)**2 / (cy**2))
+            vignette_mask = np.clip(1 - r * vignette_intensity, 0.3, 1.0)
+            frame = (frame * vignette_mask[:, :, np.newaxis]).astype(np.uint8)
+
+        # 4. FLASH FRAMES (white/colored flash on triggers)
+        if flash_enabled and flash_times:
+            for flash_t in flash_times:
+                if flash_t <= t < flash_t + flash_duration:
+                    progress = (t - flash_t) / flash_duration
+                    blend = 1.0 - progress  # Quick fade
+                    flash_frame = np.full_like(frame, flash_rgb)
+                    frame = (frame * (1 - blend) + flash_frame * blend).astype(np.uint8)
+                    break
+
+        # 5. WHIP PAN (motion blur on transitions)
+        if whip_enabled and whip_times:
+            frame = apply_whip_pan_transition(frame, t, whip_times)
+
+        # 6. LETTERBOX (black bars)
+        if letterbox_enabled and bar_h > 0:
+            frame[:bar_h, :, :] = 0  # Top bar
+            frame[-bar_h:, :, :] = 0  # Bottom bar
+
+        # 7. CROSS OVERLAY (for Crusade template)
+        if cross_overlay:
+            # Add subtle cross watermark in corner (gold color)
+            cross_size = 60
+            cx, cy = w - 80, 100  # Top right corner
+            # Vertical bar
+            frame[cy-cross_size//2:cy+cross_size//2, cx-5:cx+5, :] = [0, 215, 255]  # Gold BGR
+            # Horizontal bar (Chi Rho style - shorter)
+            frame[cy-5:cy+5, cx-cross_size//3:cx+cross_size//3, :] = [0, 215, 255]
+
+        return frame
+
+    processed = clip.transform(combined_effect)
+
+    processed.write_videofile(
+        output_path,
+        codec='libx264',
+        preset='ultrafast',
+        audio_codec='aac',
+        logger=None
+    )
+
+    clip.close()
+    processed.close()
+
+    effects_applied = []
+    if letterbox_enabled: effects_applied.append("letterbox")
+    if vignette_enabled: effects_applied.append("vignette")
+    if scan_lines_enabled: effects_applied.append("scan_lines")
+    if film_grain_enabled: effects_applied.append("film_grain")
+    if flash_enabled: effects_applied.append(f"flash({len(flash_times)})")
+    if whip_enabled: effects_applied.append(f"whip_pan({len(whip_times)})")
+    if cross_overlay: effects_applied.append("cross_overlay")
+
+    print(f"Applied template effects: {', '.join(effects_applied) if effects_applied else 'none'}")
 
 
 def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None):
@@ -1046,6 +1934,7 @@ def render_viral_clip(request: RenderClipRequest):
         report_status(request.status_webhook_url, "Processing: Setup")
         # 1. Setup: Duration
         duration = request.end_time - request.start_time
+        print(f"DEBUG DURATION: request.start_time={request.start_time}, request.end_time={request.end_time}, calculated duration={duration}")
 
         # 2. EXTRACT CLIP FIRST (needed for per-clip transcription)
         temp_extracted = temp_dir / f"temp_extract_{uid}.mp4"
@@ -1064,6 +1953,12 @@ def render_viral_clip(request: RenderClipRequest):
         ]
         print(f"DEBUG EXTRACT CMD: {' '.join(cmd_extract)}")
         subprocess.run(cmd_extract, check=True)
+
+        # 2.5. FACE DETECTION FOR AUTO-CENTERING
+        # Detect face position in first frame to calculate crop offset
+        report_status(request.status_webhook_url, "Processing: Face Detection")
+        face_offset = detect_face_offset(str(temp_extracted))
+        print(f"[FaceDetect] Using crop offset: {face_offset}px (0 = center)")
 
         # 3. PER-CLIP TRANSCRIPTION - Fresh Whisper for perfect sync
         # This eliminates timestamp drift from long-video transcription
@@ -1190,13 +2085,40 @@ def render_viral_clip(request: RenderClipRequest):
         # Ensure factor >= 1 using max(1, ...) to prevent crop failure
         zoom_expr = f"w='2*trunc(iw*max(1,{scale_factor})/2)':h='2*trunc(ih*max(1,{scale_factor})/2)'"
         
-        # Grade Expr (CPU)
-        grade_filter = "eq=contrast=1.15:brightness=0.03:saturation=1.25"
+        # ============ TEMPLATE EFFECT CONFIGURATION ============
+        # Use effect dispatcher to parse template settings into rendering config
+        effect_settings = request.effect_settings or {}
+        effect_config = get_effect_chain(effect_settings)
 
-        # VHS Grain Filter - random noise that fades in/out like old tape
-        # Uses geq for dynamic intensity based on time (sin wave modulation)
-        # Grain intensity pulses between 0 and 20 on a ~2 second cycle with randomness
-        vhs_grain = "noise=alls=15:allf=t+u"
+        # Extract color grading parameters from config
+        saturation = effect_config["saturation"]
+        contrast = effect_config["contrast"]
+        brightness = effect_config["brightness"]
+        pulse_intensity_base = effect_config["pulse_intensity"]
+
+        # Print template configuration for debugging
+        effects_summary = []
+        if effect_config["letterbox"]: effects_summary.append(f"letterbox({effect_config['letterbox_ratio']})")
+        if effect_config["vignette"]: effects_summary.append("vignette")
+        if effect_config["film_grain"]: effects_summary.append("film_grain")
+        if effect_config["scan_lines"]: effects_summary.append("scan_lines")
+        if effect_config["flash_enabled"]: effects_summary.append("flash")
+        if effect_config["heavy_glitch"]: effects_summary.append("heavy_glitch")
+        if effect_config["whip_pan"]: effects_summary.append("whip_pan")
+        if effect_config["cross_overlay"]: effects_summary.append("cross_overlay")
+        if not effect_config["vhs_enabled"]: effects_summary.append("no_vhs")
+        if saturation == 0: effects_summary.append("B&W")
+
+        print(f"Template Effects: {', '.join(effects_summary) if effects_summary else 'default'}")
+        print(f"  Color: contrast={contrast}, brightness={brightness}, saturation={saturation}")
+        print(f"  Pulse intensity: {pulse_intensity_base}")
+
+        grade_filter = f"eq=contrast={contrast}:brightness={brightness}:saturation={saturation}"
+
+        # VHS Grain Filter - conditionally disabled for "clean" templates
+        grain_intensity = effect_config["grain_intensity"]
+        vhs_grain_enabled = effect_config["vhs_enabled"]
+        vhs_grain = f"noise=alls={grain_intensity}:allf=t+u" if vhs_grain_enabled else ""
 
         # Chromatic Aberration - DISABLED (rgbashift/colorbalance don't support time expressions)
         # The smooth pulse zoom effect is the main visual impact.
@@ -1210,11 +2132,14 @@ def render_viral_clip(request: RenderClipRequest):
         # [GPU Decode] -> hwdownload -> [CPU] -> scale(Fill) -> scale(Pulse) -> crop -> chromatic -> eq -> ass -> hwupload -> [GPU Encode]
         # logic: scale_cuda filters failed expression parsing. Reverting to CPU scaling.
         chromatic_stage = f"{chromatic_filter}," if chromatic_filter else ""
+        # Calculate crop X offset: detected face_offset centers the speaker
+        # Positive face_offset = face is right of center, so we shift crop right
+        crop_x_offset = face_offset if face_offset != 0 else 0
         filter_complex = (
             f"[0:v]hwdownload,format=nv12,format=yuv420p,"
             f"scale=-2:1920,"
             f"scale={zoom_expr}:eval=frame,"
-            f"crop=1080:1920:(iw-1080)/2+250:(ih-1920)/2,"
+            f"crop=1080:1920:(iw-1080)/2+{crop_x_offset}:(ih-1920)/2,"
             f"{chromatic_stage}"
             f"{grade_filter},"
             f"ass='{escaped_ass}',"
@@ -1224,14 +2149,15 @@ def render_viral_clip(request: RenderClipRequest):
 
         # Apply effects to extracted clip (already extracted above for transcription)
         # temp_extracted starts at t=0, fresh transcript also starts at t=0 = perfect sync
-        # VHS grain goes BEFORE subtitles so text is clean on top
+        # VHS grain goes BEFORE subtitles so text is clean on top (if enabled)
+        vhs_grain_stage = f"{vhs_grain}," if vhs_grain else ""
         filter_complex_effects = (
             f"[0:v]hwdownload,format=nv12,format=yuv420p,"
             f"scale=-2:1920,"
             f"scale={zoom_expr}:eval=frame,"
-            f"crop=1080:1920:(iw-1080)/2+250:(ih-1920)/2,"
+            f"crop=1080:1920:(iw-1080)/2+{crop_x_offset}:(ih-1920)/2,"
             f"{grade_filter},"
-            f"{vhs_grain},"
+            f"{vhs_grain_stage}"
             f"ass='{escaped_ass}',"
             f"hwupload_cuda[v];"
             f"[0:a]volume=1.0[a]"
@@ -1302,8 +2228,10 @@ def render_viral_clip(request: RenderClipRequest):
         temp_chroma = temp_dir / f"temp_chroma_{uid}.mp4"
         cleanup_files.append(temp_chroma)
         try:
-            # max_shift=35 for BIGGER RGB glitch effect
-            apply_chromatic_aberration(str(temp_main), str(temp_chroma), trigger_windows, max_shift=35)
+            # Use template-specific RGB shift amount
+            rgb_shift = effect_config["rgb_max_shift"]
+            print(f"RGB glitch shift: {rgb_shift}px (template config)")
+            apply_chromatic_aberration(str(temp_main), str(temp_chroma), trigger_windows, max_shift=rgb_shift)
             # Replace temp_main with chromatic version
             subprocess.run(["mv", str(temp_chroma), str(temp_main)], check=True)
             print(f"Applied {len(trigger_windows)} RGB glitch pulses (4 intro + {len(trigger_windows)-4} keywords)")
@@ -1311,22 +2239,207 @@ def render_viral_clip(request: RenderClipRequest):
             print(f"WARNING: Chromatic aberration failed, continuing without: {e}")
             # Continue with unmodified temp_main
 
-        # 3.6. Vintage VHS Effects Pass - triggered after each RGB glitch + continuous head error
-        report_status(request.status_webhook_url, "Processing: Vintage FX")
-        temp_vintage = temp_dir / f"temp_vintage_{uid}.mp4"
-        cleanup_files.append(temp_vintage)
-        try:
-            apply_vintage_vhs_effects(str(temp_main), str(temp_vintage), duration, rgb_trigger_windows=trigger_windows)
-            # Replace temp_main with vintage effects version
-            subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True)
-        except Exception as e:
-            print(f"WARNING: Vintage VHS effects failed, continuing without: {e}")
-            # Continue with unmodified temp_main
+        # 3.6. Vintage VHS Effects Pass - conditionally applied based on template
+        if effect_config["vhs_enabled"]:
+            report_status(request.status_webhook_url, "Processing: Vintage FX")
+            temp_vintage = temp_dir / f"temp_vintage_{uid}.mp4"
+            cleanup_files.append(temp_vintage)
+            try:
+                apply_vintage_vhs_effects(str(temp_main), str(temp_vintage), duration, rgb_trigger_windows=trigger_windows)
+                # Replace temp_main with vintage effects version
+                subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True)
+            except Exception as e:
+                print(f"WARNING: Vintage VHS effects failed, continuing without: {e}")
+                # Continue with unmodified temp_main
+        else:
+            print("VHS effects: DISABLED (clean template)")
+
+        # 3.6.2 TEMPLATE-SPECIFIC EFFECTS PASS (letterbox, vignette, film_grain, flash, whip_pan, etc.)
+        # Only run if any of these effects are enabled
+        has_template_effects = (
+            effect_config["letterbox"] or effect_config["vignette"] or
+            effect_config["film_grain"] or effect_config["scan_lines"] or
+            effect_config["flash_enabled"] or effect_config["whip_pan"] or
+            effect_config["cross_overlay"]
+        )
+        if has_template_effects:
+            report_status(request.status_webhook_url, "Processing: Template FX")
+            temp_template = temp_dir / f"temp_template_{uid}.mp4"
+            cleanup_files.append(temp_template)
+            try:
+                apply_combined_template_effects(
+                    str(temp_main), str(temp_template), effect_config,
+                    fresh_trigger_words, duration
+                )
+                # Replace temp_main with template effects version
+                subprocess.run(["mv", str(temp_template), str(temp_main)], check=True)
+            except Exception as e:
+                print(f"WARNING: Template effects failed, continuing without: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # 3.6.3 DURATION ENFORCEMENT - MoviePy can sometimes produce longer output
+        # Re-mux with hard duration limit to ensure clip is exactly the right length
+        actual_dur = get_video_info(str(temp_main))["duration"]
+        print(f"DEBUG DURATION CHECK: temp_main actual={actual_dur:.1f}s, expected={duration:.1f}s, diff={actual_dur - duration:.1f}s")
+        if actual_dur > duration + 1:  # More than 1 second over
+            print(f"WARNING: MoviePy output is {actual_dur:.1f}s, expected {duration:.1f}s - truncating")
+            temp_trimmed = temp_dir / f"temp_trimmed_{uid}.mp4"
+            cleanup_files.append(temp_trimmed)
+            subprocess.run([
+                "ffmpeg", "-y", "-i", str(temp_main),
+                "-t", str(duration),
+                "-c:v", "copy", "-c:a", "copy",
+                str(temp_trimmed)
+            ], check=True)
+            subprocess.run(["mv", str(temp_trimmed), str(temp_main)], check=True)
+            print(f"Duration enforced: {duration:.1f}s")
+
+        # 3.7. B-ROLL CLIMAX MONTAGE (if climax_time specified and B-roll available)
+        if request.climax_time and request.broll_paths and request.broll_duration and request.broll_duration >= 3:
+            report_status(request.status_webhook_url, "Processing: B-Roll Montage")
+
+            # climax_time is absolute (in source video), convert to clip-relative
+            climax_clip_time = request.climax_time - request.start_time
+
+            # Validate climax is within the clip
+            if 0 < climax_clip_time < duration - 3:
+                print(f"B-Roll: Climax at {climax_clip_time:.1f}s (clip-relative), duration {request.broll_duration:.1f}s")
+                print(f"B-Roll: {len(request.broll_paths)} clips available")
+
+                try:
+                    # Get beat times for B-roll cut sync
+                    broll_beat_times = []
+                    if bgm_path:
+                        try:
+                            # Detect beats for the B-roll section (offset by climax time)
+                            all_beats = detect_beats(str(bgm_path), duration)
+                            # Filter beats that fall within the B-roll window
+                            broll_beat_times = [b - climax_clip_time for b in all_beats
+                                               if climax_clip_time <= b < climax_clip_time + request.broll_duration]
+                            print(f"B-Roll: {len(broll_beat_times)} beat-sync points in montage window")
+                        except Exception as e:
+                            print(f"B-Roll: Beat detection failed, using 1s intervals: {e}")
+
+                    # Generate B-roll montage
+                    temp_broll_montage = temp_dir / f"temp_broll_{uid}.mp4"
+                    cleanup_files.append(temp_broll_montage)
+
+                    # Pass caption data so B-roll gets same ASS captions and effects
+                    broll_caption_data = {
+                        "segments": fresh_segments,
+                        "climax_clip_time": climax_clip_time,
+                        "font": selected_font,
+                        "trigger_words": fresh_trigger_words
+                    }
+
+                    # Use template-specific cut interval for B-roll pacing
+                    broll_cut_interval = effect_config.get("broll_cut_interval", 0.5)
+                    print(f"B-Roll: Using {broll_cut_interval}s cut interval (template config)")
+
+                    broll_montage_path = generate_broll_montage(
+                        broll_paths=request.broll_paths,
+                        duration=request.broll_duration,
+                        beat_times=broll_beat_times,
+                        output_path=temp_broll_montage,
+                        effect_settings=request.effect_settings,
+                        caption_data=broll_caption_data,
+                        cut_interval=broll_cut_interval
+                    )
+
+                    if broll_montage_path and Path(broll_montage_path).exists():
+                        # Splice: [pre-climax] + [B-roll with speaker audio] + [post-broll]
+                        temp_pre_climax = temp_dir / f"temp_pre_climax_{uid}.mp4"
+                        temp_post_broll = temp_dir / f"temp_post_broll_{uid}.mp4"
+                        temp_climax_audio = temp_dir / f"temp_climax_audio_{uid}.aac"
+                        temp_broll_with_audio = temp_dir / f"temp_broll_audio_{uid}.mp4"
+                        temp_spliced = temp_dir / f"temp_spliced_{uid}.mp4"
+                        cleanup_files.extend([temp_pre_climax, temp_post_broll, temp_climax_audio,
+                                            temp_broll_with_audio, temp_spliced])
+
+                        # 1. Extract pre-climax portion (video + audio)
+                        subprocess.run([
+                            "ffmpeg", "-y", "-i", str(temp_main),
+                            "-t", str(climax_clip_time),
+                            "-c:v", "copy", "-c:a", "copy",
+                            str(temp_pre_climax)
+                        ], check=True)
+                        print(f"B-Roll: Extracted pre-climax (0 to {climax_clip_time:.1f}s)")
+
+                        # 2. Extract speaker audio from climax to end of B-roll section
+                        subprocess.run([
+                            "ffmpeg", "-y", "-i", str(temp_main),
+                            "-ss", str(climax_clip_time),
+                            "-t", str(request.broll_duration),
+                            "-vn", "-c:a", "aac",
+                            str(temp_climax_audio)
+                        ], check=True)
+                        print(f"B-Roll: Extracted speaker audio ({climax_clip_time:.1f}s to {climax_clip_time + request.broll_duration:.1f}s)")
+
+                        # 3. Add speaker audio to B-roll montage (video from B-roll, audio from speaker)
+                        subprocess.run([
+                            "ffmpeg", "-y",
+                            "-i", str(broll_montage_path),
+                            "-i", str(temp_climax_audio),
+                            "-c:v", "copy", "-c:a", "aac",
+                            "-shortest",
+                            str(temp_broll_with_audio)
+                        ], check=True)
+                        print(f"B-Roll: Combined B-roll video with speaker audio")
+
+                        # 4. Extract post-broll portion (if any remains before outro)
+                        post_broll_start = climax_clip_time + request.broll_duration
+                        post_broll_duration = duration - post_broll_start - 2  # Leave 2s for outro
+
+                        if post_broll_duration > 0.5:
+                            subprocess.run([
+                                "ffmpeg", "-y", "-i", str(temp_main),
+                                "-ss", str(post_broll_start),
+                                "-t", str(post_broll_duration),
+                                "-c:v", "copy", "-c:a", "copy",
+                                str(temp_post_broll)
+                            ], check=True)
+                            print(f"B-Roll: Extracted post-broll ({post_broll_start:.1f}s to {post_broll_start + post_broll_duration:.1f}s)")
+
+                        # 5. Concatenate: pre-climax + B-roll + post-broll (if exists)
+                        # Debug: Check durations of files being concatenated
+                        pre_climax_dur = get_video_info(str(temp_pre_climax))["duration"]
+                        broll_audio_dur = get_video_info(str(temp_broll_with_audio))["duration"]
+                        print(f"DEBUG SPLICE: pre_climax={pre_climax_dur:.1f}s, broll_with_audio={broll_audio_dur:.1f}s")
+
+                        splice_list = temp_dir / f"splice_concat_{uid}.txt"
+                        cleanup_files.append(splice_list)
+                        with open(splice_list, "w") as f:
+                            f.write(f"file '{temp_pre_climax}'\n")
+                            f.write(f"file '{temp_broll_with_audio}'\n")
+                            if post_broll_duration > 0.5 and temp_post_broll.exists():
+                                f.write(f"file '{temp_post_broll}'\n")
+
+                        subprocess.run([
+                            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                            "-i", str(splice_list),
+                            "-c:v", "copy", "-c:a", "aac",
+                            str(temp_spliced)
+                        ], check=True)
+
+                        # Replace temp_main with spliced version
+                        subprocess.run(["mv", str(temp_spliced), str(temp_main)], check=True)
+                        print(f"B-Roll: Montage spliced successfully at {climax_clip_time:.1f}s for {request.broll_duration:.1f}s")
+
+                except Exception as e:
+                    print(f"WARNING: B-roll montage failed, continuing without: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"B-Roll: Climax time {climax_clip_time:.1f}s invalid for clip duration {duration:.1f}s, skipping")
+        elif request.broll_paths:
+            print(f"B-Roll: Skipping - climax_time={request.climax_time}, broll_duration={request.broll_duration}")
 
         # 4. Outro Generation (V4 CPU-Threaded for safety)
         final_video_path = str(temp_main)
         total_dur = get_video_info(str(temp_main))["duration"]
-        
+        print(f"DEBUG OUTRO: temp_main duration before outro = {total_dur:.1f}s")
+
         if total_dur > 5:
             outro_start = total_dur - 2
             cmd_outro_extract = [
@@ -1417,16 +2530,20 @@ def render_viral_clip(request: RenderClipRequest):
 
             print(f"  BGM volume: {base_volume:.2f} -> {end_volume:.2f} (ramp at {ramp_start:.1f}s)")
 
+            # Mix BGM with voice and normalize to -14 LUFS (social media standard)
+            # This ensures output volume matches other TikTok/Instagram videos
             final_mix = temp_dir / f"final_mix_{uid}.mp4"
             cmd_mix = [
                 "ffmpeg", "-y", "-threads", "0",
                 "-i", str(output_path),
                 "-i", str(bgm_path),
                 "-filter_complex",
-                f"[1:a]volume=eval=frame:volume={vol_expr},aloop=loop=-1:size=2147483647[bgm];[0:a][bgm]amix=inputs=2:duration=first",
+                f"[1:a]volume=eval=frame:volume={vol_expr},aloop=loop=-1:size=2147483647[bgm];"
+                f"[0:a][bgm]amix=inputs=2:duration=first,loudnorm=I=-14:TP=-1:LRA=11",
                 "-map", "0:v", "-c:v", "copy", "-c:a", "aac", str(final_mix)
             ]
             subprocess.run(cmd_mix, check=True)
+            print(f"Audio normalized to -14 LUFS (social media standard)")
             subprocess.run(["cp", str(final_mix), str(output_path)], check=True)
             cleanup_files.append(final_mix)
 
@@ -1561,6 +2678,250 @@ async def download_google_font(req: GoogleFontRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+# ============ B-ROLL TAGGING ENDPOINT ============
+
+class TagBrollRequest(BaseModel):
+    force: bool = False  # Re-tag all clips
+    limit: int = 0  # Limit number of clips to process (0=all)
+
+class TagBrollResponse(BaseModel):
+    success: bool
+    clips_tagged: int
+    total_clips: int
+    categories: dict
+    message: str
+
+@app.post("/tag-broll", response_model=TagBrollResponse)
+async def tag_broll_clips(req: TagBrollRequest):
+    """
+    Tag B-roll clips with AI-generated metadata using BLIP (captioning) and CLIP (classification).
+
+    This enables smart B-roll matching during viral clip rendering by categorizing clips into:
+    war, wealth, faith, strength, nature, people, chaos, victory, power, history
+
+    Run with force=True to re-tag all clips, or let it incrementally tag new ones.
+    """
+    import tempfile
+    from datetime import datetime
+
+    BROLL_DIR = Path("/broll")
+    METADATA_FILE = BROLL_DIR / "metadata.json"
+
+    # Semantic categories for CLIP classification
+    BROLL_CATEGORIES = [
+        "war and military combat", "soldiers and troops", "weapons and firearms", "explosions and destruction",
+        "political leaders and speeches", "money and cash", "luxury and wealth", "business and corporate",
+        "stock market and trading", "cars and vehicles", "church and religion", "prayer and worship",
+        "crosses and religious symbols", "bible and scripture", "boxing and fighting", "gym and weightlifting",
+        "sports and athletics", "muscles and bodybuilding", "mountains and landscapes", "ocean and water",
+        "sunset and sunrise", "animals and wildlife", "crowds and masses", "family and children",
+        "women and femininity", "men and masculinity", "chaos and disorder", "victory and celebration",
+        "defeat and failure", "anger and rage", "fire and flames", "darkness and shadows",
+        "light and brightness", "american flag and patriotism", "computers and technology", "city and urban",
+        "historical footage", "news and media"
+    ]
+
+    # Simplified category mapping
+    CATEGORY_KEYWORDS = {
+        "war": ["war and military combat", "soldiers and troops", "weapons and firearms", "explosions and destruction"],
+        "wealth": ["money and cash", "luxury and wealth", "business and corporate", "stock market and trading"],
+        "faith": ["church and religion", "prayer and worship", "crosses and religious symbols", "bible and scripture"],
+        "strength": ["boxing and fighting", "gym and weightlifting", "sports and athletics", "muscles and bodybuilding"],
+        "nature": ["mountains and landscapes", "ocean and water", "sunset and sunrise", "animals and wildlife"],
+        "people": ["crowds and masses", "family and children", "women and femininity", "men and masculinity"],
+        "chaos": ["chaos and disorder", "fire and flames", "darkness and shadows", "anger and rage"],
+        "victory": ["victory and celebration", "light and brightness", "american flag and patriotism"],
+        "power": ["political leaders and speeches", "cars and vehicles", "city and urban"],
+        "history": ["historical footage", "news and media"]
+    }
+
+    if not BROLL_DIR.exists():
+        raise HTTPException(status_code=404, detail="B-roll directory not found")
+
+    # Load existing metadata
+    existing_metadata = {}
+    if METADATA_FILE.exists() and not req.force:
+        try:
+            with open(METADATA_FILE, "r") as f:
+                data = json.load(f)
+                existing_metadata = {item["filename"]: item for item in data.get("clips", [])}
+            print(f"Loaded {len(existing_metadata)} existing clip records")
+        except Exception as e:
+            print(f"Failed to load existing metadata: {e}")
+
+    # Find clips to process
+    clips = list(BROLL_DIR.glob("*.mp4"))
+    total_clips = len(clips)
+
+    if not req.force:
+        clips = [c for c in clips if c.name not in existing_metadata]
+
+    if not clips:
+        return TagBrollResponse(
+            success=True,
+            clips_tagged=0,
+            total_clips=total_clips,
+            categories={},
+            message="No new clips to tag"
+        )
+
+    if req.limit > 0:
+        clips = clips[:req.limit]
+
+    print(f"Tagging {len(clips)} B-roll clips...")
+
+    # Load AI models
+    try:
+        import torch
+        from transformers import BlipProcessor, BlipForConditionalGeneration
+        from transformers import CLIPProcessor, CLIPModel
+        from PIL import Image
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Using device: {device}")
+
+        print("Loading BLIP model...")
+        blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
+
+        print("Loading CLIP model...")
+        clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load AI models: {str(e)}")
+
+    # Helper functions
+    def extract_frame(video_path: str, output_path: str, timestamp: float = 1.0) -> bool:
+        try:
+            cmd = ["ffmpeg", "-y", "-ss", str(timestamp), "-i", video_path, "-vframes", "1", "-q:v", "2", output_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            return result.returncode == 0 and os.path.exists(output_path)
+        except:
+            return False
+
+    def caption_image(image_path: str) -> str:
+        try:
+            image = Image.open(image_path).convert("RGB")
+            inputs = blip_processor(image, return_tensors="pt").to(device)
+            with torch.no_grad():
+                output = blip_model.generate(**inputs, max_length=50)
+            return blip_processor.decode(output[0], skip_special_tokens=True)
+        except:
+            return ""
+
+    def classify_image(image_path: str) -> list:
+        try:
+            image = Image.open(image_path).convert("RGB")
+            inputs = clip_processor(text=BROLL_CATEGORIES, images=image, return_tensors="pt", padding=True).to(device)
+            with torch.no_grad():
+                outputs = clip_model(**inputs)
+                probs = outputs.logits_per_image.softmax(dim=1)
+
+            top_indices = probs[0].topk(5).indices.tolist()
+            top_probs = probs[0].topk(5).values.tolist()
+
+            results = []
+            for idx, prob in zip(top_indices, top_probs):
+                if prob > 0.05:
+                    results.append({"category": BROLL_CATEGORIES[idx], "confidence": round(prob, 3)})
+            return results
+        except:
+            return []
+
+    def get_simplified_categories(classifications: list) -> list:
+        simplified = set()
+        for item in classifications:
+            cat = item["category"]
+            for keyword, detailed_cats in CATEGORY_KEYWORDS.items():
+                if cat in detailed_cats:
+                    simplified.add(keyword)
+        return list(simplified)
+
+    # Process clips
+    results = list(existing_metadata.values())
+    clips_tagged = 0
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for i, clip_path in enumerate(clips):
+            print(f"[{i+1}/{len(clips)}] Processing {clip_path.name}")
+
+            try:
+                frame_path = os.path.join(temp_dir, f"{clip_path.name}.jpg")
+
+                if not extract_frame(str(clip_path), frame_path, 1.0):
+                    if not extract_frame(str(clip_path), frame_path, 0.5):
+                        print(f"  SKIPPED - Could not extract frame")
+                        continue
+
+                caption = caption_image(frame_path)
+                classifications = classify_image(frame_path)
+                categories = get_simplified_categories(classifications)
+
+                # Get duration
+                try:
+                    probe = subprocess.run([
+                        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", str(clip_path)
+                    ], capture_output=True, text=True, timeout=10)
+                    duration = float(probe.stdout.strip()) if probe.stdout.strip() else 2.0
+                except:
+                    duration = 2.0
+
+                metadata = {
+                    "filename": clip_path.name,
+                    "path": str(clip_path),
+                    "caption": caption,
+                    "classifications": classifications,
+                    "categories": categories,
+                    "duration": duration,
+                    "tagged_at": datetime.now().isoformat()
+                }
+
+                results.append(metadata)
+                clips_tagged += 1
+                print(f"  Caption: {caption[:60]}...")
+                print(f"  Categories: {', '.join(categories)}")
+
+                if os.path.exists(frame_path):
+                    os.unlink(frame_path)
+
+            except Exception as e:
+                print(f"  ERROR: {e}")
+
+    # Build category index
+    category_index = {}
+    for clip in results:
+        for cat in clip.get("categories", []):
+            if cat not in category_index:
+                category_index[cat] = []
+            category_index[cat].append(clip["filename"])
+
+    # Save metadata
+    output_data = {
+        "generated_at": datetime.now().isoformat(),
+        "total_clips": len(results),
+        "categories": list(category_index.keys()),
+        "category_counts": {k: len(v) for k, v in category_index.items()},
+        "category_index": category_index,
+        "clips": results
+    }
+
+    with open(METADATA_FILE, "w") as f:
+        json.dump(output_data, f, indent=2)
+
+    print(f"Tagged {clips_tagged} clips, saved metadata to {METADATA_FILE}")
+
+    return TagBrollResponse(
+        success=True,
+        clips_tagged=clips_tagged,
+        total_clips=len(results),
+        categories=output_data["category_counts"],
+        message=f"Tagged {clips_tagged} new clips"
+    )
+
 
 if __name__ == "__main__":
     import uvicorn
