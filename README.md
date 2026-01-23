@@ -296,9 +296,11 @@ curl -X PUT http://100.83.153.43:8000/api/settings/video \
 │   ├── models.py               # SQLAlchemy models
 │   ├── schemas.py              # Pydantic schemas
 │   ├── routers/                # API route handlers
+│   │   └── viral.py            # Viral Clip Factory API
 │   ├── services/               # Business logic
 │   │   ├── avatar.py           # HeyGen integration
 │   │   ├── captions.py         # Whisper + ASS generation
+│   │   ├── clip_analyzer.py    # Grok AI clip analysis + effects director
 │   │   ├── publisher.py        # Blotato publishing
 │   │   ├── scraper.py          # Apify trend discovery
 │   │   ├── script_generator.py # Grok LLM integration
@@ -308,15 +310,17 @@ curl -X PUT http://100.83.153.43:8000/api/settings/video \
 │   │   └── voice.py            # ElevenLabs TTS
 │   ├── tasks/
 │   │   ├── pipeline.py         # Main pipeline task
+│   │   ├── viral.py            # Viral clip analysis + rendering tasks
 │   │   └── scrape.py           # Scraping tasks
 │   ├── utils/
 │   │   ├── logging.py          # Structured logging
 │   │   ├── paths.py            # Asset path management
 │   │   └── retry.py            # Retry decorator
-│   └── tests/                  # Unit tests (138 tests)
+│   └── tests/                  # Unit tests
 │
 ├── video-downloader/
-│   ├── main.py                 # FastAPI GPU service
+│   ├── main.py                 # FastAPI GPU service (effects engine, 18 effects)
+│   ├── fonts/                  # Custom fonts for viral captions
 │   └── Dockerfile              # GPU-enabled container
 │
 ├── frontend/
@@ -328,9 +332,11 @@ curl -X PUT http://100.83.153.43:8000/api/settings/video \
 ├── assets/                     # Media storage (volume mounted)
 │   ├── audio/                  # Voice files ({script_id}_voice.mp3)
 │   ├── avatar/                 # HeyGen output ({script_id}_avatar.mp4)
-│   ├── videos/                 # Source downloads ({script_id}_source.mp4)
+│   ├── broll/                  # B-roll clips for viral montages
+│   ├── luts/                   # .cube LUT files for color grading
+│   ├── videos/                 # Source downloads (video_{id}.mp4)
 │   ├── captions/               # ASS/SRT files ({script_id}_captions.ass)
-│   ├── output/                 # Combined/Final videos
+│   ├── output/                 # Combined/Final/Rendered clips
 │   └── music/                  # Background music tracks
 │
 └── archive/                    # Deprecated n8n workflows
@@ -412,7 +418,79 @@ PUT /api/settings/video
 GET /api/settings/character
 ```
 
-## Cost Estimates
+## Viral Clip Factory
+
+The Viral Clip Factory is a second pipeline that monitors influencer channels, downloads full-length videos, uses Grok AI to identify up to 20 viral-worthy segments per video, and renders them with cinematic effects.
+
+### Viral Pipeline Flow
+```
+Add Influencer → Fetch Videos → Download (yt-dlp) → Transcribe (Whisper)
+    → Analyze (Grok AI identifies clips) → Render (GPU effects pipeline)
+```
+
+### Grok as Movie Director
+
+Grok acts as a "movie director" - choosing color grade, motion effects, glitch style, caption animation, transitions, and audio reactivity per clip based on content energy, topic, and emotional arc.
+
+### Effects System (18 Effects)
+
+| Category | Effects | Description |
+|----------|---------|-------------|
+| **Color Grades** | 8 LUT presets + vibrant/bw | Cinema-quality 3D LUT color grading (Kodak, Teal Orange, Film Noir, etc.) |
+| **Motion** | Camera Shake, Speed Ramps, Temporal Trail | Handheld feel, slow-mo emphasis, ghosting streaks |
+| **Glitch** | Retro Glow, Wave Displacement, Heavy VHS | Neon bloom, melting distortion, VHS tracking noise |
+| **Captions** | Standard, Pop Scale, Shake, Blur Reveal | Word-by-word karaoke with animated trigger styles |
+| **Audio Reactive** | Beat Sync, Audio Saturation | Zoom pulses on beats, color boost on loud moments |
+| **Transitions** | Pixelize, Radial, Dissolve, Slide, Fade | B-roll cut transitions via FFmpeg xfade |
+| **Rare** | Datamosh, Pixel Sort | Frame-melt glitch, brightness-sorted glitch art |
+
+### Render Pipeline (GPU)
+```
+Extract Segment → Mega-Filter Chain (CUDA) → Speed Ramps → RGB Glitch
+    → VHS Effects → Template FX → Datamosh/Pixel Sort → B-Roll Montage
+    → 9-Grid Outro → BGM Mix → Final Output (1080x1920 H.264)
+```
+
+### Mega-Filter Chain Order
+```
+hwdownload → scale(-2:1920) → scale(zoom+pulse) → crop(1080:1920 + face + shake)
+    → [LUT or eq grade] → [audio saturation] → [retro glow] → [temporal trail]
+    → [wave displacement] → [VHS grain] → ASS captions → hwupload_cuda
+```
+
+### Viral API Endpoints
+```bash
+# Influencer management
+GET/POST /api/viral/influencers
+POST /api/viral/influencers/{id}/fetch
+
+# Video analysis
+POST /api/viral/videos/{id}/analyze
+GET /api/viral/influencers/{id}/videos
+
+# Clip rendering
+POST /api/viral/viral-clips/{id}/render
+GET /api/viral/viral-clips
+
+# Effects
+GET /api/viral/effects-catalog
+PUT /api/viral/viral-clips/{id}/effects
+
+# B-Roll management
+GET /api/viral/broll
+POST /api/viral/broll/upload-youtube
+```
+
+### Viral Factory Cost
+| Service | Cost | Notes |
+|---------|------|-------|
+| OpenRouter (Grok) | ~$0.02-0.05 | Per video analysis |
+| GPU Rendering | Free | Local NVIDIA DGX |
+| Storage | Free | Local disk |
+
+---
+
+## Cost Estimates (Main Pipeline)
 
 | Service | Cost Per Run | Notes |
 |---------|--------------|-------|
@@ -470,4 +548,4 @@ docker exec SocialGen_backend python3 -m pytest /app/tests/ -v
 
 ---
 
-*Last updated: January 13, 2026*
+*Last updated: January 23, 2026*

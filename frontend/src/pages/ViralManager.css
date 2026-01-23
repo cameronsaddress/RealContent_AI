@@ -1011,3 +1011,152 @@
 .empty-state p {
   font-size: 1.1em;
 }
+
+/* === Effect Badges === */
+.effect-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+  align-items: center;
+}
+.effect-badges.compact {
+  gap: 2px;
+}
+.effect-badge {
+  font-size: 0.65em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.effect-badges.compact .effect-badge {
+  font-size: 0.6em;
+  padding: 0px 4px;
+}
+.fx-edit-btn {
+  font-size: 0.6em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #374151;
+  color: #e5e7eb;
+  border: 1px solid #4b5563;
+  cursor: pointer;
+  font-weight: 700;
+}
+.fx-edit-btn:hover {
+  background: #4b5563;
+}
+
+/* === Effects Modal === */
+.effects-modal {
+  background: #1f2937;
+  border-radius: 12px;
+  padding: 24px;
+  width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.effects-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.effects-modal h3 {
+  margin: 0;
+  color: #f3f4f6;
+}
+.effects-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.effect-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.effect-group label {
+  font-size: 0.8em;
+  color: #9ca3af;
+  font-weight: 600;
+}
+.effect-group select,
+.effect-group input[type="range"] {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #374151;
+  background: #111827;
+  color: #f3f4f6;
+  font-size: 0.85em;
+}
+.effect-group.toggles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.effect-group.toggles label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: #d1d5db;
+}
+.effect-group.rare-effects {
+  border-top: 1px solid #374151;
+  padding-top: 12px;
+  margin-top: 8px;
+}
+.effect-group.rare-effects .group-label {
+  display: block;
+  font-size: 11px;
+  color: #dc2626;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.effect-group.rare-effects label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: #d1d5db;
+  margin-bottom: 4px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+  gap: 12px;
+}
+.reset-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #4b5563;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+.reset-btn:hover {
+  color: #f3f4f6;
+  border-color: #6b7280;
+}
+.save-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  background: #8b5cf6;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+.save-btn:hover {
+  background: #7c3aed;
+}

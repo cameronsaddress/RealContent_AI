@@ -398,6 +398,113 @@ def process_viral_video_analyze(video_id: int):
     loop.run_until_complete(_analyze_video_async(video_id))
 
 
+def merge_director_effects(template_settings: dict, director_effects: dict) -> dict:
+    """
+    Merge template effect_settings with Grok director effects.
+    Director choices override template conflicts.
+    Maps creative names to technical params for the video-processor.
+
+    Returns merged effect_settings dict ready for the render payload.
+    """
+    merged = dict(template_settings) if template_settings else {}
+
+    if not director_effects:
+        return merged
+
+    # Color grade: director LUT overrides template color preset
+    if director_effects.get("color_grade"):
+        grade = director_effects["color_grade"]
+        if grade == "bw":
+            merged["color_grade"] = "bw"
+            merged["saturation"] = 0
+        elif grade == "vibrant":
+            merged["color_preset"] = "vibrant"
+        else:
+            # LUT-based grade (kodak_warm, teal_orange, etc.)
+            merged["lut_file"] = grade
+            # Remove conflicting eq-based grade
+            merged.pop("color_preset", None)
+
+    # Camera shake
+    if director_effects.get("camera_shake"):
+        shake = director_effects["camera_shake"]
+        if isinstance(shake, dict):
+            merged["camera_shake"] = shake
+        else:
+            merged["camera_shake"] = {"intensity": 8, "frequency": 2.0}
+
+    # Retro glow
+    if director_effects.get("retro_glow"):
+        val = director_effects["retro_glow"]
+        if isinstance(val, (int, float)):
+            merged["retro_glow"] = val
+        else:
+            merged["retro_glow"] = 0.3
+
+    # Temporal trail
+    if director_effects.get("temporal_trail"):
+        val = director_effects["temporal_trail"]
+        if isinstance(val, dict):
+            merged["temporal_trail"] = val
+        else:
+            merged["temporal_trail"] = True
+
+    # Wave displacement
+    if director_effects.get("wave_displacement"):
+        val = director_effects["wave_displacement"]
+        if isinstance(val, dict):
+            merged["wave_displacement"] = val
+        else:
+            merged["wave_displacement"] = True
+
+    # Heavy VHS
+    if director_effects.get("heavy_vhs"):
+        val = director_effects["heavy_vhs"]
+        if isinstance(val, (int, float)):
+            merged["vhs_intensity"] = val
+        else:
+            merged["vhs_intensity"] = 1.3
+
+    # VHS intensity (explicit)
+    if "vhs_intensity" in director_effects:
+        merged["vhs_intensity"] = float(director_effects["vhs_intensity"])
+
+    # Pulse intensity
+    if "pulse_intensity" in director_effects:
+        merged["pulse_intensity"] = float(director_effects["pulse_intensity"])
+
+    # Beat sync
+    if director_effects.get("beat_sync"):
+        merged["beat_sync"] = True
+
+    # Audio saturation
+    if director_effects.get("audio_saturation"):
+        merged["audio_saturation"] = True
+
+    # Caption style
+    if director_effects.get("caption_style"):
+        merged["caption_style"] = director_effects["caption_style"]
+
+    # B-roll transition
+    if director_effects.get("transition"):
+        merged["transition"] = director_effects["transition"]
+
+    # Rare effects: datamosh and pixel sort (max 3 segments, max 2s each)
+    if director_effects.get("datamosh_segments"):
+        segs = director_effects["datamosh_segments"]
+        if isinstance(segs, list):
+            merged["datamosh_segments"] = segs[:3]
+
+    if director_effects.get("pixel_sort_segments"):
+        segs = director_effects["pixel_sort_segments"]
+        if isinstance(segs, list):
+            merged["pixel_sort_segments"] = segs[:3]
+
+    logger.info(f"Merged effects: template={list(template_settings.keys()) if template_settings else []}, "
+                f"director={list(director_effects.keys())}, result keys={list(merged.keys())}")
+    return merged
+
+
 async def _render_clip_async(clip_id: int):
     db = SessionLocal()
     try:
@@ -499,12 +606,16 @@ async def _render_clip_async(clip_id: int):
 
         # Get template settings (for B-roll categories and effect settings like B&W)
         template = None
-        effect_settings = {}
+        template_effect_settings = {}
         if clip.template_id:
             template = db.query(RenderTemplate).filter(RenderTemplate.id == clip.template_id).first()
             if template:
-                effect_settings = template.effect_settings or {}
-                logger.info(f"Using template '{template.name}' with effect settings: {effect_settings}")
+                template_effect_settings = template.effect_settings or {}
+                logger.info(f"Using template '{template.name}' with effect settings: {template_effect_settings}")
+
+        # Merge template + director effects (director overrides template)
+        director_effects = (clip.render_metadata or {}).get("director_effects", {})
+        effect_settings = merge_director_effects(template_effect_settings, director_effects)
 
         # Check if B-roll is enabled (template setting takes priority)
         broll_enabled = True
@@ -559,13 +670,44 @@ async def _render_clip_async(clip_id: int):
                 logger.info(f"B-roll duration too short ({broll_duration:.1f}s < 3s), skipping montage")
                 broll_duration = 0
 
+        # Extract per-clip effect fields for direct payload params
+        speed_ramps = director_effects.get("speed_ramps", [])
+        if isinstance(speed_ramps, list):
+            # Adjust speed ramp timestamps: Grok provides absolute, video-processor needs clip-relative
+            adjusted_ramps = []
+            for ramp in speed_ramps[:3]:
+                if isinstance(ramp, dict):
+                    adjusted = dict(ramp)
+                    # Convert absolute timestamp to clip-relative
+                    if adjusted.get("time", 0) >= clip.start_time:
+                        adjusted["time"] = adjusted["time"] - clip.start_time
+                    adjusted_ramps.append(adjusted)
+            speed_ramps = adjusted_ramps
+
+        # Adjust datamosh/pixel_sort segment timestamps: absolute -> clip-relative
+        for seg_key in ("datamosh_segments", "pixel_sort_segments"):
+            segs = effect_settings.get(seg_key, [])
+            if isinstance(segs, list) and segs:
+                adjusted_segs = []
+                for seg in segs[:3]:
+                    if isinstance(seg, dict):
+                        adj = dict(seg)
+                        adj["start"] = max(0, adj.get("start", 0) - clip.start_time)
+                        adj["end"] = max(0, adj.get("end", 0) - clip.start_time)
+                        if adj["end"] > adj["start"]:
+                            adjusted_segs.append(adj)
+                effect_settings[seg_key] = adjusted_segs
+
+        caption_style = effect_settings.get("caption_style", "standard")
+        broll_transition_type = effect_settings.get("transition")
+
         async with httpx.AsyncClient(timeout=3600.0) as client:  # 60min for extraction + per-clip transcription
             payload = {
                 "video_path": video.local_path,
                 "start_time": clip.start_time,
                 "end_time": clip.end_time,
                 "transcript_segments": clip_segments,
-                "style_preset": "trad_west", # Could come from ClipPersona
+                "style_preset": "trad_west",
                 "font": selected_font,
                 "output_filename": f"clip_{clip.id}_{video.id}.mp4",
                 "outro_path": "/assets/outro.mp4",
@@ -576,8 +718,12 @@ async def _render_clip_async(clip_id: int):
                 "climax_time": climax_time,
                 "broll_paths": broll_paths,
                 "broll_duration": broll_duration if broll_paths else 0,
-                # Template effect settings (e.g., black & white mode)
-                "effect_settings": effect_settings
+                # Merged template + director effect settings
+                "effect_settings": effect_settings,
+                # Grok director: per-clip effect overrides
+                "speed_ramps": speed_ramps,
+                "caption_style": caption_style,
+                "broll_transition_type": broll_transition_type,
             }
             
             response = await client.post(

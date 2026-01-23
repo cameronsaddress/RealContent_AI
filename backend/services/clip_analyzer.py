@@ -20,6 +20,82 @@ logger = logging.getLogger(__name__)
 GROK_CONTEXT_LIMIT = 2_000_000  # 2M tokens
 CHUNK_THRESHOLD = int(GROK_CONTEXT_LIMIT * 0.75)  # 1.5M tokens - trigger chunking
 
+# ============ EFFECT CATALOG FOR GROK DIRECTOR ============
+# Creative descriptions help Grok choose effects based on content energy and mood
+EFFECT_CATALOG = """
+=== COLOR GRADES (choose ONE per clip) ===
+- "kodak_warm": Warm golden cinema - for wisdom, monologues, profound moments
+- "teal_orange": Hollywood blockbuster teal/orange - for confrontation, drama, intensity
+- "film_noir": Deep shadows, high contrast - for dark topics, conspiracy, threats
+- "bleach_bypass": Desaturated silvery grit - for war, violence, raw conflict
+- "cross_process": Surreal color shifts - for absurd humor, weird takes
+- "golden_hour": Warm amber glow - for inspirational, hopeful, uplifting
+- "cold_chrome": Steel blue metallic - for tech, power plays, authority
+- "vintage_tobacco": Aged warm desaturated - for nostalgia, retro references
+- "vibrant": Enhanced saturation (default) - for high energy, general use
+- "bw": Full black & white - for profound statements, dramatic weight
+
+=== MOTION EFFECTS (can combine, but limit to 2 max) ===
+- camera_shake: Handheld documentary feel (intensity 2-15px, frequency 1-4Hz)
+  USE FOR: raw emotion, angry rants, chaotic energy
+- speed_ramps: Slow-mo emphasis on key words (speed 0.3-0.5, duration 1-2s)
+  USE FOR: dramatic pauses, punchlines, "let that sink in" moments
+  MAX 3 ramps per clip, each at critical word timestamps
+- temporal_trail: Ghosting/afterimage streaks in short bursts
+  USE FOR: dreamy sequences, philosophical tangents, altered states
+
+=== GLITCH EFFECTS (use sparingly - max 1 per clip) ===
+- retro_glow: Soft neon bloom glow (intensity 0.2-0.5)
+  USE FOR: epic revelations, "based" moments, glory
+- wave_displacement: Melting wave distortion in brief bursts (2-3 bursts max, 1s each)
+  USE FOR: mind-bending takes, reality-breaking statements
+- heavy_vhs: Extra VHS tracking noise (intensity 1.0-1.5)
+  USE FOR: nostalgic references, "back in my day" content
+
+=== CAPTION STYLES (choose ONE per clip) ===
+- "standard": Default karaoke with trigger word scale (general use)
+- "pop_scale": Bouncy overshoot scale on every word (high energy, hype)
+- "shake": Vibrating text on triggers (aggressive, confrontational)
+- "blur_reveal": Words sharpen from blur (cinematic, mysterious)
+
+=== AUDIO REACTIVE (boolean flags) ===
+- beat_sync: Amplified zoom pulses on music beats (true/false)
+  USE FOR: high energy clips with rhythmic delivery
+- audio_saturation: Color intensifies on loud moments (true/false)
+  USE FOR: passionate speeches, yelling, emphasis
+
+=== B-ROLL TRANSITIONS (choose ONE for clips with B-roll) ===
+- "pixelize": Pixel dissolve between cuts (glitch aesthetic)
+- "radial": Circular wipe (dramatic reveal)
+- "dissolve": Smooth cross-fade (cinematic, calm)
+- "slideleft": Slide transition (fast-paced, news style)
+- "fadeblack": Fade through black (serious, weighty)
+
+=== PULSE INTENSITY ===
+- pulse_intensity: 0.1 (subtle) to 0.4 (aggressive zoom punches on triggers)
+  Default 0.25, increase for confrontational/aggressive clips
+
+=== VHS GRAIN ===
+- vhs_intensity: 0.5 (light film grain) to 1.5 (heavy VHS noise)
+  Default 1.0, reduce for clean/modern content, increase for retro
+
+=== RARE EFFECTS (use VERY SPARINGLY - max 1-2 clips per entire video) ===
+- datamosh_segments: Frame-melting I-frame removal glitch [{start, end}] max 3 segments, max 2s each
+  USE FOR: most shocking/unhinged moments, reality-breaking statements, "everything is fake"
+  WARNING: Expensive effect. Only use on the MOST viral-worthy clip in the video.
+- pixel_sort_segments: Glitch art pixel sorting by brightness [{start, end}] max 3 segments, max 2s each
+  USE FOR: surreal/psychedelic moments, existential dread, "simulation theory" takes
+  WARNING: Expensive effect. Only use on the MOST visually impactful clip.
+"""
+
+# Known effect keys for validation
+VALID_EFFECT_KEYS = {
+    "color_grade", "camera_shake", "speed_ramps", "temporal_trail",
+    "retro_glow", "wave_displacement", "heavy_vhs", "caption_style",
+    "beat_sync", "audio_saturation", "transition", "pulse_intensity",
+    "vhs_intensity", "datamosh_segments", "pixel_sort_segments"
+}
+
 class ViralSegment(BaseModel):
     start_time: float
     end_time: float
@@ -170,6 +246,18 @@ class ClipAnalyzerService(BaseService):
                 if not broll_categories:
                     broll_categories = ["war", "chaos", "power"]  # Default fallback
 
+                # Extract and validate director effects from Grok
+                raw_effects = clip_data.get("effects", {})
+                director_effects = {}
+                if isinstance(raw_effects, dict):
+                    for key, value in raw_effects.items():
+                        if key in VALID_EFFECT_KEYS:
+                            director_effects[key] = value
+                        else:
+                            logger.warning(f"Unknown effect '{key}' from Grok, dropping")
+                    if director_effects:
+                        logger.info(f"Director effects for clip: {list(director_effects.keys())}")
+
                 vc = ViralClip(
                     source_video_id=video.id,
                     start_time=start,
@@ -188,7 +276,8 @@ class ClipAnalyzerService(BaseService):
                         "trigger_words": clip_data.get("trigger_words", []),
                         "climax_time": climax_time,
                         "broll_enabled": True,
-                        "broll_categories": broll_categories
+                        "broll_categories": broll_categories,
+                        "director_effects": director_effects
                     }
                 )
                 db_session.add(vc)
@@ -306,6 +395,22 @@ For EACH clip you MUST identify:
 {broll_category_descriptions}
 {template_section}
 
+4. EFFECTS DIRECTION: You are the MOVIE DIRECTOR. For each clip, choose visual effects that match
+   the ENERGY, MOOD, and CONTENT. Think like a music video director or film editor.
+
+{EFFECT_CATALOG}
+
+EFFECTS SELECTION PHILOSOPHY:
+- AGGRESSIVE clips (rants, confrontation): camera_shake + heavy_vhs + shake captions + high pulse
+- INSPIRATIONAL clips (wisdom, hope): golden_hour/kodak_warm + retro_glow + pop_scale captions
+- CONSPIRACY/DARK clips: film_noir + wave_displacement + blur_reveal + low vhs
+- FUNNY/ABSURD clips: cross_process + speed_ramps on punchlines + pop_scale
+- EPIC/REVELATION clips: teal_orange + retro_glow + beat_sync + high pulse
+- Use speed_ramps to emphasize the EXACT moment of a punchline or shocking statement
+- Use temporal_trail sparingly for dreamlike/philosophical tangents
+- wave_displacement should be RARE - only for truly mind-bending moments
+- DO NOT over-stack effects. 2-3 effects per clip is ideal. Max 4.
+
 CRITICAL DURATION CONSTRAINTS (MUST FOLLOW):
 - TARGET: {target_duration} seconds per clip
 - MINIMUM: {min_duration} seconds (clips shorter than this are rejected)
@@ -333,7 +438,19 @@ Return ONLY valid JSON in this format:
           {{"word": "DESTROYED", "start": 20.5, "end": 21.0}},
           {{"word": "LIAR", "start": 25.2, "end": 25.8}},
           {{"word": "WAR", "start": 30.0, "end": 30.3}}
-      ]
+      ],
+      "effects": {{
+          "color_grade": "teal_orange",
+          "camera_shake": {{"intensity": 8, "frequency": 2.0}},
+          "speed_ramps": [{{"time": 30.0, "speed": 0.3, "duration": 1.5}}],
+          "retro_glow": 0.3,
+          "caption_style": "shake",
+          "beat_sync": true,
+          "audio_saturation": false,
+          "transition": "pixelize",
+          "pulse_intensity": 0.3,
+          "vhs_intensity": 1.0
+      }}
     }}
   ]
 }}

@@ -378,3 +378,14 @@ export const deleteBrollClip = async (filename) => {
   const { data } = await api.delete(`/api/viral/broll/${filename}`);
   return data;
 };
+
+// Effects API
+export const getEffectsCatalog = async () => {
+  const { data } = await api.get('/api/viral/effects-catalog');
+  return data;
+};
+
+export const updateClipEffects = async (clipId, effects) => {
+  const { data } = await api.put(`/api/viral/viral-clips/${clipId}/effects`, effects);
+  return data;
+};

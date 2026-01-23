@@ -95,6 +95,132 @@ COLOR_PRESETS = {
     "bw": {"contrast": 1.15, "brightness": 0.03, "saturation": 0},
 }
 
+# ============ LUT PRESETS ============
+# Maps creative names to .cube LUT files stored in /assets/luts/
+LUT_DIR = "/assets/luts"
+LUT_PRESETS = {
+    "kodak_warm": {"file": "kodak_warm.cube", "description": "Warm golden cinema look (serious monologues, wisdom)"},
+    "teal_orange": {"file": "teal_orange.cube", "description": "Hollywood blockbuster teal shadows + orange highlights (confrontation, drama)"},
+    "film_noir": {"file": "film_noir.cube", "description": "Deep shadows, high contrast (dark topics, conspiracy)"},
+    "bleach_bypass": {"file": "bleach_bypass.cube", "description": "Desaturated, silvery, gritty (war, violence, raw moments)"},
+    "cross_process": {"file": "cross_process.cube", "description": "Surreal color shifts, greens and magentas (funny, absurd)"},
+    "golden_hour": {"file": "golden_hour.cube", "description": "Warm amber glow (inspirational, hopeful)"},
+    "cold_chrome": {"file": "cold_chrome.cube", "description": "Steel blue metallic feel (tech, power, authority)"},
+    "vintage_tobacco": {"file": "vintage_tobacco.cube", "description": "Aged warm desaturated (retro, nostalgia)"},
+}
+
+# ============ EFFECT REGISTRY ============
+# Complete catalog of available effects with descriptions for Grok director prompt
+EFFECT_REGISTRY = {
+    # --- Color Grading ---
+    "lut_color_grade": {
+        "type": "ffmpeg_filter",
+        "category": "color",
+        "description": "Cinema-quality color grading using film emulation LUT",
+        "params": {"lut_file": "string (LUT preset name or filename)"},
+        "options": list(LUT_PRESETS.keys()),
+    },
+    # --- Motion Effects ---
+    "camera_shake": {
+        "type": "ffmpeg_expression",
+        "category": "motion",
+        "description": "Handheld documentary camera shake feel",
+        "params": {"intensity": "int 2-15 pixels", "frequency": "float 1.0-4.0 Hz"},
+    },
+    "speed_ramp": {
+        "type": "ffmpeg_segment",
+        "category": "motion",
+        "description": "Slow-motion emphasis on key moments, speed up between",
+        "params": {"ramps": "[{time, speed, duration}] max 3"},
+    },
+    "temporal_trail": {
+        "type": "ffmpeg_filter",
+        "category": "motion",
+        "description": "Ghosting/motion blur streaks for trippy dreamlike moments",
+        "params": {"decay": "float 0.8-0.99", "segments": "[[start, end]] time ranges"},
+    },
+    # --- Glitch Effects ---
+    "retro_glow": {
+        "type": "ffmpeg_filter",
+        "category": "glitch",
+        "description": "Soft neon bloom with RGB fringe glow effect",
+        "params": {"intensity": "float 0.2-0.6"},
+    },
+    "wave_displacement": {
+        "type": "ffmpeg_filter",
+        "category": "glitch",
+        "description": "Melting/warping wave distortion in brief bursts",
+        "params": {"triggers": "[{start, end, amplitude}] max 3 bursts"},
+    },
+    "heavy_vhs": {
+        "type": "config_override",
+        "category": "glitch",
+        "description": "Extra VHS tracking distortion and grain",
+        "params": {"intensity": "float 1.0-2.0"},
+    },
+    # --- Caption Styles ---
+    "caption_pop_scale": {
+        "type": "ass_style",
+        "category": "captions",
+        "description": "Words pop in with bouncy overshoot scale animation",
+    },
+    "caption_shake": {
+        "type": "ass_style",
+        "category": "captions",
+        "description": "Vibrating/shaking text on trigger words (aggressive energy)",
+    },
+    "caption_blur_reveal": {
+        "type": "ass_style",
+        "category": "captions",
+        "description": "Words sharpen from blur as spoken (cinematic reveal)",
+    },
+    # --- Audio Reactive ---
+    "beat_sync": {
+        "type": "audio_analysis",
+        "category": "audio",
+        "description": "Zoom pulses sync to background music beats (amplified)",
+    },
+    "audio_saturation": {
+        "type": "audio_analysis",
+        "category": "audio",
+        "description": "Colors intensify dynamically on loud/intense moments",
+    },
+    # --- Transitions (B-roll) ---
+    "transition_pixelize": {
+        "type": "xfade",
+        "category": "transition",
+        "description": "Pixel dissolve between B-roll cuts (glitch aesthetic)",
+    },
+    "transition_radial": {
+        "type": "xfade",
+        "category": "transition",
+        "description": "Circular wipe between B-roll cuts (dramatic reveal)",
+    },
+    "transition_dissolve": {
+        "type": "xfade",
+        "category": "transition",
+        "description": "Smooth cross-fade between B-roll cuts (cinematic)",
+    },
+    "transition_glitch": {
+        "type": "xfade",
+        "category": "transition",
+        "description": "Noise burst transition between B-roll cuts (aggressive)",
+    },
+    # --- Rare Effects (MoviePy post-processing) ---
+    "datamosh": {
+        "type": "moviepy_segment",
+        "category": "rare",
+        "description": "Frame-melting I-frame removal glitch (use SPARINGLY, max 1-2 clips per video)",
+        "params": {"segments": "[{start, end}] max 3, max 2s each"},
+    },
+    "pixel_sort": {
+        "type": "moviepy_segment",
+        "category": "rare",
+        "description": "Glitch art pixel sorting by brightness (use SPARINGLY, max 1-2 clips per video)",
+        "params": {"segments": "[{start, end}] max 3, max 2s each"},
+    },
+}
+
 # ============ FACE DETECTION FOR AUTO-CENTERING ============
 def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
     """
@@ -235,6 +361,37 @@ def get_effect_chain(effect_settings: dict) -> dict:
         "broll_cut_interval": 0.5,
         # Cross overlay (for Crusade template)
         "cross_overlay": False,
+        # === NEW EFFECTS (Grok Director) ===
+        # LUT color grading (overrides eq grade when set)
+        "lut_file": None,  # filename in /assets/luts/ or LUT_PRESETS key
+        # Retro glow (neon bloom)
+        "retro_glow": False,
+        "retro_glow_intensity": 0.3,
+        # Temporal trail (motion ghosting)
+        "temporal_trail": False,
+        "temporal_trail_segments": [],  # [[start, end], ...] in clip-relative time
+        "temporal_trail_decay": 0.95,
+        # Camera shake
+        "camera_shake": False,
+        "shake_intensity": 8,  # pixels
+        "shake_frequency": 2.0,  # Hz
+        # Wave displacement (brief distortion bursts)
+        "wave_displacement": False,
+        "wave_triggers": [],  # [{"start": t, "end": t, "amplitude": 15}]
+        # Speed ramps
+        "speed_ramps": [],  # [{"time": t, "speed": 0.3, "duration": 1.5}]
+        # Audio reactive
+        "beat_sync_intensity": 0.006,  # Default heartbeat intensity
+        "audio_saturation": False,
+        "audio_saturation_amount": 0.3,
+        # B-roll transitions
+        "broll_transition_type": None,  # "pixelize"|"radial"|"dissolve"|"slideleft"|"fadeblack"
+        "broll_transition_duration": 0.3,
+        # Caption style
+        "caption_style": "standard",  # "standard"|"pop_scale"|"shake"|"blur_reveal"
+        # Rare effects (MoviePy post-processing)
+        "datamosh_segments": [],  # [{"start": 5.0, "end": 7.0}] max 3, 2s each
+        "pixel_sort_segments": [],  # [{"start": 10.0, "end": 12.0}] max 3, 2s each
     }
 
     if not effect_settings:
@@ -308,6 +465,53 @@ def get_effect_chain(effect_settings: dict) -> dict:
     # Handle saturation=0 from effect_settings (B&W override)
     if effect_settings.get("saturation") == 0 or effect_settings.get("color_grade") == "bw":
         config["saturation"] = 0
+
+    # === LUT RESOLUTION ===
+    # Resolve lut_file: can be a LUT_PRESETS key or direct filename
+    lut_file = config.get("lut_file") or effect_settings.get("color_grade")
+    if lut_file:
+        if lut_file in LUT_PRESETS:
+            lut_path = os.path.join(LUT_DIR, LUT_PRESETS[lut_file]["file"])
+        else:
+            lut_path = os.path.join(LUT_DIR, lut_file)
+        if os.path.exists(lut_path):
+            config["lut_file"] = lut_path
+            print(f"[Effects] LUT resolved: {lut_file} -> {lut_path}")
+        else:
+            config["lut_file"] = None
+            print(f"[Effects] LUT not found: {lut_path}, falling back to eq grade")
+
+    # === New effect flags from effect_settings ===
+    if effect_settings.get("retro_glow"):
+        config["retro_glow"] = True
+        if isinstance(effect_settings["retro_glow"], (int, float)):
+            config["retro_glow_intensity"] = float(effect_settings["retro_glow"])
+    if effect_settings.get("temporal_trail"):
+        config["temporal_trail"] = True
+        if isinstance(effect_settings["temporal_trail"], dict):
+            config["temporal_trail_segments"] = effect_settings["temporal_trail"].get("segments", [])
+            config["temporal_trail_decay"] = effect_settings["temporal_trail"].get("decay", 0.95)
+    if effect_settings.get("camera_shake"):
+        config["camera_shake"] = True
+        if isinstance(effect_settings["camera_shake"], dict):
+            config["shake_intensity"] = effect_settings["camera_shake"].get("intensity", 8)
+            config["shake_frequency"] = effect_settings["camera_shake"].get("frequency", 2.0)
+    if effect_settings.get("wave_displacement"):
+        config["wave_displacement"] = True
+        if isinstance(effect_settings["wave_displacement"], dict):
+            config["wave_triggers"] = effect_settings["wave_displacement"].get("triggers", [])
+    if effect_settings.get("speed_ramps"):
+        config["speed_ramps"] = effect_settings["speed_ramps"][:3]  # Max 3
+    if effect_settings.get("beat_sync"):
+        config["beat_sync_intensity"] = 0.02  # Amplified when beat_sync enabled
+    if effect_settings.get("audio_saturation"):
+        config["audio_saturation"] = True
+        if isinstance(effect_settings["audio_saturation"], (int, float)):
+            config["audio_saturation_amount"] = float(effect_settings["audio_saturation"])
+    if effect_settings.get("transition"):
+        config["broll_transition_type"] = effect_settings["transition"]
+    if effect_settings.get("caption_style"):
+        config["caption_style"] = effect_settings["caption_style"]
 
     return config
 
@@ -413,6 +617,10 @@ class RenderClipRequest(BaseModel):
     broll_duration: Optional[float] = 0  # Duration of B-roll section in seconds
     # Template effect settings
     effect_settings: Optional[dict] = {}  # {"color_grade": "bw", "saturation": 0, etc.}
+    # === NEW: Grok Director effect fields ===
+    speed_ramps: Optional[List[dict]] = []  # [{"time": 15.2, "speed": 0.3, "duration": 1.5}]
+    caption_style: str = "standard"  # "standard"|"pop_scale"|"shake"|"blur_reveal"
+    broll_transition_type: Optional[str] = None  # "pixelize"|"radial"|"dissolve"|"slideleft"
 
 def report_status(webhook_url: str, status: str):
     if not webhook_url: return
@@ -615,6 +823,70 @@ def detect_beats(audio_path: str, max_duration: float = None) -> list:
         except:
             pass
 
+def detect_onset_peaks(audio_path: str, max_duration: float = None) -> list:
+    """
+    Detect high-energy onset peaks in audio (full spectrum, not just bass).
+    Used for audio-reactive saturation pulses. Returns peak timestamps.
+    """
+    import tempfile
+    from scipy.signal import butter, filtfilt
+
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+        tmp_wav = tmp.name
+
+    try:
+        duration_args = ["-t", str(max_duration)] if max_duration else []
+        subprocess.run([
+            "ffmpeg", "-y", "-i", audio_path,
+            *duration_args,
+            "-ac", "1", "-ar", "22050",
+            tmp_wav
+        ], capture_output=True, check=True)
+
+        from scipy.io import wavfile
+        sample_rate, audio_data = wavfile.read(tmp_wav)
+
+        if audio_data.dtype == np.int16:
+            audio_data = audio_data.astype(np.float32) / 32768.0
+        elif audio_data.dtype == np.int32:
+            audio_data = audio_data.astype(np.float32) / 2147483648.0
+
+        # Full spectrum onset detection (speech emphasis, loud moments)
+        hop_size = 512
+        frame_size = 1024
+
+        num_frames = (len(audio_data) - frame_size) // hop_size + 1
+        energy = np.zeros(num_frames)
+        for i in range(num_frames):
+            start = i * hop_size
+            frame = audio_data[start:start + frame_size]
+            energy[i] = np.sqrt(np.mean(frame ** 2))
+
+        if energy.max() > 0:
+            energy = energy / energy.max()
+
+        # Detect onset peaks: high-energy moments with minimum gap
+        min_gap = int(0.5 * sample_rate / hop_size)  # Minimum 0.5s between peaks
+        peaks, _ = find_peaks(
+            energy,
+            height=0.4,       # Only loud moments
+            distance=min_gap,
+            prominence=0.15
+        )
+
+        onset_times = (peaks * hop_size / sample_rate).tolist()
+        return onset_times[:20]  # Max 20 peaks
+
+    except Exception as e:
+        print(f"[AudioReactive] Onset detection failed: {e}")
+        return []
+    finally:
+        try:
+            os.unlink(tmp_wav)
+        except:
+            pass
+
+
 # ============ HELPER FUNCTIONS (LEGACY & NEW) ============
 
 def get_gpu_encoder() -> tuple[str, list]:
@@ -798,6 +1070,360 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
     print(f"Chromatic aberration applied successfully")
 
 
+def apply_datamosh_effect(video_path: str, output_path: str, segments: list, duration: float) -> bool:
+    """
+    Apply datamosh-style effect to specified segments of a video.
+    Uses frame blending with decay to simulate the I-frame removal look:
+    motion vectors propagate without reference, creating smearing/melting artifacts.
+
+    segments: [{"start": 5.0, "end": 7.0}] - max 3 segments, max 2s each
+    Returns True on success, False on failure.
+    """
+    if not segments:
+        return False
+
+    # Validate and limit segments
+    valid_segments = []
+    for seg in segments[:3]:
+        start = float(seg.get("start", 0))
+        end = float(seg.get("end", start + 1.0))
+        # Clamp to clip duration and max 2s
+        end = min(end, start + 2.0, duration)
+        if start < duration and end > start:
+            valid_segments.append((start, end))
+
+    if not valid_segments:
+        return False
+
+    print(f"[Datamosh] Applying to {len(valid_segments)} segments: {valid_segments}")
+
+    try:
+        clip = VideoFileClip(video_path)
+
+        # Frame buffer for persistence effect
+        prev_frames = [None]
+        decay = 0.85  # How much of the previous frame persists (higher = more smear)
+
+        def datamosh_frame(get_frame, t):
+            frame = get_frame(t)
+
+            # Check if current time is in any datamosh segment
+            in_segment = False
+            for start, end in valid_segments:
+                if start <= t <= end:
+                    in_segment = True
+                    break
+
+            if not in_segment:
+                prev_frames[0] = frame.copy()
+                return frame
+
+            # Datamosh: blend current frame heavily with previous
+            if prev_frames[0] is not None:
+                # Mix: keep motion from current but colors/structure from previous
+                # This simulates P-frames decoding against wrong reference
+                blended = (decay * prev_frames[0].astype(np.float32) +
+                          (1.0 - decay) * frame.astype(np.float32))
+
+                # Add random block corruption (simulates macro-block errors)
+                h, w = frame.shape[:2]
+                block_size = 16
+                n_corrupt = random.randint(2, 6)
+                for _ in range(n_corrupt):
+                    bx = random.randint(0, w // block_size - 1) * block_size
+                    by = random.randint(0, h // block_size - 1) * block_size
+                    # Shift this block from a random position
+                    sx = random.randint(0, w // block_size - 1) * block_size
+                    sy = random.randint(0, h // block_size - 1) * block_size
+                    blended[by:by+block_size, bx:bx+block_size] = \
+                        frame[sy:sy+block_size, sx:sx+block_size]
+
+                result = np.clip(blended, 0, 255).astype(np.uint8)
+                prev_frames[0] = result.copy()
+                return result
+            else:
+                prev_frames[0] = frame.copy()
+                return frame
+
+        processed = clip.transform(datamosh_frame)
+
+        processed.write_videofile(
+            output_path,
+            codec='libx264',
+            preset='ultrafast',
+            fps=30,
+            audio_codec='aac',
+            logger=None
+        )
+
+        clip.close()
+        processed.close()
+        print(f"[Datamosh] Applied successfully to {len(valid_segments)} segments")
+        return True
+
+    except Exception as e:
+        print(f"[Datamosh] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def apply_pixel_sort_effect(video_path: str, output_path: str, segments: list, duration: float) -> bool:
+    """
+    Apply pixel sorting effect to specified segments of a video.
+    Sorts pixel rows by brightness within a threshold range, creating
+    the signature "melting" glitch art look.
+
+    segments: [{"start": 10.0, "end": 12.0}] - max 3 segments, max 2s each
+    Returns True on success, False on failure.
+    """
+    if not segments:
+        return False
+
+    # Validate and limit segments
+    valid_segments = []
+    for seg in segments[:3]:
+        start = float(seg.get("start", 0))
+        end = float(seg.get("end", start + 1.0))
+        end = min(end, start + 2.0, duration)
+        if start < duration and end > start:
+            valid_segments.append((start, end))
+
+    if not valid_segments:
+        return False
+
+    print(f"[PixelSort] Applying to {len(valid_segments)} segments: {valid_segments}")
+
+    try:
+        clip = VideoFileClip(video_path)
+
+        def pixel_sort_frame(get_frame, t):
+            frame = get_frame(t)
+
+            # Check if current time is in any pixel sort segment
+            in_segment = False
+            segment_progress = 0.0
+            for start, end in valid_segments:
+                if start <= t <= end:
+                    in_segment = True
+                    segment_progress = (t - start) / max(end - start, 0.01)
+                    break
+
+            if not in_segment:
+                return frame
+
+            # Convert to grayscale for brightness threshold
+            gray = np.mean(frame, axis=2)
+            h, w = frame.shape[:2]
+
+            # Threshold range that gets sorted (mid-brightness pixels)
+            # Animate threshold to create evolving effect
+            low_thresh = 60 + 40 * np.sin(np.pi * segment_progress)
+            high_thresh = 180 - 30 * np.sin(np.pi * segment_progress)
+
+            result = frame.copy()
+
+            # Sort every 3rd row for performance (1920 rows at 30fps is expensive)
+            for row_idx in range(0, h, 3):
+                row_brightness = gray[row_idx]
+                # Find spans of pixels within threshold
+                mask = (row_brightness > low_thresh) & (row_brightness < high_thresh)
+
+                # Find contiguous spans to sort
+                spans = []
+                in_span = False
+                span_start = 0
+                for col in range(w):
+                    if mask[col] and not in_span:
+                        span_start = col
+                        in_span = True
+                    elif not mask[col] and in_span:
+                        if col - span_start > 8:  # Min span width
+                            spans.append((span_start, col))
+                        in_span = False
+                if in_span and w - span_start > 8:
+                    spans.append((span_start, w))
+
+                # Sort each span by brightness
+                for s_start, s_end in spans:
+                    span_pixels = result[row_idx, s_start:s_end].copy()
+                    span_bright = gray[row_idx, s_start:s_end]
+                    sort_indices = np.argsort(span_bright)
+                    result[row_idx, s_start:s_end] = span_pixels[sort_indices]
+                    # Also apply to the two rows below for visual consistency
+                    if row_idx + 1 < h:
+                        result[row_idx + 1, s_start:s_end] = span_pixels[sort_indices]
+                    if row_idx + 2 < h:
+                        result[row_idx + 2, s_start:s_end] = span_pixels[sort_indices]
+
+            return result
+
+        processed = clip.transform(pixel_sort_frame)
+
+        processed.write_videofile(
+            output_path,
+            codec='libx264',
+            preset='ultrafast',
+            fps=30,
+            audio_codec='aac',
+            logger=None
+        )
+
+        clip.close()
+        processed.close()
+        print(f"[PixelSort] Applied successfully to {len(valid_segments)} segments")
+        return True
+
+    except Exception as e:
+        print(f"[PixelSort] Failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, encoder: str, gpu_opts: list) -> bool:
+    """
+    Apply speed ramps to a rendered clip. Splits at ramp points, retimes segments,
+    and re-concatenates with audio sync.
+
+    speed_ramps: [{"time": 15.2, "speed": 0.3, "duration": 1.5}]
+      - time: when the ramp starts (clip-relative seconds)
+      - speed: playback speed (0.3=slow-mo, 2.0=fast)
+      - duration: how long the source content spans (in original seconds)
+
+    Returns True if speed ramps were applied, False if skipped/failed.
+    """
+    if not speed_ramps:
+        return False
+
+    # Sort ramps by time
+    ramps = sorted(speed_ramps[:3], key=lambda r: r.get("time", 0))
+
+    # Get clip duration
+    try:
+        probe = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(input_path)
+        ], capture_output=True, text=True)
+        clip_duration = float(probe.stdout.strip())
+    except:
+        print("[SpeedRamp] Failed to probe clip duration, skipping")
+        return False
+
+    # Build segment list: [(start, end, speed), ...]
+    segments = []
+    cursor = 0.0
+    for ramp in ramps:
+        ramp_start = ramp.get("time", 0)
+        ramp_speed = max(0.25, min(4.0, ramp.get("speed", 1.0)))  # Clamp to [0.25, 4.0]
+        ramp_dur = max(0.3, min(5.0, ramp.get("duration", 1.0)))  # Clamp to [0.3, 5.0]
+
+        if ramp_start > cursor:
+            # Normal speed segment before this ramp
+            segments.append((cursor, ramp_start, 1.0))
+        # Ramp segment
+        ramp_end = min(ramp_start + ramp_dur, clip_duration)
+        if ramp_end > ramp_start:
+            segments.append((ramp_start, ramp_end, ramp_speed))
+        cursor = ramp_end
+
+    # Final normal segment after last ramp
+    if cursor < clip_duration:
+        segments.append((cursor, clip_duration, 1.0))
+
+    if not segments:
+        return False
+
+    print(f"[SpeedRamp] Splitting into {len(segments)} segments: {[(f'{s:.1f}-{e:.1f}@{sp}x') for s, e, sp in segments]}")
+
+    # Extract and retime each segment
+    temp_dir = input_path.parent
+    temp_segments = []
+
+    def build_atempo_chain(speed: float) -> str:
+        """Build chained atempo filters for speeds outside [0.5, 2.0] range."""
+        filters = []
+        remaining = speed
+        while remaining < 0.5:
+            filters.append("atempo=0.5")
+            remaining /= 0.5
+        while remaining > 2.0:
+            filters.append("atempo=2.0")
+            remaining /= 2.0
+        filters.append(f"atempo={remaining:.4f}")
+        return ",".join(filters)
+
+    try:
+        for i, (start, end, speed) in enumerate(segments):
+            seg_path = temp_dir / f"speedramp_seg_{i:02d}_{uuid.uuid4().hex[:4]}.mp4"
+            seg_duration = end - start
+
+            if speed == 1.0:
+                # Normal speed - just extract
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{start:.3f}", "-t", f"{seg_duration:.3f}",
+                    "-i", str(input_path),
+                    "-c", "copy",
+                    str(seg_path)
+                ]
+            else:
+                # Retimed segment
+                atempo_chain = build_atempo_chain(speed)
+                setpts = f"setpts=PTS/{speed}"
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{start:.3f}", "-t", f"{seg_duration:.3f}",
+                    "-i", str(input_path),
+                    "-vf", setpts,
+                    "-af", atempo_chain,
+                    "-c:v", encoder, *gpu_opts,
+                    "-c:a", "aac",
+                    str(seg_path)
+                ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0 or not seg_path.exists():
+                print(f"[SpeedRamp] Segment {i} failed: {result.stderr[-200:] if result.stderr else 'unknown'}")
+                # Cleanup and abort
+                for p in temp_segments:
+                    if p.exists(): p.unlink()
+                return False
+            temp_segments.append(seg_path)
+
+        # Concatenate all segments
+        concat_file = temp_dir / f"speedramp_concat_{uuid.uuid4().hex[:6]}.txt"
+        with open(concat_file, "w") as f:
+            for seg in temp_segments:
+                f.write(f"file '{seg}'\n")
+
+        cmd_concat = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_file),
+            "-c", "copy",
+            str(output_path)
+        ]
+        result = subprocess.run(cmd_concat, capture_output=True, text=True)
+
+        # Cleanup
+        concat_file.unlink()
+        for seg in temp_segments:
+            if seg.exists(): seg.unlink()
+
+        if result.returncode != 0 or not output_path.exists():
+            print(f"[SpeedRamp] Concat failed: {result.stderr[-200:] if result.stderr else 'unknown'}")
+            return False
+
+        print(f"[SpeedRamp] Applied {len(ramps)} speed ramps successfully")
+        return True
+
+    except Exception as e:
+        print(f"[SpeedRamp] Error: {e}")
+        for seg in temp_segments:
+            if seg.exists(): seg.unlink()
+        return False
+
+
 def generate_broll_montage(
     broll_paths: List[str],
     duration: float,
@@ -805,7 +1431,9 @@ def generate_broll_montage(
     output_path: Path,
     effect_settings: dict = None,
     caption_data: dict = None,
-    cut_interval: float = 0.5  # Fixed cut interval in seconds
+    cut_interval: float = 0.5,  # Fixed cut interval in seconds
+    transition_type: Optional[str] = None,  # "pixelize"|"radial"|"dissolve"|"slideleft"|"fadeblack"|"wiperight"
+    transition_duration: float = 0.3  # Transition duration in seconds
 ) -> Optional[str]:
     """
     Generate a B-roll montage with fixed-interval cuts (default 0.5s).
@@ -938,24 +1566,92 @@ def generate_broll_montage(
             print("B-Roll Montage: No segments created!")
             return None
 
-        # Now concatenate the pre-trimmed segments
-        with open(concat_list_path, "w") as f:
+        # Concatenate segments (with or without transitions)
+        valid_transitions = {"pixelize", "radial", "dissolve", "slideleft", "fadeblack", "wiperight", "smoothleft", "smoothright", "circleopen", "circleclose"}
+        use_xfade = transition_type and transition_type in valid_transitions and len(temp_segments) >= 2
+
+        if use_xfade:
+            # === XFADE TRANSITIONS ===
+            # Chain xfade filters between consecutive segments
+            print(f"B-Roll Montage: Using xfade transition '{transition_type}' ({transition_duration:.1f}s)")
+
+            # Get duration of each segment
+            seg_durations = []
             for seg in temp_segments:
-                f.write(f"file '{seg}'\n")
+                try:
+                    probe = subprocess.run([
+                        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", str(seg)
+                    ], capture_output=True, text=True)
+                    seg_durations.append(float(probe.stdout.strip()))
+                except:
+                    seg_durations.append(cut_interval)
 
-        cmd_concat = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list_path),
-            "-c", "copy",  # No re-encode needed, segments already processed
-            "-t", str(duration),
-            str(output_path)
-        ]
+            # Build xfade filter chain
+            inputs = []
+            for seg in temp_segments:
+                inputs.extend(["-i", str(seg)])
 
-        print(f"B-Roll Montage: Concatenating {len(temp_segments)} segments")
-        subprocess.run(cmd_concat, check=True)
+            # Chain xfade: [0][1]xfade=...[v01]; [v01][2]xfade=...[v012]; ...
+            filter_parts = []
+            cumulative_offset = 0.0
+            td = min(transition_duration, cut_interval * 0.8)  # Don't exceed segment duration
+
+            for i in range(len(temp_segments) - 1):
+                if i == 0:
+                    in_label = f"[{i}:v]"
+                else:
+                    in_label = f"[v{i}]"
+                next_label = f"[{i+1}:v]"
+                out_label = f"[v{i+1}]" if i < len(temp_segments) - 2 else "[vout]"
+
+                offset = cumulative_offset + seg_durations[i] - td
+                if offset < 0:
+                    offset = cumulative_offset + seg_durations[i] * 0.5
+                cumulative_offset = offset
+
+                filter_parts.append(
+                    f"{in_label}{next_label}xfade=transition={transition_type}:duration={td:.3f}:offset={offset:.3f}{out_label}"
+                )
+
+            filter_complex = ";".join(filter_parts)
+            encoder_local, gpu_opts_local = get_gpu_encoder()
+
+            cmd_xfade = [
+                "ffmpeg", "-y",
+                *inputs,
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-c:v", encoder_local, *gpu_opts_local,
+                "-t", str(duration),
+                "-an",
+                str(output_path)
+            ]
+
+            result = subprocess.run(cmd_xfade, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"B-Roll Montage: xfade failed, falling back to concat: {result.stderr[-200:] if result.stderr else ''}")
+                use_xfade = False  # Fall through to concat below
+
+        if not use_xfade:
+            # === CONCAT DEMUXER (default, no transitions) ===
+            with open(concat_list_path, "w") as f:
+                for seg in temp_segments:
+                    f.write(f"file '{seg}'\n")
+
+            cmd_concat = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", str(concat_list_path),
+                "-c", "copy",
+                "-t", str(duration),
+                str(output_path)
+            ]
+
+            print(f"B-Roll Montage: Concatenating {len(temp_segments)} segments (no transitions)")
+            subprocess.run(cmd_concat, check=True)
+            concat_list_path.unlink()
 
         # Clean up temp segments
-        concat_list_path.unlink()
         for seg in temp_segments:
             if seg.exists():
                 seg.unlink()
@@ -970,6 +1666,7 @@ def generate_broll_montage(
             climax_clip_time = caption_data.get("climax_clip_time", 0)
             font = caption_data.get("font", "Honk")
             trigger_words = caption_data.get("trigger_words", [])
+            broll_caption_style = caption_data.get("caption_style", "standard")
 
             # Filter segments that fall within the B-roll window
             broll_segments = []
@@ -1012,7 +1709,7 @@ def generate_broll_montage(
             if broll_segments:
                 # Generate ASS file for B-roll section
                 broll_ass_path = temp_dir / f"broll_captions_{uuid.uuid4().hex[:8]}.ass"
-                generate_karaoke_ass(broll_segments, broll_ass_path, 0.0, font, broll_triggers)
+                generate_karaoke_ass(broll_segments, broll_ass_path, 0.0, font, broll_triggers, broll_caption_style)
 
                 # Burn ASS captions into B-roll
                 temp_with_ass = temp_dir / f"broll_ass_{uuid.uuid4().hex[:8]}.mp4"
@@ -1680,14 +2377,15 @@ def apply_combined_template_effects(video_path: str, output_path: str, effect_co
     print(f"Applied template effects: {', '.join(effects_applied) if effects_applied else 'none'}")
 
 
-def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None):
+def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None, caption_style: str = "standard"):
     """
     Generate ASS karaoke captions with enhanced trigger word effects.
 
-    Trigger words get:
-    - 3x size scale (300%)
-    - RGB glitch color (cyan/magenta alternating)
-    - Shake effect via shadow blur
+    caption_style options:
+    - "standard": trigger words get 3x scale + cyan color + border (default)
+    - "pop_scale": ALL words bounce in with overshoot scale, triggers get bigger
+    - "shake": trigger words vibrate/shake with position offsets
+    - "blur_reveal": words sharpen from blur as spoken, triggers get extra blur + scale
     """
     # Build trigger word lookup (by time range)
     trigger_windows = []
@@ -1705,11 +2403,9 @@ def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: 
         w_lower = w_text.lower().strip('.,!?;:')
 
         for t_start, t_end, t_word in trigger_windows:
-            # Check time overlap AND word match
             if w_start_rel < t_end and w_end_rel > t_start:
                 if t_word in w_lower or w_lower in t_word:
                     return True
-            # Also check if word text matches regardless of timing
             if t_word and (t_word in w_lower or w_lower in t_word):
                 return True
         return False
@@ -1737,6 +2433,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cs = int((s - int(s)) * 100)
         return f"{h}:{m:02d}:{int(s):02d}.{cs:02d}"
 
+    def build_word_fx(w_text, dur_cs, is_trigger, style):
+        """Build ASS override tags for a word based on caption_style."""
+        dur_ms = dur_cs * 10
+
+        if style == "pop_scale":
+            # Pop scale: words bounce in with overshoot
+            if is_trigger:
+                # Trigger: 4x overshoot → 3x settle + cyan color
+                fx = f"\\fscx400\\fscy400\\c&H00FFFF&\\bord6\\t(0,{min(dur_ms, 100)},\\fscx350\\fscy350)\\t({min(dur_ms, 100)},{min(dur_ms, 250)},\\fscx300\\fscy300)"
+                return f"{{\\k{dur_cs}{fx}}}{w_text.upper()} {{\\r}}"
+            else:
+                # Normal: 1.5x overshoot → 1x settle (bouncy appear)
+                fx = f"\\fscx150\\fscy150\\t(0,{min(dur_ms, 100)},\\fscx110\\fscy110)\\t({min(dur_ms, 100)},{min(dur_ms, 200)},\\fscx100\\fscy100)"
+                return f"{{\\k{dur_cs}{fx}}}{w_text} "
+
+        elif style == "shake":
+            # Shake: trigger words vibrate with position and rotation
+            if is_trigger:
+                # Rapid shake via alternating frz (rotation) + scale
+                fx = f"\\fscx300\\fscy300\\c&H00FFFF&\\bord6\\shad3\\frz-3\\t(0,50,\\frz3)\\t(50,100,\\frz-2)\\t(100,150,\\frz2)\\t(150,{dur_ms},\\frz0\\fscx100\\fscy100\\c&HFFFFFF&)"
+                return f"{{\\k{dur_cs}{fx}}}{w_text.upper()} {{\\r}}"
+            else:
+                return f"{{\\k{dur_cs}}}{w_text} "
+
+        elif style == "blur_reveal":
+            # Blur reveal: words sharpen from blur as they're spoken
+            if is_trigger:
+                # Heavy blur + scale → sharp + normal
+                fx = f"\\blur12\\fscx250\\fscy250\\c&H00FFFF&\\bord6\\t(0,{min(dur_ms, 200)},\\blur0\\fscx100\\fscy100\\c&HFFFFFF&)"
+                return f"{{\\k{dur_cs}{fx}}}{w_text.upper()} {{\\r}}"
+            else:
+                # Light blur → sharp
+                fx = f"\\blur8\\t(0,{min(dur_ms, 200)},\\blur0)"
+                return f"{{\\k{dur_cs}{fx}}}{w_text} "
+
+        else:
+            # Standard (original behavior)
+            if is_trigger:
+                trigger_fx = f"\\fscx300\\fscy300\\c&H00FFFF&\\bord6\\shad3\\t(0,{dur_ms},\\fscx100\\fscy100\\c&HFFFFFF&)"
+                return f"{{\\k{dur_cs}{trigger_fx}}}{w_text.upper()} {{\\r}}"
+            else:
+                return f"{{\\k{dur_cs}}}{w_text} "
+
     for seg in segments:
         s_start, s_end = seg['start'], seg['end']
         words = seg.get('words', [{'start': s_start, 'end': s_end, 'word': seg['text']}])
@@ -1758,28 +2497,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             dur_cs = int((w_end - w_start) * 100)
             if dur_cs < 1: dur_cs = 1
 
-            # Check if this is a trigger word
-            if is_trigger_word(w_start, w_end, w_text):
-                # TRIGGER WORD: 3x size + RGB color + shake
-                # \fscx300\fscy300 = 3x scale
-                # \c&H00FFFF& = Cyan color (BGR format)
-                # \bord6\shad3 = thick border + shadow for impact
-                # \t(0,{dur},\fscx100\fscy100) = animate back to normal size
-                trigger_fx = f"\\fscx300\\fscy300\\c&H00FFFF&\\bord6\\shad3\\t(0,{dur_cs*10},\\fscx100\\fscy100\\c&HFFFFFF&)"
-                karaoke += f"{{\\k{dur_cs}{trigger_fx}}}{w_text.upper()} {{\\r}}"
-            else:
-                # Normal word
-                karaoke += f"{{\\k{dur_cs}}}{w_text} "
+            is_trigger = is_trigger_word(w_start, w_end, w_text)
+            karaoke += build_word_fx(w_text, dur_cs, is_trigger, caption_style)
 
             current_time = w_end
 
-        line_entry = f"Dialogue: 0,{fmt_time(s_start)},{fmt_time(s_end)},Karaoke,,0,0,0,,{{\\blur2}}{karaoke}"
+        # Line-level blur for blur_reveal style
+        line_blur = "\\blur2" if caption_style != "blur_reveal" else ""
+        line_entry = f"Dialogue: 0,{fmt_time(s_start)},{fmt_time(s_end)},Karaoke,,0,0,0,,{{{line_blur}}}{karaoke}"
         events.append(line_entry)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(header + "\n".join(events))
 
-    print(f"Generated karaoke ASS with {len(trigger_windows)} trigger word enhancements")
+    print(f"Generated karaoke ASS ({caption_style}) with {len(trigger_windows)} trigger word enhancements")
 
 
 # ============ ENDPOINTS ============
@@ -1787,6 +2518,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 @app.get("/health")
 async def health_check():
     return {"status": "healthy_v2", "gpu_encoder": get_gpu_encoder()[0]}
+
+@app.get("/effects")
+async def get_effects_catalog():
+    """Return available effects catalog with descriptions for Grok director prompt."""
+    # Check which LUTs are actually present on disk
+    available_luts = {}
+    for name, info in LUT_PRESETS.items():
+        lut_path = os.path.join(LUT_DIR, info["file"])
+        available_luts[name] = {
+            "file": info["file"],
+            "description": info["description"],
+            "available": os.path.exists(lut_path)
+        }
+    return {
+        "effects": EFFECT_REGISTRY,
+        "lut_presets": available_luts,
+        "color_presets": COLOR_PRESETS,
+        "caption_styles": ["standard", "pop_scale", "shake", "blur_reveal"],
+        "transition_types": ["pixelize", "radial", "dissolve", "slideleft", "fadeblack", "wiperight"],
+    }
 
 @app.post("/download", response_model=DownloadResponse)
 async def download_video(request: DownloadRequest):
@@ -2005,8 +2756,12 @@ def render_viral_clip(request: RenderClipRequest):
             print(f"DEBUG: Random font selected: {selected_font} (from {len(available_fonts)} available)")
 
         # 5. Karaoke ASS Generation with FRESH timestamps (offset=0 since clip starts at 0)
-        report_status(request.status_webhook_url, f"Processing: Karaoke ({selected_font})")
-        generate_karaoke_ass(fresh_segments, ass_path, 0.0, selected_font, fresh_trigger_words)
+        # Determine caption style from request or effect_settings
+        caption_style = request.caption_style or "standard"
+        if request.effect_settings and request.effect_settings.get("caption_style"):
+            caption_style = request.effect_settings["caption_style"]
+        report_status(request.status_webhook_url, f"Processing: Karaoke ({selected_font}, {caption_style})")
+        generate_karaoke_ass(fresh_segments, ass_path, 0.0, selected_font, fresh_trigger_words, caption_style)
 
         # 3. MEGA-FILTER CHAIN (V5: CUDA NATIVE)
         # Architecture: 
@@ -2053,21 +2808,22 @@ def render_viral_clip(request: RenderClipRequest):
                 trigger_sum += f"+0.50*between(t,{snap_peak:.3f},{snap_end:.3f})*(1-((t-{snap_peak:.3f})/{decay_dur}))"
 
         # Beat-synced pulse from background music (bass drum only)
+        # Read beat_sync intensity from effect_settings early (before get_effect_chain)
+        beat_intensity = 0.006  # Default barely perceptible
+        if request.effect_settings and request.effect_settings.get("beat_sync"):
+            beat_intensity = 0.02  # Amplified when explicitly enabled by Grok director
         beat_pulse = ""
         if bgm_path:
             try:
                 beat_times = detect_beats(str(bgm_path), duration)
-                print(f"Detected {len(beat_times)} bass drum hits in BGM for pulse sync")
-                # BARELY PERCEPTIBLE pulse - quick in, smooth out
-                # 0.6% zoom, 0.02s attack + 0.20s decay for ultra-smooth feel
+                print(f"Detected {len(beat_times)} bass drum hits in BGM for pulse sync (intensity={beat_intensity})")
                 for bt in beat_times[:60]:  # Limit to avoid FFmpeg expr overflow
                     attack = 0.02   # Instant snap in
                     decay = 0.20    # Smooth ease out
                     peak = bt + attack
                     end = peak + decay
-                    # Attack: ramp 0->1 over attack time, Decay: ramp 1->0 over decay time
-                    beat_pulse += f"+0.006*between(t,{bt:.3f},{peak:.3f})*((t-{bt:.3f})/{attack})"
-                    beat_pulse += f"+0.006*between(t,{peak:.3f},{end:.3f})*(1-((t-{peak:.3f})/{decay}))"
+                    beat_pulse += f"+{beat_intensity}*between(t,{bt:.3f},{peak:.3f})*((t-{bt:.3f})/{attack})"
+                    beat_pulse += f"+{beat_intensity}*between(t,{peak:.3f},{end:.3f})*(1-((t-{peak:.3f})/{decay}))"
             except Exception as e:
                 print(f"Beat detection failed, using fallback heartbeat: {e}")
                 beat_pulse = "+0.003*sin(2*3.14159*t*2.0)"  # Very subtle 2Hz fallback
@@ -2098,6 +2854,14 @@ def render_viral_clip(request: RenderClipRequest):
 
         # Print template configuration for debugging
         effects_summary = []
+        if effect_config.get("lut_file"): effects_summary.append(f"LUT({os.path.basename(effect_config['lut_file'])})")
+        if effect_config.get("retro_glow"): effects_summary.append(f"retro_glow({effect_config.get('retro_glow_intensity', 0.3)})")
+        if effect_config.get("temporal_trail"): effects_summary.append("temporal_trail")
+        if effect_config.get("camera_shake"): effects_summary.append(f"shake({effect_config['shake_intensity']}px)")
+        if effect_config.get("wave_displacement"): effects_summary.append("wave_disp")
+        if effect_config.get("speed_ramps"): effects_summary.append(f"speed_ramps({len(effect_config['speed_ramps'])})")
+        if effect_config.get("audio_saturation"): effects_summary.append("audio_sat")
+        if effect_config.get("broll_transition_type"): effects_summary.append(f"transition({effect_config['broll_transition_type']})")
         if effect_config["letterbox"]: effects_summary.append(f"letterbox({effect_config['letterbox_ratio']})")
         if effect_config["vignette"]: effects_summary.append("vignette")
         if effect_config["film_grain"]: effects_summary.append("film_grain")
@@ -2113,50 +2877,114 @@ def render_viral_clip(request: RenderClipRequest):
         print(f"  Color: contrast={contrast}, brightness={brightness}, saturation={saturation}")
         print(f"  Pulse intensity: {pulse_intensity_base}")
 
-        grade_filter = f"eq=contrast={contrast}:brightness={brightness}:saturation={saturation}"
+        # === COLOR GRADING: LUT or EQ ===
+        lut_file = effect_config.get("lut_file")
+        if lut_file and os.path.exists(lut_file):
+            escaped_lut = lut_file.replace(":", "\\:").replace("'", "\\'")
+            grade_filter = f"lut3d=file='{escaped_lut}':interp=tetrahedral"
+            print(f"[Effects] Using LUT grade: {lut_file}")
+        else:
+            grade_filter = f"eq=contrast={contrast}:brightness={brightness}:saturation={saturation}"
 
         # VHS Grain Filter - conditionally disabled for "clean" templates
         grain_intensity = effect_config["grain_intensity"]
         vhs_grain_enabled = effect_config["vhs_enabled"]
         vhs_grain = f"noise=alls={grain_intensity}:allf=t+u" if vhs_grain_enabled else ""
 
-        # Chromatic Aberration - DISABLED (rgbashift/colorbalance don't support time expressions)
-        # The smooth pulse zoom effect is the main visual impact.
-        # TODO: Implement via sendcmd filter with pre-computed intervals for RGB shift
-        chromatic_filter = None
+        # === CAMERA SHAKE: offset crop position with sine waves ===
+        crop_x_offset = face_offset if face_offset != 0 else 0
+        shake_x_expr = ""
+        shake_y_expr = ""
+        if effect_config.get("camera_shake"):
+            si = effect_config["shake_intensity"]
+            sf = effect_config["shake_frequency"]
+            # Multi-frequency sine for natural shake (not simple oscillation)
+            shake_x_expr = f"+{si}*(0.5*sin(2*PI*{sf}*t+0.7)+0.3*sin(2*PI*{sf}*2.7*t+1.3)+0.2*sin(2*PI*{sf}*4.1*t+2.1))"
+            shake_y_expr = f"+{si}*0.5*(0.5*sin(2*PI*{sf}*1.1*t+3.2)+0.3*sin(2*PI*{sf}*2.3*t+0.5))"
+            print(f"[Effects] Camera shake: intensity={si}px, freq={sf}Hz")
+
+        # === RETRO GLOW: neon bloom effect ===
+        retro_glow_stage = ""
+        if effect_config.get("retro_glow"):
+            glow_int = effect_config.get("retro_glow_intensity", 0.3)
+            # Split → blur → blend screen (creates soft glow around bright areas)
+            retro_glow_stage = f"split[rgmain][rgglow];[rgglow]gblur=sigma=20,curves=all='0/0 0.5/0.6 1/1'[rgglowed];[rgmain][rgglowed]blend=all_mode=screen:all_opacity={glow_int},"
+            print(f"[Effects] Retro glow: intensity={glow_int}")
+
+        # === TEMPORAL TRAIL: motion ghosting ===
+        temporal_trail_stage = ""
+        if effect_config.get("temporal_trail"):
+            trail_segments = effect_config.get("temporal_trail_segments", [])
+            if trail_segments:
+                # Build enable expression for specified time ranges
+                enables = [f"between(t,{s[0]},{s[1]})" for s in trail_segments[:5]]
+                enable_expr = "+".join(enables)
+                temporal_trail_stage = f"tmix=frames=5:weights='1 0.8 0.6 0.4 0.2':enable='{enable_expr}',"
+                print(f"[Effects] Temporal trail: {len(trail_segments)} segments")
+            else:
+                # Apply to entire clip if no segments specified
+                temporal_trail_stage = "tmix=frames=5:weights='1 0.8 0.6 0.4 0.2',"
+                print(f"[Effects] Temporal trail: full clip")
+
+        # === WAVE DISPLACEMENT: time-gated row-based sine distortion ===
+        wave_stage = ""
+        if effect_config.get("wave_displacement") and effect_config.get("wave_triggers"):
+            wave_triggers = effect_config["wave_triggers"][:3]  # Max 3 bursts
+            # Build enable expression (geq only processes during trigger windows)
+            enables = []
+            max_amp = 15
+            for wt in wave_triggers:
+                s = wt.get("start", 0)
+                e = wt.get("end", s + 1.0)
+                amp = wt.get("amplitude", 15)
+                max_amp = max(max_amp, amp)
+                enables.append(f"between(t,{s:.2f},{e:.2f})")
+            enable_expr = "+".join(enables)
+            # Y-dependent horizontal sine displacement (rows shift left/right)
+            # freq=120 pixels per wave cycle, speed=6 radians/sec for animation
+            wave_lum = f"lum(clip(X+{max_amp}*sin(2*3.14159*Y/120+T*6),0,W-1),Y)"
+            wave_cb = f"cb(clip(X/2+{max_amp}/2*sin(2*3.14159*Y/240+T*6),0,W/2-1),Y/2)"
+            wave_cr = f"cr(clip(X/2+{max_amp}/2*sin(2*3.14159*Y/240+T*6),0,W/2-1),Y/2)"
+            wave_stage = f"geq=lum='{wave_lum}':cb='{wave_cb}':cr='{wave_cr}':enable='{enable_expr}',"
+            print(f"[Effects] Wave displacement: {len(wave_triggers)} bursts, amplitude={max_amp}px")
+
+        # === AUDIO-REACTIVE SATURATION: boost color on loud moments ===
+        audio_sat_stage = ""
+        if effect_config.get("audio_saturation"):
+            try:
+                onset_peaks = detect_onset_peaks(str(temp_extracted), duration)
+                if onset_peaks:
+                    sat_boost = 1.0 + effect_config.get("audio_saturation_amount", 0.3)
+                    # Build time-gated enable expression for onset windows (0.2s each)
+                    enables = [f"between(t,{t:.2f},{t+0.2:.2f})" for t in onset_peaks]
+                    enable_expr = "+".join(enables)
+                    audio_sat_stage = f"eq=saturation={sat_boost:.2f}:enable='{enable_expr}',"
+                    print(f"[Effects] Audio-reactive saturation: {len(onset_peaks)} peaks, boost={sat_boost:.1f}x")
+            except Exception as e:
+                print(f"[Effects] Audio saturation failed: {e}")
 
         # Escape path for ASS filter
         escaped_ass = str(ass_path).replace(":", "\\:").replace("'", "\\'")
 
-        # V7.0 ROBUST CPU SCALING (Legacy Bottleneck Accepted for Stability)
-        # [GPU Decode] -> hwdownload -> [CPU] -> scale(Fill) -> scale(Pulse) -> crop -> chromatic -> eq -> ass -> hwupload -> [GPU Encode]
-        # logic: scale_cuda filters failed expression parsing. Reverting to CPU scaling.
-        chromatic_stage = f"{chromatic_filter}," if chromatic_filter else ""
-        # Calculate crop X offset: detected face_offset centers the speaker
-        # Positive face_offset = face is right of center, so we shift crop right
-        crop_x_offset = face_offset if face_offset != 0 else 0
-        filter_complex = (
-            f"[0:v]hwdownload,format=nv12,format=yuv420p,"
-            f"scale=-2:1920,"
-            f"scale={zoom_expr}:eval=frame,"
-            f"crop=1080:1920:(iw-1080)/2+{crop_x_offset}:(ih-1920)/2,"
-            f"{chromatic_stage}"
-            f"{grade_filter},"
-            f"ass='{escaped_ass}',"
-            f"hwupload_cuda[v];"
-            f"[0:a]volume=1.0[a]"
-        )
-
-        # Apply effects to extracted clip (already extracted above for transcription)
-        # temp_extracted starts at t=0, fresh transcript also starts at t=0 = perfect sync
-        # VHS grain goes BEFORE subtitles so text is clean on top (if enabled)
+        # === BUILD MEGA-FILTER CHAIN ===
+        # Pipeline: hwdownload → scale(fill) → scale(pulse) → crop(face+shake) →
+        #           [LUT/eq grade] → [audio_sat] → [retro_glow] → [temporal_trail] → [wave] → [vhs_grain] → ass → hwupload
         vhs_grain_stage = f"{vhs_grain}," if vhs_grain else ""
+
+        # Crop expression with optional shake
+        crop_x = f"(iw-1080)/2+{crop_x_offset}{shake_x_expr}"
+        crop_y = f"(ih-1920)/2{shake_y_expr}"
+
         filter_complex_effects = (
             f"[0:v]hwdownload,format=nv12,format=yuv420p,"
             f"scale=-2:1920,"
             f"scale={zoom_expr}:eval=frame,"
-            f"crop=1080:1920:(iw-1080)/2+{crop_x_offset}:(ih-1920)/2,"
+            f"crop=1080:1920:{crop_x}:{crop_y},"
             f"{grade_filter},"
+            f"{audio_sat_stage}"
+            f"{retro_glow_stage}"
+            f"{temporal_trail_stage}"
+            f"{wave_stage}"
             f"{vhs_grain_stage}"
             f"ass='{escaped_ass}',"
             f"hwupload_cuda[v];"
@@ -2177,6 +3005,18 @@ def render_viral_clip(request: RenderClipRequest):
         print(f"DEBUG MEGA CMD: {' '.join(cmd_mega)}")
         report_status(request.status_webhook_url, "Processing: GPU FX")
         subprocess.run(cmd_mega, check=True)
+
+        # 3.25. SPEED RAMPS - retime segments after all effects are baked
+        speed_ramps = effect_config.get("speed_ramps", []) or request.speed_ramps
+        if speed_ramps:
+            report_status(request.status_webhook_url, "Processing: Speed Ramps")
+            temp_ramped = temp_dir / f"ramped_{uuid.uuid4().hex[:8]}.mp4"
+            if apply_speed_ramps(temp_main, temp_ramped, speed_ramps, encoder, gpu_opts):
+                # Replace temp_main with ramped version
+                temp_main.unlink()
+                subprocess.run(["mv", str(temp_ramped), str(temp_main)], check=True)
+            elif temp_ramped.exists():
+                temp_ramped.unlink()
 
         # 3.5. Chromatic Aberration Pass (MoviePy) - RGB split effect
         # ALWAYS add 4 intro pulses at the start, plus BIG keyword trigger hits
@@ -2278,6 +3118,34 @@ def render_viral_clip(request: RenderClipRequest):
                 import traceback
                 traceback.print_exc()
 
+        # 3.6.25 RARE EFFECTS: Datamosh + Pixel Sort (MoviePy post-processing)
+        # These are expensive per-frame operations, used sparingly by Grok director
+        datamosh_segs = effect_config.get("datamosh_segments", [])
+        if datamosh_segs:
+            report_status(request.status_webhook_url, "Processing: Datamosh")
+            temp_datamosh = temp_dir / f"temp_datamosh_{uid}.mp4"
+            cleanup_files.append(temp_datamosh)
+            try:
+                if apply_datamosh_effect(str(temp_main), str(temp_datamosh), datamosh_segs, duration):
+                    subprocess.run(["mv", str(temp_datamosh), str(temp_main)], check=True)
+                elif temp_datamosh.exists():
+                    temp_datamosh.unlink()
+            except Exception as e:
+                print(f"WARNING: Datamosh effect failed, continuing without: {e}")
+
+        pixel_sort_segs = effect_config.get("pixel_sort_segments", [])
+        if pixel_sort_segs:
+            report_status(request.status_webhook_url, "Processing: Pixel Sort")
+            temp_psort = temp_dir / f"temp_psort_{uid}.mp4"
+            cleanup_files.append(temp_psort)
+            try:
+                if apply_pixel_sort_effect(str(temp_main), str(temp_psort), pixel_sort_segs, duration):
+                    subprocess.run(["mv", str(temp_psort), str(temp_main)], check=True)
+                elif temp_psort.exists():
+                    temp_psort.unlink()
+            except Exception as e:
+                print(f"WARNING: Pixel sort effect failed, continuing without: {e}")
+
         # 3.6.3 DURATION ENFORCEMENT - MoviePy can sometimes produce longer output
         # Re-mux with hard duration limit to ensure clip is exactly the right length
         actual_dur = get_video_info(str(temp_main))["duration"]
@@ -2330,12 +3198,16 @@ def render_viral_clip(request: RenderClipRequest):
                         "segments": fresh_segments,
                         "climax_clip_time": climax_clip_time,
                         "font": selected_font,
-                        "trigger_words": fresh_trigger_words
+                        "trigger_words": fresh_trigger_words,
+                        "caption_style": caption_style
                     }
 
                     # Use template-specific cut interval for B-roll pacing
                     broll_cut_interval = effect_config.get("broll_cut_interval", 0.5)
                     print(f"B-Roll: Using {broll_cut_interval}s cut interval (template config)")
+
+                    broll_transition = effect_config.get("broll_transition_type") or request.broll_transition_type
+                    broll_transition_dur = effect_config.get("broll_transition_duration", 0.3)
 
                     broll_montage_path = generate_broll_montage(
                         broll_paths=request.broll_paths,
@@ -2344,7 +3216,9 @@ def render_viral_clip(request: RenderClipRequest):
                         output_path=temp_broll_montage,
                         effect_settings=request.effect_settings,
                         caption_data=broll_caption_data,
-                        cut_interval=broll_cut_interval
+                        cut_interval=broll_cut_interval,
+                        transition_type=broll_transition,
+                        transition_duration=broll_transition_dur
                     )
 
                     if broll_montage_path and Path(broll_montage_path).exists():

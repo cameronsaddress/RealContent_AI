@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import api, {
     getInfluencers, createInfluencer, fetchInfluencerVideos,
     analyzeVideo, getVideoDetails, getInfluencerVideos, getViralClips, API_URL,
-    getBrollClips, uploadBrollFromYoutube, getBrollUploadStatus, retagBrollClips, deleteBrollClip
+    getBrollClips, uploadBrollFromYoutube, getBrollUploadStatus, retagBrollClips, deleteBrollClip,
+    getEffectsCatalog, updateClipEffects
 } from '../api';
 import './ViralManager.css'; // We'll assume standard styling or create it
 
@@ -24,6 +25,10 @@ const ViralManager = () => {
 
     // For Templates
     const [templates, setTemplates] = useState([]);
+
+    // For Effects
+    const [effectsModalClip, setEffectsModalClip] = useState(null);
+    const [effectsCatalog, setEffectsCatalog] = useState(null);
 
     // For B-Roll
     const [brollClips, setBrollClips] = useState([]);
@@ -136,6 +141,147 @@ const ViralManager = () => {
         } catch (e) {
             console.error('Failed to update template:', e);
         }
+    };
+
+    // Effect badges display
+    const EffectBadges = ({ clip, compact = false }) => {
+        const effects = clip.render_metadata?.director_effects;
+        if (!effects || Object.keys(effects).length === 0) return null;
+
+        const badges = [];
+        if (effects.color_grade) badges.push({ label: effects.color_grade, color: '#8b5cf6' });
+        if (effects.camera_shake) badges.push({ label: 'shake', color: '#f59e0b' });
+        if (effects.retro_glow) badges.push({ label: 'glow', color: '#ec4899' });
+        if (effects.temporal_trail) badges.push({ label: 'trail', color: '#6366f1' });
+        if (effects.wave_displacement) badges.push({ label: 'wave', color: '#14b8a6' });
+        if (effects.speed_ramps?.length) badges.push({ label: `${effects.speed_ramps.length}x ramp`, color: '#f97316' });
+        if (effects.caption_style && effects.caption_style !== 'standard') badges.push({ label: effects.caption_style, color: '#06b6d4' });
+        if (effects.beat_sync) badges.push({ label: 'beat', color: '#22c55e' });
+        if (effects.datamosh_segments?.length) badges.push({ label: 'datamosh', color: '#dc2626' });
+        if (effects.pixel_sort_segments?.length) badges.push({ label: 'pxsort', color: '#7c3aed' });
+        if (effects.transition) badges.push({ label: effects.transition, color: '#a855f7' });
+
+        if (badges.length === 0) return null;
+
+        return (
+            <div className={`effect-badges ${compact ? 'compact' : ''}`}>
+                {badges.slice(0, compact ? 3 : 6).map((b, i) => (
+                    <span key={i} className="effect-badge" style={{ backgroundColor: b.color }}
+                          onClick={(e) => { e.stopPropagation(); if (!compact) openEffectsModal(clip); }}>
+                        {b.label}
+                    </span>
+                ))}
+                {!compact && <button className="fx-edit-btn" onClick={(e) => { e.stopPropagation(); openEffectsModal(clip); }}>FX</button>}
+            </div>
+        );
+    };
+
+    // Open effects modal
+    const openEffectsModal = async (clip) => {
+        if (!effectsCatalog) {
+            try {
+                const catalog = await getEffectsCatalog();
+                setEffectsCatalog(catalog);
+            } catch (e) { console.error('Failed to load effects catalog:', e); }
+        }
+        setEffectsModalClip(clip);
+    };
+
+    // Save effects override
+    const saveEffectsOverride = async (clipId, effects) => {
+        try {
+            await updateClipEffects(clipId, effects);
+            setEffectsModalClip(null);
+            // Refresh clips list
+            if (selectedInfluencer) {
+                const data = await getInfluencerVideos(selectedInfluencer.id);
+                setVideos(data);
+            }
+            const allClips = await getViralClips();
+            setClips(allClips);
+        } catch (e) { console.error('Failed to save effects:', e); }
+    };
+
+    // Effects override modal component
+    const EffectsModal = () => {
+        if (!effectsModalClip) return null;
+        const currentEffects = effectsModalClip.render_metadata?.director_effects || {};
+        const [localEffects, setLocalEffects] = useState({...currentEffects});
+
+        const updateLocal = (key, value) => setLocalEffects(prev => ({...prev, [key]: value}));
+
+        return (
+            <div className="modal-overlay" onClick={() => setEffectsModalClip(null)}>
+                <div className="effects-modal" onClick={e => e.stopPropagation()}>
+                    <div className="modal-header">
+                        <h3>Effects Override</h3>
+                        <button className="close-btn" onClick={() => setEffectsModalClip(null)}>X</button>
+                    </div>
+                    <div className="effects-form">
+                        <div className="effect-group">
+                            <label>Color Grade</label>
+                            <select value={localEffects.color_grade || ''} onChange={e => updateLocal('color_grade', e.target.value || null)}>
+                                <option value="">AI Default</option>
+                                {(effectsCatalog?.color_grades || []).map(g => (
+                                    <option key={g.id} value={g.id}>{g.label} - {g.description}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="effect-group">
+                            <label>Caption Style</label>
+                            <select value={localEffects.caption_style || ''} onChange={e => updateLocal('caption_style', e.target.value || null)}>
+                                <option value="">AI Default</option>
+                                {(effectsCatalog?.caption_styles || []).map(s => (
+                                    <option key={s.id} value={s.id}>{s.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="effect-group">
+                            <label>B-Roll Transition</label>
+                            <select value={localEffects.transition || ''} onChange={e => updateLocal('transition', e.target.value || null)}>
+                                <option value="">AI Default</option>
+                                {(effectsCatalog?.transitions || []).map(t => (
+                                    <option key={t.id} value={t.id}>{t.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="effect-group toggles">
+                            <label><input type="checkbox" checked={!!localEffects.camera_shake} onChange={e => updateLocal('camera_shake', e.target.checked ? {intensity: 8, frequency: 2.0} : null)} /> Camera Shake</label>
+                            <label><input type="checkbox" checked={!!localEffects.retro_glow} onChange={e => updateLocal('retro_glow', e.target.checked ? 0.3 : null)} /> Retro Glow</label>
+                            <label><input type="checkbox" checked={!!localEffects.beat_sync} onChange={e => updateLocal('beat_sync', e.target.checked || null)} /> Beat Sync</label>
+                            <label><input type="checkbox" checked={!!localEffects.audio_saturation} onChange={e => updateLocal('audio_saturation', e.target.checked || null)} /> Audio Saturation</label>
+                        </div>
+                        <div className="effect-group">
+                            <label>Pulse Intensity ({localEffects.pulse_intensity || 0.25})</label>
+                            <input type="range" min="0.05" max="0.5" step="0.05"
+                                value={localEffects.pulse_intensity || 0.25}
+                                onChange={e => updateLocal('pulse_intensity', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="effect-group">
+                            <label>VHS Intensity ({localEffects.vhs_intensity || 1.0})</label>
+                            <input type="range" min="0" max="2" step="0.1"
+                                value={localEffects.vhs_intensity || 1.0}
+                                onChange={e => updateLocal('vhs_intensity', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="effect-group rare-effects">
+                            <label className="group-label">Rare Effects (expensive, use sparingly)</label>
+                            <label><input type="checkbox"
+                                checked={!!(localEffects.datamosh_segments && localEffects.datamosh_segments.length)}
+                                onChange={e => updateLocal('datamosh_segments', e.target.checked ? [{start: 5.0, end: 7.0}] : null)}
+                            /> Datamosh (frame melt)</label>
+                            <label><input type="checkbox"
+                                checked={!!(localEffects.pixel_sort_segments && localEffects.pixel_sort_segments.length)}
+                                onChange={e => updateLocal('pixel_sort_segments', e.target.checked ? [{start: 10.0, end: 12.0}] : null)}
+                            /> Pixel Sort (glitch art)</label>
+                        </div>
+                    </div>
+                    <div className="modal-actions">
+                        <button className="reset-btn" onClick={() => setLocalEffects({})}>Reset to AI</button>
+                        <button className="save-btn" onClick={() => saveEffectsOverride(effectsModalClip.id, localEffects)}>Save & Re-render</button>
+                    </div>
+                </div>
+            </div>
+        );
     };
 
     // Template selector dropdown component
@@ -423,6 +569,7 @@ const ViralManager = () => {
                                                                         <div className="clip-info">
                                                                             <span className="clip-type">{c.clip_type}</span>:
                                                                             <span className="clip-title" title={c.title}>{c.title}</span>
+                                                                            <EffectBadges clip={c} compact={true} />
                                                                             <TemplateSelector clip={c} compact={true} />
                                                                         </div>
                                                                         <div className="mini-actions">
@@ -524,6 +671,7 @@ const ViralManager = () => {
                                                 <span className={`status ${c.status}`}>{c.status}</span>
                                             </div>
                                             <p>Type: {c.clip_type}</p>
+                                            <EffectBadges clip={c} />
                                             <TemplateSelector clip={c} />
                                             <div className="actions">
                                                 {canRender && (
@@ -796,6 +944,7 @@ const ViralManager = () => {
                     </div>
                 )
             }
+            <EffectsModal />
         </div >
     );
 };

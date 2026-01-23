@@ -778,3 +778,87 @@ def delete_broll_clip(filename: str):
             logger.error(f"Error updating metadata after delete: {e}")
 
     return {"success": True, "deleted": filename}
+
+
+# --- Effects API ---
+
+class EffectsOverride(BaseModel):
+    """User override for Grok director effects on a clip."""
+    color_grade: Optional[str] = None
+    camera_shake: Optional[dict] = None
+    speed_ramps: Optional[list] = None
+    retro_glow: Optional[float] = None
+    temporal_trail: Optional[dict] = None
+    wave_displacement: Optional[dict] = None
+    caption_style: Optional[str] = None
+    beat_sync: Optional[bool] = None
+    audio_saturation: Optional[bool] = None
+    transition: Optional[str] = None
+    pulse_intensity: Optional[float] = None
+    vhs_intensity: Optional[float] = None
+    datamosh_segments: Optional[list] = None
+    pixel_sort_segments: Optional[list] = None
+
+@router.get("/effects-catalog")
+def get_effects_catalog():
+    """Return available effects catalog for the frontend override UI."""
+    from services.clip_analyzer import EFFECT_CATALOG, VALID_EFFECT_KEYS
+
+    return {
+        "catalog_text": EFFECT_CATALOG,
+        "valid_keys": list(VALID_EFFECT_KEYS),
+        "color_grades": [
+            {"id": "kodak_warm", "label": "Kodak Warm", "description": "Golden cinema"},
+            {"id": "teal_orange", "label": "Teal Orange", "description": "Hollywood blockbuster"},
+            {"id": "film_noir", "label": "Film Noir", "description": "Deep shadows"},
+            {"id": "bleach_bypass", "label": "Bleach Bypass", "description": "Desaturated grit"},
+            {"id": "cross_process", "label": "Cross Process", "description": "Surreal colors"},
+            {"id": "golden_hour", "label": "Golden Hour", "description": "Warm amber"},
+            {"id": "cold_chrome", "label": "Cold Chrome", "description": "Steel blue"},
+            {"id": "vintage_tobacco", "label": "Vintage Tobacco", "description": "Aged warm"},
+            {"id": "vibrant", "label": "Vibrant", "description": "Enhanced saturation"},
+            {"id": "bw", "label": "Black & White", "description": "Full B&W"},
+        ],
+        "caption_styles": [
+            {"id": "standard", "label": "Standard"},
+            {"id": "pop_scale", "label": "Pop Scale"},
+            {"id": "shake", "label": "Shake"},
+            {"id": "blur_reveal", "label": "Blur Reveal"},
+        ],
+        "transitions": [
+            {"id": "pixelize", "label": "Pixelize"},
+            {"id": "radial", "label": "Radial"},
+            {"id": "dissolve", "label": "Dissolve"},
+            {"id": "slideleft", "label": "Slide Left"},
+            {"id": "fadeblack", "label": "Fade Black"},
+            {"id": "wiperight", "label": "Wipe Right"},
+        ],
+    }
+
+@router.put("/viral-clips/{clip_id}/effects")
+def update_clip_effects(clip_id: int, effects: EffectsOverride, db: Session = Depends(get_db)):
+    """Save user effect overrides for a clip. Overrides Grok director choices."""
+    clip = db.query(ViralClip).filter(ViralClip.id == clip_id).first()
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    # Update render_metadata with user overrides
+    metadata = clip.render_metadata or {}
+    user_effects = {k: v for k, v in effects.dict().items() if v is not None}
+
+    if user_effects:
+        metadata["director_effects"] = {
+            **(metadata.get("director_effects", {})),
+            **user_effects
+        }
+        clip.render_metadata = metadata
+        # Reset status so clip can be re-rendered with new effects
+        if clip.status == "ready":
+            clip.status = "pending"
+        db.commit()
+
+    return {
+        "id": clip.id,
+        "director_effects": metadata.get("director_effects", {}),
+        "status": clip.status
+    }
