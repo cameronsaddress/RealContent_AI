@@ -531,9 +531,9 @@ async def _select_broll_timestamps(
     if not topic_queries or not settings.OPENROUTER_API_KEY:
         return []
 
-    # Step 1: Fetch transcripts for each query
+    # Step 1: Fetch transcripts + face-free segments for each query
     transcripts = []
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         for query in topic_queries[:3]:  # Max 3 queries
             try:
                 resp = await client.post(
@@ -543,15 +543,18 @@ async def _select_broll_timestamps(
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("transcript") and len(data["transcript"]) > 0:
+                        face_free = data.get("face_free_segments", [])
                         transcripts.append({
                             "query": query,
                             "query_hash": data.get("query_hash", ""),
                             "title": data.get("title", ""),
                             "channel": data.get("channel", ""),
                             "duration": data.get("duration", 0),
-                            "transcript": data["transcript"][:300],  # Cap per video
+                            "transcript": data["transcript"][:300],
+                            "face_free_segments": face_free,
                         })
-                        logger.info(f"B-Roll transcript fetched: '{data.get('title', '')}' ({len(data['transcript'])} segs)")
+                        logger.info(f"B-Roll transcript fetched: '{data.get('title', '')}' "
+                                    f"({len(data['transcript'])} segs, {len(face_free)} face-free)")
                     else:
                         logger.warning(f"B-Roll transcript empty for query: {query}")
                 else:
@@ -563,47 +566,90 @@ async def _select_broll_timestamps(
         logger.warning("No YouTube transcripts fetched, falling back to keyword matching")
         return []
 
-    # Step 2: Build Grok prompt with speaker context + YouTube transcripts
-    transcript_sections = []
+    # Step 2: Build Grok prompt with face-free segments + context
+    # Strategy: Show Grok ONLY the face-free segments (actual footage, not talking heads)
+    # plus full transcript for context understanding
+    video_sections = []
+    has_face_free = False
     for i, t in enumerate(transcripts):
-        # Condense transcript text for the prompt
-        lines = []
-        for seg in t["transcript"]:
-            lines.append(f"[{seg['start']:.1f}s] {seg['text']}")
-        transcript_text = "\n".join(lines[:200])  # Cap lines per video
-        transcript_sections.append(
-            f"--- YouTube Video {i+1}: \"{t['title']}\" (by {t['channel']}, {t['duration']:.0f}s) ---\n"
-            f"Search query: \"{t['query']}\"\n"
-            f"{transcript_text}\n"
+        face_free = t.get("face_free_segments", [])
+
+        if face_free:
+            has_face_free = True
+            # Show face-free segments (these are the FOOTAGE moments)
+            ff_lines = []
+            for ff in face_free:
+                ff_text = ff.get("text", "").strip()
+                if ff_text:
+                    ff_lines.append(f"  [{ff['start']:.0f}s-{ff['end']:.0f}s] FOOTAGE: {ff_text[:150]}")
+                else:
+                    ff_lines.append(f"  [{ff['start']:.0f}s-{ff['end']:.0f}s] FOOTAGE: (no narration)")
+            footage_text = "\n".join(ff_lines[:30])
+
+            # Also show full transcript for context
+            context_lines = []
+            for seg in t["transcript"][:50]:
+                context_lines.append(f"  [{seg['start']:.0f}s] {seg['text']}")
+            context_text = "\n".join(context_lines)
+
+            video_sections.append(
+                f"--- Video {i+1}: \"{t['title']}\" ({t['duration']:.0f}s) ---\n"
+                f"Query: \"{t['query']}\"\n\n"
+                f"AVAILABLE FOOTAGE SEGMENTS (no talking head visible - actual event footage):\n"
+                f"{footage_text}\n\n"
+                f"FULL TRANSCRIPT (for understanding what the video covers):\n"
+                f"{context_text}\n"
+            )
+        else:
+            # No face-free data - fall back to full transcript
+            lines = []
+            for seg in t["transcript"][:100]:
+                lines.append(f"  [{seg['start']:.0f}s] {seg['text']}")
+            transcript_text = "\n".join(lines)
+            video_sections.append(
+                f"--- Video {i+1}: \"{t['title']}\" ({t['duration']:.0f}s) ---\n"
+                f"Query: \"{t['query']}\"\n"
+                f"(No face detection data - pick timestamps likely to show footage)\n"
+                f"{transcript_text}\n"
+            )
+
+    all_videos = "\n\n".join(video_sections)
+
+    # Build constraint text based on whether we have face-free data
+    if has_face_free:
+        constraint_text = (
+            "CRITICAL: You MUST pick timestamps ONLY from within the 'AVAILABLE FOOTAGE SEGMENTS' time ranges.\n"
+            "These segments have been verified to show ACTUAL FOOTAGE (not a talking head/anchor/pundit).\n"
+            "Pick the exact second within each footage range that best matches the speaker's words.\n"
+            "DO NOT pick timestamps outside these ranges - those show people talking at a desk."
+        )
+    else:
+        constraint_text = (
+            "Pick timestamps that are likely to show ACTUAL EVENT FOOTAGE rather than talking heads.\n"
+            "Avoid timestamps where the transcript sounds like commentary/reaction.\n"
+            "Prefer moments described with action verbs or showing locations/events."
         )
 
-    all_transcripts = "\n\n".join(transcript_sections)
-
-    prompt = f"""You are a B-Roll editor selecting EXACT timestamps from YouTube videos to overlay on a speaker's clip.
+    prompt = f"""You are a B-Roll editor selecting EXACT timestamps from YouTube news videos to overlay on a speaker's clip.
+The goal is to show the ACTUAL EVENT being discussed - real footage of the incident/person/situation.
 
 THE SPEAKER IS SAYING:
 {speaker_context}
 
 ---
 
-Below are transcripts from YouTube videos we downloaded. Your job is to find the EXACT MOMENTS in these videos
-that VISUALLY MATCH what the speaker is discussing. We want to show the ACTUAL EVENT, PERSON, or SITUATION
-being discussed - not just generic footage.
-
-{all_transcripts}
+{all_videos}
 
 ---
 
-TASK: For each YouTube video above, pick 2-4 EXACT timestamps where the video would show relevant visual content.
+{constraint_text}
 
-Think about:
-- When is the EVENT being described actually SHOWN on screen?
-- When are the PEOPLE mentioned actually VISIBLE?
-- When is the SPECIFIC SITUATION being discussed on-camera?
-- Prefer moments with VISUAL ACTION (not just talking heads)
-- Prefer moments 5+ seconds into the video (skip intros/bumpers)
-- Space picks across different parts of the video for variety
-- Each pick should be a DIFFERENT moment (not the same scene)
+TASK: Pick 6-10 EXACT timestamps that show footage matching what the speaker is discussing.
+
+For each pick, choose a timestamp that would VISUALLY show:
+- The actual EVENT, PERSON, or LOCATION being discussed
+- Real footage (bodycam, surveillance, crowd shots, buildings, vehicles)
+- NOT a news anchor, pundit, or podcast host sitting at a desk
 
 Return ONLY valid JSON:
 {{
@@ -611,17 +657,8 @@ Return ONLY valid JSON:
     {{
       "video_index": 0,
       "seek_time": 45.2,
-      "reason": "Shows the actual protest crowd at the church entrance"
-    }},
-    {{
-      "video_index": 0,
-      "seek_time": 102.5,
-      "reason": "Close-up of the confrontation the speaker described"
-    }},
-    {{
-      "video_index": 1,
-      "seek_time": 30.0,
-      "reason": "News anchor reporting on the event with footage"
+      "visual_description": "Protesters blocking vehicle at intersection",
+      "reason": "Matches speaker discussing the vehicle confrontation"
     }}
   ]
 }}
@@ -672,11 +709,13 @@ Return ONLY valid JSON:
                         "query_hash": t["query_hash"],
                         "seek_time": seek,
                         "reason": pick.get("reason", ""),
+                        "visual_description": pick.get("visual_description", ""),
                     })
 
             logger.info(f"Grok B-Roll selector: {len(broll_selections)} timestamps picked from {len(transcripts)} videos")
             for sel in broll_selections:
-                logger.info(f"  -> t={sel['seek_time']:.1f}s from '{sel['query']}': {sel['reason']}")
+                vis = sel.get('visual_description', '')
+                logger.info(f"  -> t={sel['seek_time']:.1f}s from '{sel['query']}': {vis or sel['reason']}")
 
             return broll_selections
 
@@ -794,6 +833,14 @@ async def _render_clip_async(clip_id: int):
         elif clip.render_metadata and clip.render_metadata.get("climax_time"):
             climax_time = clip.render_metadata.get("climax_time")
 
+        # Validate climax_time is within clip bounds
+        clip_duration = clip.end_time - clip.start_time
+        if climax_time is not None:
+            if climax_time < clip.start_time or climax_time > clip.end_time:
+                # Invalid climax - default to 40% through clip (leaves 60% for B-Roll)
+                climax_time = clip.start_time + (clip_duration * 0.4)
+                logger.warning(f"Climax time outside clip bounds, reset to {climax_time:.1f}s (40% of clip)")
+
         # Get template settings (for B-roll categories and effect settings like B&W)
         template = None
         template_effect_settings = {}
@@ -817,7 +864,6 @@ async def _render_clip_async(clip_id: int):
 
         if climax_time and broll_enabled:
             # Calculate B-roll duration: from climax to 2 seconds before clip end (for outro)
-            clip_duration = clip.end_time - clip.start_time
             climax_relative = climax_time - clip.start_time  # Convert to clip-relative time
             broll_duration = (clip_duration - 2) - climax_relative  # Leave 2s for outro
 
@@ -996,6 +1042,12 @@ async def _render_clip_async(clip_id: int):
                 logger.warning("Topic B-roll: No topic clips obtained - clearing local B-roll (event-specific clip)")
                 broll_paths = []
                 broll_duration = 0
+
+            # If we have topic clips but broll_duration ended up invalid, recalculate
+            if broll_paths and broll_duration <= 0:
+                broll_duration = max(10.0, clip_duration * 0.60)
+                climax_time = clip.start_time + (clip_duration * 0.40)
+                logger.info(f"Topic B-roll: Recalculated broll_duration={broll_duration:.1f}s (climax at {clip_duration * 0.40:.1f}s relative)")
 
         # Adjust datamosh/pixel_sort segment timestamps: absolute -> clip-relative
         for seg_key in ("datamosh_segments", "pixel_sort_segments"):

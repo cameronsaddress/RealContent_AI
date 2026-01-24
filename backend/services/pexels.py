@@ -466,7 +466,9 @@ class PexelsService:
                         if Path(clip_path).exists():
                             paths.append(clip_path)
                             self._update_category_counts(clip_path, category_counts, metadata)
-                            logger.info(f"Using AI-tagged B-roll for '{category}': {Path(clip_path).name}")
+                            clip_caption = metadata["clips"].get(Path(clip_path).name, {}).get("caption", "")
+                            caption_preview = clip_caption[:60] if clip_caption else "no caption"
+                            logger.info(f"Using AI-tagged B-roll for '{category}': {Path(clip_path).name} [{caption_preview}]")
                             continue
 
                 # PRIORITY 2: Filename-based category matching

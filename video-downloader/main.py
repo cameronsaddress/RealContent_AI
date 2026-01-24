@@ -377,6 +377,87 @@ def detect_face_crop_offset(video_path: str, seek_time: float = 0, target_width:
         return 0
 
 
+def find_face_free_segments(video_path: str, sample_interval: float = 2.0, min_segment_dur: float = 3.0) -> list:
+    """
+    Scan a video for segments WITHOUT faces visible.
+    In news videos, face-free segments are typically actual event footage (B-Roll),
+    while segments with faces are anchors/pundits talking.
+
+    Returns: list of {"start": float, "end": float} segments where no face was detected.
+    """
+    try:
+        import cv2
+
+        face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        face_cascade = cv2.CascadeClassifier(face_cascade_path)
+
+        # Get video duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=10
+        )
+        duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0
+        if duration < 5:
+            return []
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return []
+
+        face_free_times = []
+        t = 0.0
+        while t < duration:
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+            ret, frame = cap.read()
+            if not ret:
+                t += sample_interval
+                continue
+
+            # Resize for faster detection
+            h, w = frame.shape[:2]
+            scale = 320.0 / max(h, w)
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+            faces = face_cascade.detectMultiScale(
+                gray, scaleFactor=1.15, minNeighbors=4,
+                minSize=(int(20 * scale), int(20 * scale))
+            )
+
+            if len(faces) == 0:
+                face_free_times.append(t)
+
+            t += sample_interval
+
+        cap.release()
+
+        if not face_free_times:
+            return []
+
+        # Merge consecutive face-free times into segments
+        segments = []
+        for t in face_free_times:
+            if segments and t - segments[-1]["end"] <= sample_interval * 1.5:
+                segments[-1]["end"] = t + sample_interval
+            else:
+                segments.append({"start": t, "end": t + sample_interval})
+
+        # Filter out segments shorter than min_segment_dur
+        segments = [s for s in segments if s["end"] - s["start"] >= min_segment_dur]
+
+        print(f"[FaceFree] {video_path}: {len(face_free_times)}/{int(duration/sample_interval)} frames face-free, "
+              f"{len(segments)} segments >= {min_segment_dur}s")
+        return segments
+
+    except ImportError:
+        print("[FaceFree] OpenCV not available")
+        return []
+    except Exception as e:
+        print(f"[FaceFree] Error: {e}")
+        return []
+
+
 # ============ EFFECT DISPATCHER ============
 def get_effect_chain(effect_settings: dict) -> dict:
     """
@@ -2957,13 +3038,32 @@ async def fetch_youtube_transcript(request: FetchTranscriptRequest):
             else:
                 condensed.append({"start": round(seg["start"], 1), "end": round(seg["end"], 1), "text": text})
 
-        print(f"Transcript fetch: {len(condensed)} segments from '{video_title}' ({vid_duration:.0f}s)")
+        # Step 4: Find face-free segments (actual event footage vs talking heads)
+        face_free = find_face_free_segments(str(temp_video), sample_interval=2.0, min_segment_dur=3.0)
+
+        # Annotate face-free segments with their transcript text
+        face_free_annotated = []
+        for ff_seg in face_free:
+            # Find transcript text that overlaps this face-free segment
+            ff_text_parts = []
+            for seg in condensed:
+                if seg["start"] < ff_seg["end"] and seg["end"] > ff_seg["start"]:
+                    ff_text_parts.append(seg["text"])
+            face_free_annotated.append({
+                "start": round(ff_seg["start"], 1),
+                "end": round(ff_seg["end"], 1),
+                "text": " ".join(ff_text_parts)[:200],  # Cap text length
+            })
+
+        print(f"Transcript fetch: {len(condensed)} segments, {len(face_free_annotated)} face-free segments "
+              f"from '{video_title}' ({vid_duration:.0f}s)")
         return {
             "query_hash": query_hash,
             "title": video_title,
             "channel": video_channel,
             "duration": vid_duration,
             "transcript": condensed[:500],  # Cap at 500 segments to limit payload
+            "face_free_segments": face_free_annotated,  # Segments without talking heads
         }
 
     except subprocess.TimeoutExpired:
@@ -4385,7 +4485,15 @@ async def tag_broll_clips(req: TagBrollRequest):
     war, wealth, faith, strength, nature, people, chaos, victory, power, history
 
     Run with force=True to re-tag all clips, or let it incrementally tag new ones.
+    Runs in a background thread to avoid blocking the event loop.
     """
+    import asyncio
+    result = await asyncio.to_thread(_tag_broll_sync, req.force, req.limit)
+    return result
+
+
+def _tag_broll_sync(force: bool, limit: int) -> TagBrollResponse:
+    """Synchronous B-Roll tagging worker (runs in thread pool)."""
     import tempfile
     from datetime import datetime
 
@@ -4425,23 +4533,30 @@ async def tag_broll_clips(req: TagBrollRequest):
 
     # Load existing metadata
     existing_metadata = {}
-    if METADATA_FILE.exists() and not req.force:
+    if METADATA_FILE.exists() and not force:
         try:
             with open(METADATA_FILE, "r") as f:
                 data = json.load(f)
-                existing_metadata = {item["filename"]: item for item in data.get("clips", [])}
+                clips_data = data.get("clips", {})
+                # Handle both dict format (new) and list format (legacy)
+                if isinstance(clips_data, dict):
+                    existing_metadata = {fname: info for fname, info in clips_data.items()}
+                elif isinstance(clips_data, list):
+                    existing_metadata = {item["filename"]: item for item in clips_data if "filename" in item}
             print(f"Loaded {len(existing_metadata)} existing clip records")
         except Exception as e:
             print(f"Failed to load existing metadata: {e}")
 
     # Find clips to process
-    clips = list(BROLL_DIR.glob("*.mp4"))
-    total_clips = len(clips)
+    all_clips = list(BROLL_DIR.glob("*.mp4"))
+    total_clips = len(all_clips)
 
-    if not req.force:
-        clips = [c for c in clips if c.name not in existing_metadata]
+    if force:
+        clips_to_process = list(all_clips)
+    else:
+        clips_to_process = [c for c in all_clips if c.name not in existing_metadata]
 
-    if not clips:
+    if not clips_to_process:
         return TagBrollResponse(
             success=True,
             clips_tagged=0,
@@ -4450,8 +4565,17 @@ async def tag_broll_clips(req: TagBrollRequest):
             message="No new clips to tag"
         )
 
-    if req.limit > 0:
-        clips = clips[:req.limit]
+    if limit > 0:
+        clips_to_process = clips_to_process[:limit]
+    clips = clips_to_process
+
+    # When force + limit, preserve metadata for clips NOT in this batch
+    preserve_metadata = {}
+    if force and limit > 0:
+        processing_names = {c.name for c in clips_to_process}
+        for fname, info in existing_metadata.items():
+            if fname not in processing_names:
+                preserve_metadata[fname] = info
 
     print(f"Tagging {len(clips)} B-roll clips...")
 
@@ -4523,8 +4647,23 @@ async def tag_broll_clips(req: TagBrollRequest):
                     simplified.add(keyword)
         return list(simplified)
 
-    # Process clips
-    results = list(existing_metadata.values())
+    # Process clips - sample 3 frames per clip for better accuracy
+    results = []
+    # Preserve existing tagged clips not being re-processed
+    preserved_names = set()
+    for fname, info in existing_metadata.items():
+        if fname not in {c.name for c in clips}:
+            entry = dict(info)
+            entry["filename"] = fname
+            results.append(entry)
+            preserved_names.add(fname)
+    # Also include force+limit preserved clips
+    for fname, info in preserve_metadata.items():
+        if fname not in preserved_names:
+            entry = dict(info)
+            entry["filename"] = fname
+            results.append(entry)
+
     clips_tagged = 0
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -4532,18 +4671,7 @@ async def tag_broll_clips(req: TagBrollRequest):
             print(f"[{i+1}/{len(clips)}] Processing {clip_path.name}")
 
             try:
-                frame_path = os.path.join(temp_dir, f"{clip_path.name}.jpg")
-
-                if not extract_frame(str(clip_path), frame_path, 1.0):
-                    if not extract_frame(str(clip_path), frame_path, 0.5):
-                        print(f"  SKIPPED - Could not extract frame")
-                        continue
-
-                caption = caption_image(frame_path)
-                classifications = classify_image(frame_path)
-                categories = get_simplified_categories(classifications)
-
-                # Get duration
+                # Get duration first
                 try:
                     probe = subprocess.run([
                         "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -4553,43 +4681,99 @@ async def tag_broll_clips(req: TagBrollRequest):
                 except:
                     duration = 2.0
 
-                metadata = {
+                # Sample 3 frames: 0.5s, mid, and 0.5s before end
+                sample_times = [0.5, max(0.5, duration / 2.0), max(0.5, duration - 0.5)]
+                captions = []
+                all_classifications = []
+
+                for t_idx, t in enumerate(sample_times):
+                    frame_path = os.path.join(temp_dir, f"{clip_path.stem}_f{t_idx}.jpg")
+                    if not extract_frame(str(clip_path), frame_path, t):
+                        continue
+
+                    cap = caption_image(frame_path)
+                    if cap:
+                        captions.append(cap)
+
+                    cls = classify_image(frame_path)
+                    all_classifications.extend(cls)
+
+                    if os.path.exists(frame_path):
+                        os.unlink(frame_path)
+
+                if not captions:
+                    print(f"  SKIPPED - Could not extract any frames")
+                    continue
+
+                # Deduplicate and average classifications
+                cls_scores = {}
+                for item in all_classifications:
+                    cat = item["category"]
+                    if cat not in cls_scores:
+                        cls_scores[cat] = []
+                    cls_scores[cat].append(item["confidence"])
+
+                avg_classifications = [
+                    {"category": cat, "confidence": round(sum(scores) / len(scores), 3)}
+                    for cat, scores in cls_scores.items()
+                ]
+                avg_classifications.sort(key=lambda x: x["confidence"], reverse=True)
+                avg_classifications = avg_classifications[:5]
+
+                categories = get_simplified_categories(avg_classifications)
+
+                # Combine captions into a single rich description
+                # Use the most unique/descriptive one, or combine if different
+                unique_captions = list(dict.fromkeys(captions))  # dedupe preserving order
+                combined_caption = " | ".join(unique_captions[:3])
+
+                metadata_entry = {
                     "filename": clip_path.name,
                     "path": str(clip_path),
-                    "caption": caption,
-                    "classifications": classifications,
+                    "caption": combined_caption,
+                    "classifications": avg_classifications,
                     "categories": categories,
                     "duration": duration,
                     "tagged_at": datetime.now().isoformat()
                 }
 
-                results.append(metadata)
+                results.append(metadata_entry)
                 clips_tagged += 1
-                print(f"  Caption: {caption[:60]}...")
+                print(f"  Caption: {combined_caption[:80]}...")
                 print(f"  Categories: {', '.join(categories)}")
-
-                if os.path.exists(frame_path):
-                    os.unlink(frame_path)
 
             except Exception as e:
                 print(f"  ERROR: {e}")
 
-    # Build category index
+    # Build category index and clips dict (keyed by filename for pexels.py compatibility)
     category_index = {}
+    clips_dict = {}
     for clip in results:
+        fname = clip.get("filename", "")
+        if not fname:
+            continue
+        clips_dict[fname] = {
+            "categories": clip.get("categories", []),
+            "caption": clip.get("caption", ""),
+            "classifications": clip.get("classifications", []),
+            "duration": clip.get("duration", 2.0),
+            "source": "local_curated",
+            "format": "9:16",
+            "tagged_at": clip.get("tagged_at", ""),
+        }
         for cat in clip.get("categories", []):
             if cat not in category_index:
                 category_index[cat] = []
-            category_index[cat].append(clip["filename"])
+            category_index[cat].append(fname)
 
-    # Save metadata
+    # Save metadata (clips as dict keyed by filename for backend compatibility)
     output_data = {
         "generated_at": datetime.now().isoformat(),
-        "total_clips": len(results),
+        "total_clips": len(clips_dict),
         "categories": list(category_index.keys()),
         "category_counts": {k: len(v) for k, v in category_index.items()},
         "category_index": category_index,
-        "clips": results
+        "clips": clips_dict
     }
 
     with open(METADATA_FILE, "w") as f:

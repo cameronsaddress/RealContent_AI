@@ -102,6 +102,47 @@ def get_video_details(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404)
     return video
 
+@router.get("/videos/{id}/download-progress")
+async def get_download_progress(id: int, db: Session = Depends(get_db)):
+    """Get download progress for a video being downloaded."""
+    import json as json_mod
+    video = db.query(InfluencerVideo).filter(InfluencerVideo.id == id).first()
+    if not video:
+        raise HTTPException(status_code=404)
+    if video.status != "downloading":
+        return {"status": video.status, "bytes_downloaded": 0}
+
+    assets_base = os.environ.get("ASSETS_BASE_PATH", "/app/assets")
+    final_path = os.path.join(assets_base, "videos", f"video_{id}.mp4")
+    part_path = f"{final_path}.part"
+    ytdl_path = f"{final_path}.ytdl"
+
+    # Check if final file exists (download complete)
+    if os.path.exists(final_path):
+        return {"status": "complete", "bytes_downloaded": os.path.getsize(final_path)}
+
+    # Check .part file
+    if not os.path.exists(part_path):
+        return {"status": "waiting", "bytes_downloaded": 0}
+
+    size = os.path.getsize(part_path)
+
+    # Try to get fragment info from .ytdl file
+    fragment_info = None
+    if os.path.exists(ytdl_path):
+        try:
+            with open(ytdl_path) as f:
+                ytdl_data = json_mod.load(f)
+            dl_info = ytdl_data.get("downloader", {})
+            current_frag = dl_info.get("current_fragment", {}).get("index", 0)
+            total_frags = dl_info.get("fragment_count", 0)
+            if current_frag > 0:
+                fragment_info = {"current": current_frag, "total": total_frags if total_frags > 0 else None}
+        except Exception:
+            pass
+
+    return {"status": "downloading", "bytes_downloaded": size, "fragment_info": fragment_info}
+
 @router.post("/viral-clips/{clip_id}/render")
 async def render_viral_clip(clip_id: int, db: Session = Depends(get_db)):
     clip = db.query(ViralClip).filter(ViralClip.id == clip_id).first()
@@ -862,3 +903,38 @@ def update_clip_effects(clip_id: int, effects: EffectsOverride, db: Session = De
         "director_effects": metadata.get("director_effects", {}),
         "status": clip.status
     }
+
+
+# --- B-Roll Tagging ---
+@router.post("/broll/tag")
+async def tag_broll():
+    """Trigger AI tagging of local B-Roll clips on the GPU. Uses BLIP + CLIP models."""
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            resp = await client.post(
+                "http://video-processor:8080/tag-broll",
+                json={"force": False, "limit": 0}
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Tagging timed out (>10min)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/broll/tag-force")
+async def tag_broll_force():
+    """Force re-tag ALL local B-Roll clips (overwrites existing metadata)."""
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            resp = await client.post(
+                "http://video-processor:8080/tag-broll",
+                json={"force": True, "limit": 0}
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Tagging timed out (>10min)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

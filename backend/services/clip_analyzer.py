@@ -455,17 +455,17 @@ For EACH clip you MUST identify:
    b) "topic_broll_keywords": 3-8 keywords/phrases that would appear in the YouTube video's transcript
       at the exact moment the topic is being visually shown or discussed
 
-   Rules for search queries:
-   - ONLY use RIGHT-WING / CONSERVATIVE sources. Good channels:
-     Fox News, Daily Wire, Steven Crowder, Ben Shapiro, Tucker Carlson, Newsmax,
-     Tim Pool, Matt Walsh, Michael Knowles, PragerU, The Blaze, One America News,
-     Benny Johnson, Charlie Kirk, Candace Owens, Breitbart, Right Side Broadcasting
-   - NEVER use left-wing sources: NO CNN, MSNBC, ABC, CBS, NBC, PBS, NPR, BBC,
-     The Young Turks, David Pakman, Vox, Vice, HuffPost, Washington Post, NY Times
-   - Be SPECIFIC about the event: "church protesters attack Fox News 2025" NOT "religious controversy"
-   - Include the YEAR for current events to get recent footage
-   - For people: use their NAME + the event + a right-wing source name
-   - For political events: include "reaction" or "coverage" + conservative source
+   Rules for search queries (TARGET RAW FOOTAGE, NOT commentary):
+   - NEVER include channel names (Fox News, CNN, Crowder, etc.) - those return desk commentary
+   - USE footage-targeting terms: "footage", "raw video", "caught on camera", "bodycam",
+     "live stream", "full video", "original clip", "compilation", "CCTV", "dashcam"
+   - Be SPECIFIC about the event: "church protesters attack footage 2025" NOT "religious controversy"
+   - Include the YEAR for current events to get recent uploads
+   - For people: use their NAME + the specific event + "footage" or "video"
+   - For political events: include "rally footage" or "live stream" or "crowd video"
+   - For confrontations: include "caught on camera" or "raw footage" or "full incident"
+   - For court/legal: include "hearing footage" or "courtroom video" or "press conference"
+   - Goal: find videos that SHOW the event, not pundits TALKING ABOUT it
 
    Rules for keywords:
    - These are words that would be SPOKEN in the YouTube video's transcript at the relevant moment
@@ -477,14 +477,17 @@ For EACH clip you MUST identify:
 
    Examples:
    - Speaker discussed a church invasion (context: he mentioned St. Paul's, activists, FACE Act):
-     queries: ["St Pauls church protesters Fox News 2025", "church invasion FACE Act Daily Wire"]
+     queries: ["St Pauls church protesters footage 2025", "church invasion caught on camera 2025"]
      keywords: ["St Paul", "church", "FACE Act", "protesters", "invaders", "congregation", "activists"]
    - Speaker discussed Trump rally (context: mentioned Iowa, crowd size, media reaction):
-     queries: ["Trump Iowa rally Fox News 2025", "Trump rally crowd Tucker Carlson"]
+     queries: ["Trump Iowa rally footage full crowd 2025", "Trump rally live stream Iowa"]
      keywords: ["Trump", "Iowa", "rally", "crowd", "supporters", "thousands"]
    - Speaker discussed crypto crash (context: mentioned Bitcoin, SEC, Gensler):
-     queries: ["bitcoin crash SEC Ben Shapiro 2025", "crypto regulation Daily Wire"]
+     queries: ["bitcoin crash live trading 2025", "SEC crypto hearing footage Gensler"]
      keywords: ["bitcoin", "SEC", "Gensler", "crypto", "regulation", "crash", "market"]
+   - Speaker discussed police shooting (context: mentioned bodycam, suspect, officer):
+     queries: ["police bodycam footage shooting 2025", "officer involved shooting raw video"]
+     keywords: ["bodycam", "officer", "suspect", "shooting", "footage"]
 
 {template_section}
 
@@ -531,7 +534,7 @@ Return ONLY valid JSON in this format:
           {{"word": "LIAR", "start": 25.2, "end": 25.8}},
           {{"word": "WAR", "start": 30.0, "end": 30.3}}
       ],
-      "topic_broll": ["Trump Iowa rally Fox News 2025", "Trump rally speech reaction"],
+      "topic_broll": ["Trump Iowa rally footage crowd 2025", "Trump rally live stream full"],
       "topic_broll_keywords": ["Trump", "rally", "Iowa", "crowd", "supporters", "speech"],
       "effects": {{
           "color_grade": "teal_orange",
