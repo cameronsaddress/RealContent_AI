@@ -38,8 +38,6 @@ EFFECT_CATALOG = """
 === MOTION EFFECTS (can combine, but limit to 2 max) ===
 - camera_shake: Handheld documentary feel (intensity 2-15px, frequency 1-4Hz)
   USE FOR: raw emotion, angry rants, chaotic energy
-- speed_ramps: Slow-mo emphasis on key words (speed 0.3-0.5, duration 1-2s)
-  USE FOR: dramatic pauses, punchlines, "let that sink in" moments
   MAX 3 ramps per clip, each at critical word timestamps
 - temporal_trail: Ghosting/afterimage streaks in short bursts
   USE FOR: dreamy sequences, philosophical tangents, altered states
@@ -90,7 +88,7 @@ EFFECT_CATALOG = """
 
 # Known effect keys for validation
 VALID_EFFECT_KEYS = {
-    "color_grade", "camera_shake", "speed_ramps", "temporal_trail",
+    "color_grade", "camera_shake", "temporal_trail",
     "retro_glow", "wave_displacement", "heavy_vhs", "caption_style",
     "beat_sync", "audio_saturation", "transition", "pulse_intensity",
     "vhs_intensity", "datamosh_segments", "pixel_sort_segments"
@@ -241,10 +239,23 @@ class ClipAnalyzerService(BaseService):
                 # Extract B-roll categories from Grok response
                 broll_categories = clip_data.get("broll_categories", ["war", "chaos", "power"])
                 # Validate categories
-                valid_categories = ["war", "wealth", "faith", "strength", "nature", "people", "chaos", "victory", "power", "history"]
-                broll_categories = [c for c in broll_categories if c in valid_categories]
+                valid_categories = [
+                    "war", "money", "luxury", "gym", "relationships",
+                    "city", "crowd", "sports", "fashion", "cars",
+                    "faith", "chaos", "nature_power", "history",
+                    # Legacy aliases (mapped to new categories)
+                    "wealth", "strength", "nature", "people", "victory", "power"
+                ]
+                # Map legacy category names to new ones
+                category_aliases = {
+                    "wealth": "money", "strength": "gym", "nature": "nature_power",
+                    "people": "crowd", "victory": "sports", "power": "war"
+                }
+                broll_categories = [category_aliases.get(c, c) for c in broll_categories if c in valid_categories]
+                # Deduplicate
+                broll_categories = list(dict.fromkeys(broll_categories))
                 if not broll_categories:
-                    broll_categories = ["war", "chaos", "power"]  # Default fallback
+                    broll_categories = ["war", "chaos", "money"]  # Default fallback
 
                 # Extract and validate director effects from Grok
                 raw_effects = clip_data.get("effects", {})
@@ -258,11 +269,26 @@ class ClipAnalyzerService(BaseService):
                     if director_effects:
                         logger.info(f"Director effects for clip: {list(director_effects.keys())}")
 
+                # Extract topic B-roll queries (for dynamic current-event footage)
+                topic_broll = clip_data.get("topic_broll", [])
+                if isinstance(topic_broll, list):
+                    # Filter to valid strings only
+                    topic_broll = [q for q in topic_broll if isinstance(q, str) and len(q) > 3][:3]
+                    if topic_broll:
+                        logger.info(f"Topic B-roll queries: {topic_broll}")
+
+                # Extract topic keywords for YouTube transcript matching
+                topic_broll_keywords = clip_data.get("topic_broll_keywords", [])
+                if isinstance(topic_broll_keywords, list):
+                    topic_broll_keywords = [k for k in topic_broll_keywords if isinstance(k, str) and len(k) > 1][:8]
+                    if topic_broll_keywords:
+                        logger.info(f"Topic B-roll keywords: {topic_broll_keywords}")
+
                 vc = ViralClip(
                     source_video_id=video.id,
                     start_time=start,
                     end_time=end,
-                    duration=duration,  # Use pre-calculated (possibly truncated) duration
+                    duration=duration,
                     climax_time=climax_time,
                     clip_type=clip_data.get("type", "highlight"),
                     virality_explanation=clip_data.get("reason", ""),
@@ -271,13 +297,15 @@ class ClipAnalyzerService(BaseService):
                     hashtags=clip_data.get("hashtags", []),
                     status="pending",
                     recommended_template_id=recommended_template_id,
-                    template_id=recommended_template_id,  # Auto-apply recommendation (user can override)
+                    template_id=recommended_template_id,
                     render_metadata={
                         "trigger_words": clip_data.get("trigger_words", []),
                         "climax_time": climax_time,
                         "broll_enabled": True,
                         "broll_categories": broll_categories,
-                        "director_effects": director_effects
+                        "director_effects": director_effects,
+                        "topic_broll": topic_broll if topic_broll else [],
+                        "topic_broll_keywords": topic_broll_keywords if topic_broll_keywords else []
                     }
                 )
                 db_session.add(vc)
@@ -344,21 +372,35 @@ DO NOT default to Maximum Impact for everything - use the variety of templates b
 
         # B-roll categories available for visual montage
         broll_categories = [
-            "war", "wealth", "faith", "strength", "nature",
-            "people", "chaos", "victory", "power", "history"
+            "war", "money", "luxury", "gym", "relationships",
+            "city", "crowd", "sports", "fashion", "cars",
+            "faith", "chaos", "nature_power", "history"
         ]
         broll_category_descriptions = """
-AVAILABLE B-ROLL CATEGORIES (choose 2-4 that match the climax content):
-- war: military combat, soldiers, weapons, explosions, destruction
-- wealth: money, luxury, business, stock market, expensive cars
-- faith: church, prayer, religious symbols, bible imagery
-- strength: boxing, fighting, gym, weightlifting, athletics
-- nature: mountains, ocean, sunset, wildlife, landscapes
-- people: crowds, families, men/women imagery
-- chaos: fire, destruction, disorder, darkness
-- victory: celebration, triumph, flags, glory
-- power: political leaders, speeches, authority figures
-- history: historical footage, archival clips, news media"""
+AVAILABLE B-ROLL CATEGORIES (choose 2-4 that MATCH what the speaker is SAYING):
+- money: cash counting, stock trading, wolf of wall street vibes, hustle motivation
+- luxury: supercars, mansions, private jets, watches, dubai lifestyle
+- gym: weightlifting, bodybuilding, intense workouts, gains
+- relationships: dating podcasts, couples arguing, red pill moments
+- city: urban nightlife, city skylines, neon lights, nightlife aesthetic
+- crowd: rallies, stadium crowds, concerts, protests, masses of people
+- sports: UFC knockouts, boxing, football hits, basketball dunks, competition
+- fashion: runway shows, streetwear, designer fits, drip
+- cars: supercars revving, car meets, drifting, exhaust flames, racing
+- war: military combat, soldiers, weapons, tanks, battlefield footage
+- faith: churches, cathedrals, crosses, religious imagery, prayer
+- chaos: fire, explosions, destruction, riots, disorder
+- nature_power: volcanoes, tsunamis, tornadoes, lightning, avalanches
+- history: archival footage, WW2, documentary clips, historical events
+
+IMPORTANT: Match the B-roll to what is being SAID, not generic "hype" imagery.
+- Speaker talks about money/success → use "money" or "luxury"
+- Speaker talks about women/dating → use "relationships"
+- Speaker talks about fighting/conflict → use "sports" or "war"
+- Speaker talks about discipline/grind → use "gym"
+- Speaker talks about power/politics → use "crowd" or "war"
+- Speaker talks about lifestyle/flex → use "luxury" or "cars"
+- Speaker references current events → use closest matching category"""
 
         return f"""
 {system_instructions}
@@ -390,9 +432,60 @@ For EACH clip you MUST identify:
    - For a 45s clip, place climax around 18-27 seconds in (leaves 15-25s for epic B-roll montage before outro)
    - Provide the ABSOLUTE timestamp (relative to original video, not relative to clip start)
 
-3. B-ROLL CATEGORIES: Choose 2-4 visual categories that best match the CLIMAX CONTENT.
-   The B-roll montage will use clips from these categories during the climax moment.
+3. B-ROLL CATEGORIES (EMOTIONAL ACCENT ONLY): Choose 1-2 categories for HIGH-IMPACT emotional moments.
+   These local clips are ONLY used as rare accent cuts (1 per every 5-6 topic clips).
+   ONLY select if the speech FEELS: patriotic, warlike, powerful, triumphant, or explosive.
+   If the speech is about a SPECIFIC event/person/situation, do NOT use these categories -
+   the topic B-roll (YouTube footage) will cover the visual content instead.
+   Leave "broll_categories" EMPTY [] if the clip is purely about a specific recent event.
 {broll_category_descriptions}
+
+5. TOPIC B-ROLL (REQUIRED - PRIMARY B-ROLL SOURCE): Identify the MAIN TOPIC the speaker is discussing.
+   IMPORTANT: Read the transcript BEFORE the clip start time to understand the FULL CONTEXT.
+   The speaker often introduces a topic 30-60 seconds before the clip's most viral moment.
+   Use that preceding context to understand WHAT SPECIFIC EVENT, PERSON, or SITUATION
+   is being discussed, then find YouTube coverage of THAT EXACT thing.
+
+   THIS IS THE PRIMARY B-ROLL. We will download YouTube videos, fetch their full TRANSCRIPTS,
+   and then use a SECOND AI pass to pick the EXACT TIMESTAMPS showing the relevant visual content.
+   So your search queries must find videos that actually SHOW the event being discussed.
+
+   You must provide TWO things:
+   a) "topic_broll": 1-3 YouTube search queries to find relevant videos
+   b) "topic_broll_keywords": 3-8 keywords/phrases that would appear in the YouTube video's transcript
+      at the exact moment the topic is being visually shown or discussed
+
+   Rules for search queries:
+   - ONLY use RIGHT-WING / CONSERVATIVE sources. Good channels:
+     Fox News, Daily Wire, Steven Crowder, Ben Shapiro, Tucker Carlson, Newsmax,
+     Tim Pool, Matt Walsh, Michael Knowles, PragerU, The Blaze, One America News,
+     Benny Johnson, Charlie Kirk, Candace Owens, Breitbart, Right Side Broadcasting
+   - NEVER use left-wing sources: NO CNN, MSNBC, ABC, CBS, NBC, PBS, NPR, BBC,
+     The Young Turks, David Pakman, Vox, Vice, HuffPost, Washington Post, NY Times
+   - Be SPECIFIC about the event: "church protesters attack Fox News 2025" NOT "religious controversy"
+   - Include the YEAR for current events to get recent footage
+   - For people: use their NAME + the event + a right-wing source name
+   - For political events: include "reaction" or "coverage" + conservative source
+
+   Rules for keywords:
+   - These are words that would be SPOKEN in the YouTube video's transcript at the relevant moment
+   - Use the NAMES of people/places/events the speaker discussed BEFORE and DURING the clip
+   - Include proper nouns: names of people, places, organizations, bills, events
+   - Include both formal and informal references ("Biden" AND "Joe")
+   - Single words or short 2-3 word phrases work best for matching
+   - Order by importance (most specific/unique first)
+
+   Examples:
+   - Speaker discussed a church invasion (context: he mentioned St. Paul's, activists, FACE Act):
+     queries: ["St Pauls church protesters Fox News 2025", "church invasion FACE Act Daily Wire"]
+     keywords: ["St Paul", "church", "FACE Act", "protesters", "invaders", "congregation", "activists"]
+   - Speaker discussed Trump rally (context: mentioned Iowa, crowd size, media reaction):
+     queries: ["Trump Iowa rally Fox News 2025", "Trump rally crowd Tucker Carlson"]
+     keywords: ["Trump", "Iowa", "rally", "crowd", "supporters", "thousands"]
+   - Speaker discussed crypto crash (context: mentioned Bitcoin, SEC, Gensler):
+     queries: ["bitcoin crash SEC Ben Shapiro 2025", "crypto regulation Daily Wire"]
+     keywords: ["bitcoin", "SEC", "Gensler", "crypto", "regulation", "crash", "market"]
+
 {template_section}
 
 4. EFFECTS DIRECTION: You are the MOVIE DIRECTOR. For each clip, choose visual effects that match
@@ -404,9 +497,8 @@ EFFECTS SELECTION PHILOSOPHY:
 - AGGRESSIVE clips (rants, confrontation): camera_shake + heavy_vhs + shake captions + high pulse
 - INSPIRATIONAL clips (wisdom, hope): golden_hour/kodak_warm + retro_glow + pop_scale captions
 - CONSPIRACY/DARK clips: film_noir + wave_displacement + blur_reveal + low vhs
-- FUNNY/ABSURD clips: cross_process + speed_ramps on punchlines + pop_scale
+- FUNNY/ABSURD clips: cross_process + pop_scale captions + high pulse
 - EPIC/REVELATION clips: teal_orange + retro_glow + beat_sync + high pulse
-- Use speed_ramps to emphasize the EXACT moment of a punchline or shocking statement
 - Use temporal_trail sparingly for dreamlike/philosophical tangents
 - wave_displacement should be RARE - only for truly mind-bending moments
 - DO NOT over-stack effects. 2-3 effects per clip is ideal. Max 4.
@@ -428,7 +520,7 @@ Return ONLY valid JSON in this format:
       "end": 55.2,
       "climax_time": 30.0,
       "template_id": 2,
-      "broll_categories": ["war", "chaos", "power"],
+      "broll_categories": ["sports", "crowd", "money"],
       "type": "antagonistic",
       "title": "TOP G DESTROYS DEBATE OPPONENT",
       "reason": "High conflict moment, very engaging",
@@ -439,10 +531,11 @@ Return ONLY valid JSON in this format:
           {{"word": "LIAR", "start": 25.2, "end": 25.8}},
           {{"word": "WAR", "start": 30.0, "end": 30.3}}
       ],
+      "topic_broll": ["Trump Iowa rally Fox News 2025", "Trump rally speech reaction"],
+      "topic_broll_keywords": ["Trump", "rally", "Iowa", "crowd", "supporters", "speech"],
       "effects": {{
           "color_grade": "teal_orange",
           "camera_shake": {{"intensity": 8, "frequency": 2.0}},
-          "speed_ramps": [{{"time": 30.0, "speed": 0.3, "duration": 1.5}}],
           "retro_glow": 0.3,
           "caption_style": "shake",
           "beat_sync": true,
@@ -626,6 +719,11 @@ Return ONLY valid JSON in this format:
                         await asyncio.sleep(30 * (attempt + 1))
                         continue
                     raise e
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Grok returned malformed JSON (attempt {attempt + 1}): {e}")
+                    last_error = e
+                    await asyncio.sleep(10 * (attempt + 1))
+                    continue
                 except Exception as e:
                     if "capacity" in str(e).lower():
                         logger.warning(f"Grok capacity error (attempt {attempt + 1}): {e}")

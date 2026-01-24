@@ -3,6 +3,7 @@ Celery tasks for the Viral Clip Factory pipeline.
 Handles downloading, transcribing, and analyzing influencer videos.
 """
 import os
+import random
 import asyncio
 import redis
 from datetime import datetime
@@ -58,7 +59,7 @@ def get_whisper_lock_holder() -> str:
 # ============ RENDER GPU QUEUE (Redis Semaphore) ============
 # Limit concurrent renders to prevent GPU memory exhaustion
 RENDER_SEMAPHORE_KEY = "render_gpu_semaphore"
-MAX_CONCURRENT_RENDERS = 8
+MAX_CONCURRENT_RENDERS = 3
 RENDER_LOCK_TIMEOUT = 1800  # 30 min max per render
 RENDER_QUEUE_RETRY_DELAY = 15  # Seconds to wait before retrying if full
 
@@ -505,6 +506,187 @@ def merge_director_effects(template_settings: dict, director_effects: dict) -> d
     return merged
 
 
+# ============ TWO-PASS B-ROLL: Grok Timestamp Selector ============
+# 1. Fetch YouTube transcripts for each topic_broll query
+# 2. Send speaker's clip context + YouTube transcripts to Grok
+# 3. Grok picks exact timestamps from each YouTube video
+# 4. Return seek_times for precise clip extraction
+
+EMOTIONAL_BROLL_CATEGORIES = {"crowd", "nature_power", "sports", "gym", "cars"}
+# Local B-Roll is ONLY used for these emotion-matching categories.
+# All other B-Roll is YouTube topic clips from current events.
+
+async def _select_broll_timestamps(
+    speaker_context: str,
+    topic_queries: list,
+    clip_id: int,
+    video_pub_date: str = "",
+) -> list:
+    """Two-pass B-Roll: fetch YouTube transcripts, let Grok pick exact moments.
+
+    Returns list of dicts: [{"query": str, "query_hash": str, "seek_time": float, "reason": str}]
+    """
+    from config import settings
+
+    if not topic_queries or not settings.OPENROUTER_API_KEY:
+        return []
+
+    # Step 1: Fetch transcripts for each query
+    transcripts = []
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for query in topic_queries[:3]:  # Max 3 queries
+            try:
+                resp = await client.post(
+                    f"{VIDEO_PROCESSOR_URL}/fetch-youtube-transcript",
+                    json={"query": query, "clip_id": clip_id, "video_pub_date": video_pub_date}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("transcript") and len(data["transcript"]) > 0:
+                        transcripts.append({
+                            "query": query,
+                            "query_hash": data.get("query_hash", ""),
+                            "title": data.get("title", ""),
+                            "channel": data.get("channel", ""),
+                            "duration": data.get("duration", 0),
+                            "transcript": data["transcript"][:300],  # Cap per video
+                        })
+                        logger.info(f"B-Roll transcript fetched: '{data.get('title', '')}' ({len(data['transcript'])} segs)")
+                    else:
+                        logger.warning(f"B-Roll transcript empty for query: {query}")
+                else:
+                    logger.warning(f"B-Roll transcript fetch failed ({resp.status_code}): {query}")
+            except Exception as e:
+                logger.warning(f"B-Roll transcript fetch error for '{query}': {e}")
+
+    if not transcripts:
+        logger.warning("No YouTube transcripts fetched, falling back to keyword matching")
+        return []
+
+    # Step 2: Build Grok prompt with speaker context + YouTube transcripts
+    transcript_sections = []
+    for i, t in enumerate(transcripts):
+        # Condense transcript text for the prompt
+        lines = []
+        for seg in t["transcript"]:
+            lines.append(f"[{seg['start']:.1f}s] {seg['text']}")
+        transcript_text = "\n".join(lines[:200])  # Cap lines per video
+        transcript_sections.append(
+            f"--- YouTube Video {i+1}: \"{t['title']}\" (by {t['channel']}, {t['duration']:.0f}s) ---\n"
+            f"Search query: \"{t['query']}\"\n"
+            f"{transcript_text}\n"
+        )
+
+    all_transcripts = "\n\n".join(transcript_sections)
+
+    prompt = f"""You are a B-Roll editor selecting EXACT timestamps from YouTube videos to overlay on a speaker's clip.
+
+THE SPEAKER IS SAYING:
+{speaker_context}
+
+---
+
+Below are transcripts from YouTube videos we downloaded. Your job is to find the EXACT MOMENTS in these videos
+that VISUALLY MATCH what the speaker is discussing. We want to show the ACTUAL EVENT, PERSON, or SITUATION
+being discussed - not just generic footage.
+
+{all_transcripts}
+
+---
+
+TASK: For each YouTube video above, pick 2-4 EXACT timestamps where the video would show relevant visual content.
+
+Think about:
+- When is the EVENT being described actually SHOWN on screen?
+- When are the PEOPLE mentioned actually VISIBLE?
+- When is the SPECIFIC SITUATION being discussed on-camera?
+- Prefer moments with VISUAL ACTION (not just talking heads)
+- Prefer moments 5+ seconds into the video (skip intros/bumpers)
+- Space picks across different parts of the video for variety
+- Each pick should be a DIFFERENT moment (not the same scene)
+
+Return ONLY valid JSON:
+{{
+  "picks": [
+    {{
+      "video_index": 0,
+      "seek_time": 45.2,
+      "reason": "Shows the actual protest crowd at the church entrance"
+    }},
+    {{
+      "video_index": 0,
+      "seek_time": 102.5,
+      "reason": "Close-up of the confrontation the speaker described"
+    }},
+    {{
+      "video_index": 1,
+      "seek_time": 30.0,
+      "reason": "News anchor reporting on the event with footage"
+    }}
+  ]
+}}
+"""
+
+    # Step 3: Call Grok
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "x-ai/grok-4.1-fast",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.5
+                },
+                timeout=120.0
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if "error" in data:
+                logger.error(f"Grok B-Roll selector error: {data['error']}")
+                return []
+
+            content = data["choices"][0]["message"]["content"]
+            import json as _json
+            result = _json.loads(content)
+            picks = result.get("picks", [])
+
+            # Map picks back to query info
+            broll_selections = []
+            for pick in picks:
+                vid_idx = pick.get("video_index", 0)
+                if vid_idx < len(transcripts):
+                    t = transcripts[vid_idx]
+                    seek = pick.get("seek_time", 0)
+                    # Clamp seek_time to valid range
+                    if t["duration"] > 0:
+                        seek = min(seek, t["duration"] - 5.0)
+                    seek = max(2.0, seek)
+                    broll_selections.append({
+                        "query": t["query"],
+                        "query_hash": t["query_hash"],
+                        "seek_time": seek,
+                        "reason": pick.get("reason", ""),
+                    })
+
+            logger.info(f"Grok B-Roll selector: {len(broll_selections)} timestamps picked from {len(transcripts)} videos")
+            for sel in broll_selections:
+                logger.info(f"  -> t={sel['seek_time']:.1f}s from '{sel['query']}': {sel['reason']}")
+
+            return broll_selections
+
+    except Exception as e:
+        logger.error(f"Grok B-Roll selector failed: {e}")
+        return []
+
+# ===================================================================
+
+
 async def _render_clip_async(clip_id: int):
     db = SessionLocal()
     try:
@@ -513,7 +695,15 @@ async def _render_clip_async(clip_id: int):
         
         # Get source video info including transcript
         video = clip.source_video
-        
+
+        # Format publication date for YouTube date filtering (YYYYMMDD)
+        video_pub_date_str = ""
+        if video.publication_date:
+            try:
+                video_pub_date_str = video.publication_date.strftime("%Y%m%d")
+            except Exception:
+                pass
+
         clip.status = "rendering"
         db.commit()
         
@@ -632,57 +822,180 @@ async def _render_clip_async(clip_id: int):
             broll_duration = (clip_duration - 2) - climax_relative  # Leave 2s for outro
 
             if broll_duration >= 3:  # Only fetch B-roll if we have at least 3 seconds
-                logger.info(f"Fetching B-roll for climax montage: climax at {climax_relative:.1f}s, duration {broll_duration:.1f}s")
-                try:
-                    from services.pexels import PexelsService, DEFAULT_BROLL_CATEGORIES
-                    pexels = PexelsService()
+                render_meta = clip.render_metadata or {}
+                has_topic_broll = bool(render_meta.get("topic_broll"))
 
-                    # With 0.5s intervals, we need 2 clips per second
-                    clips_needed = int(broll_duration * 2) + 5  # Extra for variety
-
-                    # Get B-roll categories - PRIORITY:
-                    # 1. Grok-selected categories from render_metadata
-                    # 2. Template categories
-                    # 3. Default categories
-                    categories = DEFAULT_BROLL_CATEGORIES
-                    render_meta = clip.render_metadata or {}
-                    if render_meta.get("broll_categories"):
-                        categories = render_meta["broll_categories"]
-                        logger.info(f"Using Grok-selected B-roll categories: {categories}")
-                    elif template and template.broll_categories:
-                        categories = template.broll_categories
-                        logger.info(f"Using template B-roll categories: {categories}")
-
-                    broll_paths = pexels.get_broll_clips(
-                        categories=categories,
-                        count=clips_needed
-                    )
-
-                    # Convert paths for video-processor container
-                    # Backend sees /app/assets/broll/, video-processor sees /broll/
-                    broll_paths = [p.replace("/app/assets/broll/", "/broll/") for p in broll_paths]
-
-                    logger.info(f"Fetched {len(broll_paths)} B-roll clips for climax montage")
-                except Exception as e:
-                    logger.error(f"Failed to fetch B-roll: {e}")
+                if has_topic_broll:
+                    # Event-specific clip: skip local B-Roll entirely.
+                    # Topic B-Roll (YouTube) will be fetched below.
+                    # Local clips (jets, war, explosions) are NOT relevant for specific events.
+                    logger.info(f"Skipping local B-roll fetch - clip has topic_broll queries (event-specific)")
                     broll_paths = []
+                else:
+                    # General/emotional clip: use local B-Roll categories
+                    logger.info(f"Fetching local B-roll for climax montage: climax at {climax_relative:.1f}s, duration {broll_duration:.1f}s")
+                    try:
+                        from services.pexels import PexelsService, DEFAULT_BROLL_CATEGORIES
+                        pexels = PexelsService()
+
+                        clips_needed = int(broll_duration * 2) + 5
+
+                        categories = DEFAULT_BROLL_CATEGORIES
+                        if render_meta.get("broll_categories"):
+                            categories = render_meta["broll_categories"]
+                            logger.info(f"Using Grok-selected B-roll categories: {categories}")
+                        elif template and template.broll_categories:
+                            categories = template.broll_categories
+                            logger.info(f"Using template B-roll categories: {categories}")
+
+                        broll_paths = pexels.get_broll_clips(
+                            categories=categories,
+                            count=clips_needed
+                        )
+
+                        broll_paths = [p.replace("/app/assets/broll/", "/broll/") for p in broll_paths]
+                        logger.info(f"Fetched {len(broll_paths)} local B-roll clips for climax montage")
+                    except Exception as e:
+                        logger.error(f"Failed to fetch B-roll: {e}")
+                        broll_paths = []
             else:
                 logger.info(f"B-roll duration too short ({broll_duration:.1f}s < 3s), skipping montage")
                 broll_duration = 0
 
-        # Extract per-clip effect fields for direct payload params
-        speed_ramps = director_effects.get("speed_ramps", [])
-        if isinstance(speed_ramps, list):
-            # Adjust speed ramp timestamps: Grok provides absolute, video-processor needs clip-relative
-            adjusted_ramps = []
-            for ramp in speed_ramps[:3]:
-                if isinstance(ramp, dict):
-                    adjusted = dict(ramp)
-                    # Convert absolute timestamp to clip-relative
-                    if adjusted.get("time", 0) >= clip.start_time:
-                        adjusted["time"] = adjusted["time"] - clip.start_time
-                    adjusted_ramps.append(adjusted)
-            speed_ramps = adjusted_ramps
+        # --- TOPIC B-ROLL (TWO-PASS): Grok picks exact timestamps from YouTube ---
+        # Pass 1: Fetch YouTube transcripts for topic_broll queries
+        # Pass 2: Grok reviews transcripts + speaker context, picks exact timestamps
+        # Topic clips are PRIMARY (95%+), local clips only for emotional beats
+        render_meta = clip.render_metadata or {}
+        topic_broll_queries = render_meta.get("topic_broll", [])
+        topic_broll_keywords = render_meta.get("topic_broll_keywords", [])
+        if topic_broll_queries:
+            logger.info(f"Topic B-roll (two-pass): {len(topic_broll_queries)} queries: {topic_broll_queries}")
+
+            # Build speaker context from clip transcript (what Nick is saying)
+            speaker_lines = []
+            for seg in clip_segments:
+                speaker_lines.append(f"[{seg['start']:.1f}s] {seg.get('text', '')}")
+            speaker_context = "\n".join(speaker_lines)
+
+            # Also include context BEFORE the clip (previous 60s of transcript)
+            pre_context_lines = []
+            for s in full_segments:
+                if s["end"] > clip_start - 60 and s["end"] <= clip_start:
+                    pre_context_lines.append(f"[{s['start']:.1f}s] {s.get('text', '')}")
+            if pre_context_lines:
+                speaker_context = (
+                    "=== CONTEXT BEFORE CLIP (what was said in the 60 seconds prior) ===\n"
+                    + "\n".join(pre_context_lines[-20:])  # Last 20 lines of pre-context
+                    + "\n\n=== THE CLIP ITSELF (what the speaker is saying NOW) ===\n"
+                    + speaker_context
+                )
+
+            # TWO-PASS: Let Grok pick exact timestamps from YouTube transcripts
+            broll_selections = await _select_broll_timestamps(
+                speaker_context=speaker_context,
+                topic_queries=topic_broll_queries,
+                clip_id=clip.id,
+                video_pub_date=video_pub_date_str,
+            )
+
+            topic_clips = []
+            if broll_selections:
+                # Extract clips at Grok-directed timestamps
+                for sel in broll_selections:
+                    try:
+                        clip_index = len(topic_clips)
+                        logger.info(f"Topic B-roll: Extracting at t={sel['seek_time']:.1f}s from '{sel['query']}' ({sel['reason']})")
+                        resp = httpx.post(
+                            f"{VIDEO_PROCESSOR_URL}/download-event-broll",
+                            json={
+                                "query": sel["query"],
+                                "clip_id": clip.id,
+                                "index": clip_index,
+                                "keywords": [],  # Not needed - using seek_time
+                                "seek_time": sel["seek_time"],
+                                "video_pub_date": video_pub_date_str,
+                            },
+                            timeout=180.0
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            clip_path = data.get("clip_path")
+                            if clip_path:
+                                topic_clips.append(clip_path)
+                                logger.info(f"Topic B-roll: Got Grok-directed clip -> {clip_path}")
+                        else:
+                            logger.warning(f"Topic B-roll: {resp.status_code} for seek={sel['seek_time']:.1f}s")
+                    except Exception as e:
+                        logger.warning(f"Topic B-roll extraction failed: {e}")
+            else:
+                # FALLBACK: keyword matching (old approach) if Grok selector fails
+                logger.info(f"Topic B-roll: Grok selector returned nothing, falling back to keyword matching")
+                if topic_broll_keywords:
+                    logger.info(f"Topic B-roll keywords for fallback: {topic_broll_keywords}")
+                for idx, query in enumerate(topic_broll_queries[:3]):
+                    if not query or not isinstance(query, str):
+                        continue
+                    for sub_idx in range(3):
+                        try:
+                            clip_index = len(topic_clips)
+                            resp = httpx.post(
+                                f"{VIDEO_PROCESSOR_URL}/download-event-broll",
+                                json={
+                                    "query": query,
+                                    "clip_id": clip.id,
+                                    "index": clip_index,
+                                    "keywords": topic_broll_keywords,
+                                    "video_pub_date": video_pub_date_str,
+                                },
+                                timeout=180.0
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                clip_path = data.get("clip_path")
+                                if clip_path:
+                                    topic_clips.append(clip_path)
+                            else:
+                                break
+                        except Exception as e:
+                            logger.warning(f"Topic B-roll fallback failed for '{query}': {e}")
+                            break
+
+            # MIXING LOGIC: Topic clips are PRIMARY.
+            # Local B-Roll only for emotional categories (patriotic, war, power, crowd energy)
+            if topic_clips:
+                broll_categories = render_meta.get("broll_categories", [])
+                emotional_local = [p for p in broll_paths
+                                   if any(cat in os.path.basename(p).lower() for cat in EMOTIONAL_BROLL_CATEGORIES)]
+                non_emotional_local = [p for p in broll_paths if p not in emotional_local]
+
+                if emotional_local:
+                    # Sprinkle emotional local clips (1 every 5-6 topic clips for accent)
+                    combined = []
+                    emotional_iter = iter(emotional_local)
+                    topic_idx = 0
+                    for t_clip in topic_clips:
+                        combined.append(t_clip)
+                        topic_idx += 1
+                        if topic_idx % 5 == 0:
+                            e_clip = next(emotional_iter, None)
+                            if e_clip:
+                                combined.append(e_clip)
+                    # Add remaining emotional clips at end
+                    combined.extend(list(emotional_iter))
+                    broll_paths = combined
+                    logger.info(f"Topic B-roll: {len(topic_clips)} topic + {len(emotional_local)} emotional local = {len(broll_paths)} total (dropped {len(non_emotional_local)} generic)")
+                else:
+                    # No emotional local clips - use topic clips only
+                    broll_paths = topic_clips
+                    logger.info(f"Topic B-roll: {len(topic_clips)} topic clips (no emotional local)")
+            else:
+                # Topic-specific clip but no topic clips obtained.
+                # Do NOT use local B-Roll (jets, war footage, etc.) for event-specific clips.
+                # Better to show no B-Roll than irrelevant military footage.
+                logger.warning("Topic B-roll: No topic clips obtained - clearing local B-roll (event-specific clip)")
+                broll_paths = []
+                broll_duration = 0
 
         # Adjust datamosh/pixel_sort segment timestamps: absolute -> clip-relative
         for seg_key in ("datamosh_segments", "pixel_sort_segments"):
@@ -721,7 +1034,6 @@ async def _render_clip_async(clip_id: int):
                 # Merged template + director effect settings
                 "effect_settings": effect_settings,
                 # Grok director: per-clip effect overrides
-                "speed_ramps": speed_ramps,
                 "caption_style": caption_style,
                 "broll_transition_type": broll_transition_type,
             }
@@ -737,6 +1049,15 @@ async def _render_clip_async(clip_id: int):
             data = response.json()
             clip.edited_video_path = data["path"]
             clip.status = "ready"
+            # Store effect failures in render_metadata for UI visibility
+            effect_failures = data.get("effect_failures", [])
+            if effect_failures:
+                logger.warning(f"Clip {clip_id}: {len(effect_failures)} effect(s) failed: {effect_failures}")
+                metadata = dict(clip.render_metadata or {})
+                metadata["effect_failures"] = effect_failures
+                clip.render_metadata = metadata
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(clip, "render_metadata")
             db.commit()
             
     except Exception as e:

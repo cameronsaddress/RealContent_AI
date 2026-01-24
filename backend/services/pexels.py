@@ -80,74 +80,73 @@ BROLL_SEARCH_QUERIES = {
 }
 
 # Default categories for B-roll if none specified
-# Only categories we have REAL local footage for
-# Note: "racing" excluded from defaults - served rarely as fallback only
+# Includes both new influencer footage and legacy warfare clips
 DEFAULT_BROLL_CATEGORIES = [
-    "warfare", "ww2", "fighter", "helicopters", "explosions",
-    "boxing", "rockets", "patriotic", "storms", "lightning",
-    "cathedrals", "castles", "navy"
+    # New authentic influencer categories
+    "money", "luxury", "gym", "sports", "cars", "city",
+    "crowd", "relationships", "fashion", "nature_power",
+    # Legacy warfare/religious categories
+    "warfare", "ww2", "fighter", "explosions",
+    "boxing", "patriotic", "cathedrals", "castles"
 ]
 
-# Category weights for "maximum impact" template
+# Category weights for selection
 # Higher weight = more likely to be selected
-# War/combat content prioritized for aggressive montages
+# All categories weighted equally now since Grok selects the right ones
 CATEGORY_WEIGHTS = {
-    # War/Military - HIGH priority (weight 5)
-    "war": 5,
-    "warfare": 5,
-    "ww2": 5,
-    "vietnam": 4,
-    "fighter_jets": 4,
-    "helicopters": 4,
-    "tanks": 4,
-    "navy": 4,
-    "explosions": 4,
+    # New authentic influencer categories - HIGH priority (weight 4)
+    "money": 4,
+    "luxury": 4,
+    "gym": 4,
+    "sports": 4,
+    "cars": 4,
+    "city": 4,
+    "crowd": 4,
+    "relationships": 4,
+    "fashion": 3,
+    "nature_power": 3,
 
-    # Chaos/Power - MEDIUM-HIGH priority (weight 3)
+    # Legacy warfare/military categories (weight 3)
+    "war": 3,
+    "warfare": 3,
+    "ww2": 3,
+    "fighter_jets": 3,
+    "helicopters": 3,
+    "navy": 3,
+    "explosions": 3,
+
+    # Chaos/destruction (weight 3)
     "chaos": 3,
     "fire": 3,
     "lightning": 3,
     "storms": 3,
 
-    # Faith/History - MEDIUM priority (weight 2)
+    # Faith/History (weight 2)
     "faith": 2,
     "cathedrals": 2,
     "castles": 2,
-    "crusades": 2,
     "history": 2,
-
-    # Strength/Victory - MEDIUM priority (weight 2)
-    "strength": 2,
-    "boxing": 2,
-    "gym": 2,
-    "victory": 2,
     "patriotic": 2,
 
-    # Other - LOW priority (weight 1)
-    "space": 1,
-    "rockets": 1,
-    "wealth": 1,
-    "money": 1,
-    "luxury": 1,
-    "nature": 1,
-    "mountains": 1,
-    "ocean": 1,
-    "people": 1,
-    "power": 1,
+    # Legacy aliases (weight 2)
+    "boxing": 3,
+    "rockets": 2,
+    "mountains": 2,
+    "wolves": 2,
+    "eagles": 2,
+    "lions": 2,
+    "sharks": 2,
+    "bulls": 2,
 
-    # Racing/NASCAR - VERY LOW priority (weight 0.2)
-    # Limit enforced separately via CATEGORY_LIMITS
-    "racing": 0.2,
-    "cars": 0.2,
-    "motorcycles": 0.2,
+    # Racing - moderate now (weight 2)
+    "racing": 2,
 }
 
 # Per-category limits - max clips per montage
 # Prevents over-representation of certain content types
 CATEGORY_LIMITS = {
-    "racing": 1,      # Max 1 NASCAR/racing clip per montage
-    "cars": 1,        # Max 1 car clip per montage
-    "motorcycles": 1, # Max 1 motorcycle clip per montage
+    "racing": 3,       # Max 3 racing clips per montage
+    "motorcycles": 2,  # Max 2 motorcycle clips per montage
 }
 
 
@@ -471,18 +470,24 @@ class PexelsService:
                             continue
 
                 # PRIORITY 2: Filename-based category matching
-                # Map category names to filename prefixes
+                # Map Grok category names to filename prefixes in /broll/
                 category_to_prefix = {
-                    "war": ["warfare", "military", "soldier", "combat", "tank", "fighter"],
-                    "wealth": ["money", "luxury", "business", "stock", "cars", "gold"],
-                    "faith": ["church", "prayer", "cross", "bible", "cathedral", "chapel"],
-                    "strength": ["boxing", "gym", "weightlifting", "mma", "fight", "muscle"],
-                    "nature": ["mountain", "ocean", "sunset", "wildlife", "animal", "landscape"],
-                    "people": ["crowd", "family", "women", "men", "person", "human"],
-                    "chaos": ["fire", "explosion", "destruction", "riot", "protest"],
-                    "victory": ["celebration", "flag", "trophy", "win", "american"],
-                    "power": ["political", "speech", "leader", "president", "authority"],
-                    "history": ["historical", "archive", "news", "documentary", "vintage"]
+                    # New authentic influencer categories
+                    "money": ["money", "hustle", "trading", "cash", "stock"],
+                    "luxury": ["luxury", "supercar", "mansion", "yacht", "dubai"],
+                    "gym": ["gym", "bodybuilding", "workout", "fitness", "lifting"],
+                    "relationships": ["relationships", "dating", "podcast", "redpill"],
+                    "city": ["city", "urban", "nightlife", "skyline", "neon"],
+                    "crowd": ["crowd", "rally", "stadium", "concert", "protest"],
+                    "sports": ["sports", "ufc", "knockout", "football", "basketball", "boxing"],
+                    "fashion": ["fashion", "runway", "streetwear", "designer"],
+                    "cars": ["cars", "supercar", "drift", "racing", "exhaust"],
+                    "nature_power": ["nature_power", "volcano", "tsunami", "tornado", "avalanche"],
+                    # Legacy categories
+                    "war": ["warfare", "military", "ww2", "fighter", "helicopters", "navy", "tanks"],
+                    "faith": ["cathedrals", "castles", "patriotic", "church", "cross"],
+                    "chaos": ["fire", "explosions", "lightning", "storms", "destruction"],
+                    "history": ["ww2", "rockets", "patriotic", "archive"],
                 }
 
                 prefixes = category_to_prefix.get(category, [category])

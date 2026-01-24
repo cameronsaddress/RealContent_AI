@@ -312,6 +312,71 @@ def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
         return 0
 
 
+def detect_face_crop_offset(video_path: str, seek_time: float = 0, target_width: int = 1080, target_height: int = 1920) -> int:
+    """
+    Detect face position at a specific timestamp and return horizontal crop offset.
+    Used for B-Roll clips to center faces in the 9:16 crop.
+
+    Returns: pixel offset for crop X position (0 = center crop)
+    """
+    try:
+        import cv2
+        temp_frame = f"/tmp/broll_face_{uuid.uuid4().hex[:8]}.jpg"
+        result = subprocess.run([
+            "ffmpeg", "-y", "-ss", f"{seek_time:.3f}",
+            "-i", video_path,
+            "-vframes", "1", "-q:v", "2",
+            temp_frame
+        ], capture_output=True, timeout=10)
+
+        if result.returncode != 0 or not os.path.exists(temp_frame):
+            return 0
+
+        frame = cv2.imread(temp_frame)
+        if frame is None:
+            os.remove(temp_frame)
+            return 0
+
+        frame_height, frame_width = frame.shape[:2]
+
+        # Calculate what dimensions we'd have after scale to fill target_height
+        scale_factor = target_height / frame_height
+        scaled_width = int(frame_width * scale_factor)
+
+        if scaled_width <= target_width:
+            os.remove(temp_frame)
+            return 0  # No horizontal room to shift
+
+        face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        face_cascade = cv2.CascadeClassifier(face_cascade_path)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+        os.remove(temp_frame)
+
+        if len(faces) == 0:
+            return 0
+
+        # Find largest face
+        largest = max(faces, key=lambda f: f[2] * f[3])
+        face_center_x = largest[0] + largest[2] // 2
+
+        # Scale face center to the scaled dimensions
+        face_center_scaled = int(face_center_x * scale_factor)
+        frame_center_scaled = scaled_width // 2
+
+        # Offset needed to center the face in the crop
+        offset = face_center_scaled - frame_center_scaled
+
+        # Clamp to valid range
+        max_offset = (scaled_width - target_width) // 2
+        offset = max(-max_offset, min(max_offset, offset))
+
+        return offset
+
+    except Exception:
+        return 0
+
+
 # ============ EFFECT DISPATCHER ============
 def get_effect_chain(effect_settings: dict) -> dict:
     """
@@ -378,8 +443,6 @@ def get_effect_chain(effect_settings: dict) -> dict:
         # Wave displacement (brief distortion bursts)
         "wave_displacement": False,
         "wave_triggers": [],  # [{"start": t, "end": t, "amplitude": 15}]
-        # Speed ramps
-        "speed_ramps": [],  # [{"time": t, "speed": 0.3, "duration": 1.5}]
         # Audio reactive
         "beat_sync_intensity": 0.006,  # Default heartbeat intensity
         "audio_saturation": False,
@@ -500,8 +563,6 @@ def get_effect_chain(effect_settings: dict) -> dict:
         config["wave_displacement"] = True
         if isinstance(effect_settings["wave_displacement"], dict):
             config["wave_triggers"] = effect_settings["wave_displacement"].get("triggers", [])
-    if effect_settings.get("speed_ramps"):
-        config["speed_ramps"] = effect_settings["speed_ramps"][:3]  # Max 3
     if effect_settings.get("beat_sync"):
         config["beat_sync_intensity"] = 0.02  # Amplified when beat_sync enabled
     if effect_settings.get("audio_saturation"):
@@ -618,7 +679,6 @@ class RenderClipRequest(BaseModel):
     # Template effect settings
     effect_settings: Optional[dict] = {}  # {"color_grade": "bw", "saturation": 0, etc.}
     # === NEW: Grok Director effect fields ===
-    speed_ramps: Optional[List[dict]] = []  # [{"time": 15.2, "speed": 0.3, "duration": 1.5}]
     caption_style: str = "standard"  # "standard"|"pop_scale"|"shake"|"blur_reveal"
     broll_transition_type: Optional[str] = None  # "pixelize"|"radial"|"dissolve"|"slideleft"
 
@@ -715,7 +775,10 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
                 "cannot reshape tensor",
                 "size of tensor",
                 "expected size for",
-                "dimensions of batch"
+                "dimensions of batch",
+                "key.size",
+                "value.size",
+                "to be true, but got false",
             ]):
                 print(f"[Whisper] Tensor error (problematic audio): {str(e)[:100]}")
                 print(f"[Whisper] Returning empty transcription")
@@ -1359,12 +1422,16 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
             seg_duration = end - start
 
             if speed == 1.0:
-                # Normal speed - just extract
+                # Normal speed - re-encode to ensure consistent stream params for concat
                 cmd = [
                     "ffmpeg", "-y",
                     "-ss", f"{start:.3f}", "-t", f"{seg_duration:.3f}",
                     "-i", str(input_path),
-                    "-c", "copy",
+                    "-vf", "setpts=PTS-STARTPTS",
+                    "-af", "asetpts=N/SR/TB",
+                    "-c:v", encoder, *gpu_opts,
+                    "-c:a", "aac",
+                    "-video_track_timescale", "15360",
                     str(seg_path)
                 ]
             else:
@@ -1379,6 +1446,7 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
                     "-af", atempo_chain,
                     "-c:v", encoder, *gpu_opts,
                     "-c:a", "aac",
+                    "-video_track_timescale", "15360",
                     str(seg_path)
                 ]
 
@@ -1391,7 +1459,7 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
                 return False
             temp_segments.append(seg_path)
 
-        # Concatenate all segments
+        # Concatenate all segments - re-encode to ensure clean timestamps
         concat_file = temp_dir / f"speedramp_concat_{uuid.uuid4().hex[:6]}.txt"
         with open(concat_file, "w") as f:
             for seg in temp_segments:
@@ -1400,7 +1468,9 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
         cmd_concat = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_file),
-            "-c", "copy",
+            "-c:v", encoder, *gpu_opts,
+            "-c:a", "aac",
+            "-video_track_timescale", "15360",
             str(output_path)
         ]
         result = subprocess.run(cmd_concat, capture_output=True, text=True)
@@ -1433,7 +1503,8 @@ def generate_broll_montage(
     caption_data: dict = None,
     cut_interval: float = 0.5,  # Fixed cut interval in seconds
     transition_type: Optional[str] = None,  # "pixelize"|"radial"|"dissolve"|"slideleft"|"fadeblack"|"wiperight"
-    transition_duration: float = 0.3  # Transition duration in seconds
+    transition_duration: float = 0.3,  # Transition duration in seconds
+    effect_failures: list = None  # Shared list to track effect failures
 ) -> Optional[str]:
     """
     Generate a B-roll montage with fixed-interval cuts (default 0.5s).
@@ -1622,6 +1693,7 @@ def generate_broll_montage(
                 *inputs,
                 "-filter_complex", filter_complex,
                 "-map", "[vout]",
+                "-map_chapters", "-1",
                 "-c:v", encoder_local, *gpu_opts_local,
                 "-t", str(duration),
                 "-an",
@@ -1642,7 +1714,9 @@ def generate_broll_montage(
             cmd_concat = [
                 "ffmpeg", "-y",
                 "-f", "concat", "-safe", "0", "-i", str(concat_list_path),
-                "-c", "copy",
+                "-map", "0:v",
+                "-map_chapters", "-1",
+                "-c:v", "copy",
                 "-t", str(duration),
                 str(output_path)
             ]
@@ -1757,6 +1831,8 @@ def generate_broll_montage(
                     print(f"B-Roll Montage: RGB glitch applied ({len(rgb_windows)} pulses)")
                 except Exception as e:
                     print(f"B-Roll Montage: RGB glitch failed, continuing: {e}")
+                    if effect_failures is not None:
+                        effect_failures.append("broll_rgb_glitch")
 
             # Apply VHS Vintage Effects to B-roll
             temp_vintage = temp_dir / f"broll_vintage_{uuid.uuid4().hex[:8]}.mp4"
@@ -1766,6 +1842,8 @@ def generate_broll_montage(
                 print(f"B-Roll Montage: VHS effects applied")
             except Exception as e:
                 print(f"B-Roll Montage: VHS effects failed, continuing: {e}")
+                if effect_failures is not None:
+                    effect_failures.append("broll_vhs")
 
         print(f"B-Roll Montage: Successfully generated {output_path}")
         return str(output_path)
@@ -2519,6 +2597,53 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 async def health_check():
     return {"status": "healthy_v2", "gpu_encoder": get_gpu_encoder()[0]}
 
+@app.get("/download-progress/{filename}")
+async def download_progress(filename: str):
+    """Return download progress for a file (checks .part file size and fragment info)."""
+    base_path = f"/downloads/{filename}"
+    part_path = f"{base_path}.part"
+    final_path = base_path if base_path.endswith(".mp4") else f"{base_path}.mp4"
+    part_path_mp4 = f"{final_path}.part"
+
+    # Check if final file exists (download complete)
+    if os.path.exists(final_path):
+        size = os.path.getsize(final_path)
+        return {"status": "complete", "bytes_downloaded": size, "file": final_path}
+
+    # Check .part file
+    actual_part = None
+    for p in [part_path, part_path_mp4]:
+        if os.path.exists(p):
+            actual_part = p
+            break
+
+    if not actual_part:
+        return {"status": "waiting", "bytes_downloaded": 0}
+
+    size = os.path.getsize(actual_part)
+
+    # Try to get fragment info from .ytdl file
+    ytdl_path = f"{final_path}.ytdl"
+    fragment_info = None
+    if os.path.exists(ytdl_path):
+        try:
+            import json as json_mod
+            with open(ytdl_path) as f:
+                ytdl_data = json_mod.load(f)
+            dl_info = ytdl_data.get("downloader", {})
+            current_frag = dl_info.get("current_fragment", {}).get("index", 0)
+            total_frags = dl_info.get("fragment_count", 0)
+            if total_frags > 0:
+                fragment_info = {"current": current_frag, "total": total_frags}
+        except Exception:
+            pass
+
+    return {
+        "status": "downloading",
+        "bytes_downloaded": size,
+        "fragment_info": fragment_info,
+    }
+
 @app.get("/effects")
 async def get_effects_catalog():
     """Return available effects catalog with descriptions for Grok director prompt."""
@@ -2582,8 +2707,499 @@ async def download_video(request: DownloadRequest):
             last_error = str(e)
             continue
             
-    print(f"All download strategies failed: {last_error}")     
+    print(f"All download strategies failed: {last_error}")
     raise HTTPException(status_code=500, detail=f"Download failed: {last_error}")
+
+
+# Left-wing channel blocklist - these channels will be skipped in B-roll downloads
+# Uses substring matching against channel name (lowercased)
+BLOCKED_CHANNELS = {
+    # Major left-wing news networks (abbreviations catch affiliates too)
+    "cnn", "msnbc", " cbs", "cbs ", " nbc", "nbc ", " abc", "abc ",
+    "pbs", "npr", "bbc", "associated press",
+    # Left-wing commentary
+    "the young turks", "tyt", "david pakman", "pakman",
+    "majority report", "secular talk", "the damage report",
+    "hasanabi", "hasan piker", "vaush", "destiny",
+    "brian tyler cohen", "meidas touch", "meidastouch",
+    # Left-leaning outlets
+    "vox", "vice news", "huffpost", "nowthis", "now this",
+    "washington post", "new york times", "nyt ",
+    "maddow", "the daily show", "last week tonight",
+    "late show", "jimmy kimmel", "seth meyers", "colbert",
+    "trevor noah", "john oliver",
+}
+
+
+class FetchTranscriptRequest(BaseModel):
+    query: str                     # YouTube search query
+    clip_id: int                   # Clip ID for caching
+    video_pub_date: str = ""       # Source video pub date (YYYYMMDD) - filter results within 5 days
+
+
+class EventBrollRequest(BaseModel):
+    query: str                     # YouTube search query
+    clip_id: int                   # Clip ID for naming
+    index: int = 0                 # Index for multiple event clips
+    video_pub_date: str = ""       # Source video pub date (YYYYMMDD) - filter results within 5 days
+    keywords: list = []            # Keywords to match in YouTube transcript
+    seek_time: float = -1          # If >= 0, extract at this exact time (skip keyword matching)
+
+
+def parse_vtt_timestamps(vtt_path: Path) -> list:
+    """Parse a WebVTT subtitle file and return list of {start, end, text} segments."""
+    import re
+    segments = []
+    if not vtt_path.exists():
+        return segments
+
+    content = vtt_path.read_text(encoding="utf-8", errors="ignore")
+    # VTT timestamp pattern: 00:00:01.234 --> 00:00:03.456
+    time_pattern = re.compile(r"(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})")
+
+    blocks = content.split("\n\n")
+    for block in blocks:
+        lines = block.strip().split("\n")
+        for i, line in enumerate(lines):
+            match = time_pattern.search(line)
+            if match:
+                start_str, end_str = match.groups()
+                # Convert timestamp to seconds
+                start_sec = _vtt_time_to_seconds(start_str)
+                end_sec = _vtt_time_to_seconds(end_str)
+                # Text is everything after the timestamp line
+                text_lines = [l for l in lines[i+1:] if not l.startswith("WEBVTT") and l.strip()]
+                text = " ".join(text_lines)
+                # Strip VTT tags like <c> </c> <00:00:01.234>
+                text = re.sub(r"<[^>]+>", "", text).strip()
+                if text and start_sec < end_sec:
+                    segments.append({"start": start_sec, "end": end_sec, "text": text})
+                break
+    return segments
+
+
+def _vtt_time_to_seconds(time_str: str) -> float:
+    """Convert VTT timestamp (HH:MM:SS.mmm) to seconds."""
+    parts = time_str.split(":")
+    hours = int(parts[0])
+    minutes = int(parts[1])
+    sec_parts = parts[2].split(".")
+    seconds = int(sec_parts[0])
+    millis = int(sec_parts[1]) if len(sec_parts) > 1 else 0
+    return hours * 3600 + minutes * 60 + seconds + millis / 1000.0
+
+
+def find_keyword_timestamps(segments: list, keywords: list) -> list:
+    """Find timestamps in VTT segments where keywords appear.
+    Returns list of {time, keyword, context} sorted by match quality."""
+    import re
+    matches = []
+    seen_times = set()  # Avoid overlapping clips
+
+    for keyword in keywords:
+        kw_lower = keyword.lower().strip()
+        if len(kw_lower) < 2:
+            continue
+        # Build regex for word boundary matching
+        pattern = re.compile(r"\b" + re.escape(kw_lower) + r"\b", re.IGNORECASE)
+
+        for seg in segments:
+            text = seg["text"]
+            if pattern.search(text):
+                # Use midpoint of segment as the match time
+                match_time = (seg["start"] + seg["end"]) / 2.0
+                # Check we haven't already matched near this time (within 8s)
+                too_close = any(abs(match_time - t) < 8.0 for t in seen_times)
+                if not too_close:
+                    seen_times.add(match_time)
+                    matches.append({
+                        "time": seg["start"],  # Start slightly before the word
+                        "keyword": keyword,
+                        "context": text[:80],
+                    })
+
+    # Sort: prioritize keywords that appear earlier in the keywords list (more specific)
+    # by using their original index
+    keyword_priority = {k.lower(): i for i, k in enumerate(keywords)}
+    matches.sort(key=lambda m: keyword_priority.get(m["keyword"].lower(), 99))
+    return matches
+
+
+@app.post("/fetch-youtube-transcript")
+async def fetch_youtube_transcript(request: FetchTranscriptRequest):
+    """Download a YouTube video + auto-subs for a search query.
+    Returns the parsed transcript so Grok can review it and pick exact timestamps.
+    Caches the video for subsequent clip extraction calls."""
+    import hashlib
+
+    query_hash = hashlib.md5(request.query.encode()).hexdigest()[:10]
+    temp_dir = Path(f"/tmp/event_dl_{query_hash}")
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_video = temp_dir / "video.mp4"
+
+    try:
+        # Check cache first
+        video_cached = temp_video.exists() and temp_video.stat().st_size > 10000
+        if video_cached:
+            import time as _time
+            age_hours = (_time.time() - temp_video.stat().st_mtime) / 3600
+            if age_hours > 24:
+                temp_video.unlink()
+                video_cached = False
+
+        if not video_cached:
+            # Step 1: Search YouTube with channel blocklist + date filter
+            search_cmd = ["yt-dlp", f"ytsearch10:{request.query}",
+                         "--dump-json", "--flat-playlist", "--no-download"]
+
+            # Add date filter: only videos within 5 days of source video pub date
+            date_after = None
+            if request.video_pub_date:
+                try:
+                    from datetime import datetime as _dt, timedelta as _td
+                    pub_dt = _dt.strptime(request.video_pub_date, "%Y%m%d")
+                    date_after = (pub_dt - _td(days=5)).strftime("%Y%m%d")
+                    search_cmd.extend(["--dateafter", date_after])
+                    print(f"Transcript fetch: Date filter --dateafter {date_after} (source: {request.video_pub_date})")
+                except ValueError:
+                    print(f"Transcript fetch: Invalid video_pub_date '{request.video_pub_date}', skipping date filter")
+
+            search_result = subprocess.run(
+                search_cmd, capture_output=True, text=True, timeout=30
+            )
+
+            video_url = None
+            video_title = ""
+            video_channel = ""
+            for line in (search_result.stdout or "").strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    meta = json.loads(line)
+                    channel = (meta.get("channel") or meta.get("uploader") or "").lower()
+                    duration = meta.get("duration") or 0
+                    if duration and duration > 1800:
+                        continue
+                    is_blocked = any(blocked in channel for blocked in BLOCKED_CHANNELS)
+                    if is_blocked:
+                        print(f"Transcript fetch: SKIPPING blocked '{channel}'")
+                        continue
+                    video_url = f"https://www.youtube.com/watch?v={meta.get('id', '')}"
+                    video_title = meta.get("title", "")
+                    video_channel = meta.get("channel") or meta.get("uploader") or ""
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+            if not video_url:
+                return {"error": "No suitable video found", "transcript": []}
+
+            # Step 2: Download video + subtitles
+            print(f"Transcript fetch: Downloading '{video_title}' from '{video_channel}'")
+            dl_cmd = [
+                "yt-dlp", video_url,
+                "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+                "--merge-output-format", "mp4",
+                "-o", str(temp_video),
+                "--no-playlist", "--no-warnings",
+                "--socket-timeout", "30", "--retries", "2",
+                "--write-auto-subs", "--sub-format", "vtt", "--sub-langs", "en",
+            ]
+            subprocess.run(dl_cmd, capture_output=True, text=True, timeout=180)
+
+            if not temp_video.exists():
+                alt = Path(str(temp_video) + ".mp4")
+                if alt.exists():
+                    alt.rename(temp_video)
+                else:
+                    video_files = list(temp_dir.glob("*.mp4")) + list(temp_dir.glob("*.mkv"))
+                    if video_files:
+                        video_files[0].rename(temp_video)
+                    else:
+                        return {"error": "Download failed", "transcript": []}
+        else:
+            video_title = "cached"
+            video_channel = "cached"
+
+        # Step 3: Parse VTT transcript
+        vtt_files = list(temp_dir.glob("*.vtt"))
+        if not vtt_files:
+            return {"error": "No subtitles available", "transcript": [], "query_hash": query_hash}
+
+        segments = parse_vtt_timestamps(vtt_files[0])
+
+        # Get video duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(temp_video)],
+            capture_output=True, text=True, timeout=10
+        )
+        vid_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0
+
+        # Condense transcript for Grok: group into ~5-second time buckets
+        # YouTube auto-subs have overlapping timestamps, so we bucket by start time
+        condensed = []
+        seen_text = set()  # Deduplicate repeated phrases from rolling captions
+        BUCKET_SIZE = 5.0  # seconds per bucket
+
+        for seg in segments:
+            text = seg["text"].strip()
+            if not text or text in seen_text:
+                continue
+            seen_text.add(text)
+
+            # Check if this segment fits in the current bucket
+            if condensed and seg["start"] - condensed[-1]["start"] < BUCKET_SIZE:
+                # Same bucket - append text if not already there
+                if text not in condensed[-1]["text"]:
+                    condensed[-1]["text"] += " " + text
+                condensed[-1]["end"] = max(condensed[-1]["end"], seg["end"])
+            else:
+                condensed.append({"start": round(seg["start"], 1), "end": round(seg["end"], 1), "text": text})
+
+        print(f"Transcript fetch: {len(condensed)} segments from '{video_title}' ({vid_duration:.0f}s)")
+        return {
+            "query_hash": query_hash,
+            "title": video_title,
+            "channel": video_channel,
+            "duration": vid_duration,
+            "transcript": condensed[:500],  # Cap at 500 segments to limit payload
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"error": "Timeout", "transcript": []}
+    except Exception as e:
+        print(f"Transcript fetch error: {e}")
+        return {"error": str(e), "transcript": []}
+
+
+@app.post("/download-event-broll")
+async def download_event_broll(request: EventBrollRequest):
+    """Download B-roll from YouTube by matching keywords in the video's transcript.
+    Downloads the video + auto-subs, finds exact moments where keywords are spoken,
+    and extracts clips at those timestamps for perfectly matched B-roll."""
+    import uuid as _uuid
+    import random as _random
+
+    output_name = f"event_{request.clip_id}_{request.index}.mp4"
+    output_path = Path("/broll") / output_name
+
+    # If this exact clip already exists and is fresh (< 24h old), reuse it
+    if output_path.exists() and output_path.stat().st_size > 5000:
+        import time
+        age_hours = (time.time() - output_path.stat().st_mtime) / 3600
+        if age_hours < 24:
+            print(f"Event B-roll: Reusing cached {output_name}")
+            return {"clip_path": str(output_path), "filename": output_name}
+
+    # Cache source videos by query hash so multiple index calls reuse the same download
+    import hashlib
+    query_hash = hashlib.md5(request.query.encode()).hexdigest()[:10]
+    temp_dir = Path(f"/tmp/event_dl_{query_hash}")
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_video = temp_dir / "video.mp4"
+
+    try:
+        # Always use search result #1 - we match different timestamps via index
+        search_count = 1
+        print(f"Event B-roll: Query '{request.query}' (index={request.index}), keywords={request.keywords[:5]}")
+
+        # Check if video already cached from a previous index call
+        if temp_video.exists() and temp_video.stat().st_size > 10000:
+            import time as _time
+            age_hours = (_time.time() - temp_video.stat().st_mtime) / 3600
+            if age_hours < 24:
+                print(f"Event B-roll: Reusing cached source video for '{request.query}'")
+            else:
+                # Stale cache, re-download
+                temp_video.unlink()
+
+        if not temp_video.exists():
+            # Step 1: Search YouTube and check channel against blocklist
+            # Search for more results so we can skip blocked channels
+            search_cmd = [
+                "yt-dlp", f"ytsearch10:{request.query}",
+                "--dump-json", "--flat-playlist", "--no-download",
+            ]
+
+            # Add date filter: only videos within 5 days of source video pub date
+            if request.video_pub_date:
+                try:
+                    from datetime import datetime as _dt, timedelta as _td
+                    pub_dt = _dt.strptime(request.video_pub_date, "%Y%m%d")
+                    date_after = (pub_dt - _td(days=5)).strftime("%Y%m%d")
+                    search_cmd.extend(["--dateafter", date_after])
+                    print(f"Event B-roll: Date filter --dateafter {date_after} (source: {request.video_pub_date})")
+                except ValueError:
+                    print(f"Event B-roll: Invalid video_pub_date '{request.video_pub_date}', skipping date filter")
+
+            search_result = subprocess.run(
+                search_cmd,
+                capture_output=True, text=True, timeout=30
+            )
+
+            video_url = None
+            for line in (search_result.stdout or "").strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    meta = json.loads(line)
+                    channel = (meta.get("channel") or meta.get("uploader") or "").lower()
+                    duration = meta.get("duration") or 0
+                    vid_id = meta.get("id", "")
+
+                    # Skip if duration > 30 min
+                    if duration and duration > 1800:
+                        continue
+
+                    # Check channel against blocklist
+                    is_blocked = any(blocked in channel for blocked in BLOCKED_CHANNELS)
+                    if is_blocked:
+                        print(f"Event B-roll: SKIPPING blocked channel '{channel}' for '{meta.get('title', '')[:60]}'")
+                        continue
+
+                    video_url = f"https://www.youtube.com/watch?v={vid_id}"
+                    print(f"Event B-roll: Selected '{meta.get('title', '')[:60]}' from '{channel}' ({duration}s)")
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+            if not video_url:
+                print(f"Event B-roll: No suitable video found for '{request.query}' (all blocked or unavailable)")
+                return {"error": "No suitable video (channels blocked)", "clip_path": None}
+
+            # Step 2: Download the selected video WITH subtitles
+            dl_cmd = [
+                "yt-dlp", video_url,
+                "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+                "--merge-output-format", "mp4",
+                "-o", str(temp_video),
+                "--no-playlist", "--no-warnings",
+                "--socket-timeout", "30", "--retries", "2",
+            ]
+
+            # Add subtitle download if we have keywords to match
+            if request.keywords:
+                dl_cmd.extend([
+                    "--write-auto-subs",
+                    "--sub-format", "vtt",
+                    "--sub-langs", "en",
+                ])
+
+            dl_proc = subprocess.run(dl_cmd, capture_output=True, text=True, timeout=180)
+
+            if not temp_video.exists():
+                # yt-dlp sometimes adds extra extension or uses different naming
+                alt = Path(str(temp_video) + ".mp4")
+                if alt.exists():
+                    alt.rename(temp_video)
+                else:
+                    # Find any video file in temp_dir
+                    video_files = list(temp_dir.glob("*.mp4")) + list(temp_dir.glob("*.mkv")) + list(temp_dir.glob("*.webm"))
+                    if video_files:
+                        video_files[0].rename(temp_video)
+                    else:
+                        # Log error details
+                        err_lines = [l for l in (dl_proc.stderr or "").split('\n') if 'ERROR' in l or 'error' in l.lower()]
+                        for l in err_lines[:3]:
+                            print(f"  yt-dlp error: {l[:150]}")
+                        if not err_lines:
+                            print(f"  yt-dlp stderr: {(dl_proc.stderr or '')[:200]}")
+                        print(f"  Files in temp_dir: {list(temp_dir.iterdir())}")
+                        print(f"Event B-roll: Download failed for '{request.query}'")
+                        return {"error": "Download failed", "clip_path": None}
+
+        # Get video duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(temp_video)],
+            capture_output=True, text=True, timeout=10
+        )
+        vid_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 30.0
+
+        # --- TRANSCRIPT MATCHING ---
+        seek_time = None
+
+        # If Grok provided an exact seek_time, use it directly (two-pass mode)
+        if request.seek_time >= 0:
+            seek_time = min(request.seek_time, vid_duration - 5.0)
+            seek_time = max(0.5, seek_time)
+            print(f"Event B-roll: Using Grok-directed seek_time={seek_time:.1f}s (two-pass mode)")
+
+        elif request.keywords:
+            # Find the VTT subtitle file (yt-dlp names it video.en.vtt or similar)
+            vtt_files = list(temp_dir.glob("*.vtt"))
+            if vtt_files:
+                vtt_path = vtt_files[0]
+                print(f"Event B-roll: Parsing subtitle file: {vtt_path.name}")
+                segments = parse_vtt_timestamps(vtt_path)
+                print(f"Event B-roll: Found {len(segments)} subtitle segments")
+
+                if segments:
+                    matches = find_keyword_timestamps(segments, request.keywords)
+                    print(f"Event B-roll: Found {len(matches)} keyword matches")
+
+                    if matches:
+                        # Pick match based on index (spread across different matches)
+                        match_idx = request.index % len(matches)
+                        chosen = matches[match_idx]
+                        # Start 1 second before the keyword for visual context
+                        seek_time = max(0.5, chosen["time"] - 1.0)
+                        seek_time = min(seek_time, vid_duration - 5.0)
+                        print(f"Event B-roll: Matched keyword '{chosen['keyword']}' at t={chosen['time']:.1f}s, context: '{chosen['context']}'")
+            else:
+                print(f"Event B-roll: No subtitle file found, falling back to random position")
+
+        # Fallback: random position if no transcript match
+        if seek_time is None:
+            seek_pcts = [(0.10, 0.25), (0.30, 0.50), (0.50, 0.70)]
+            pct_range = seek_pcts[min(request.index, 2)]
+            seek_time = _random.uniform(vid_duration * pct_range[0], vid_duration * pct_range[1])
+            seek_time = max(2.0, min(seek_time, vid_duration - 5.0))
+            print(f"Event B-roll: Using fallback position t={seek_time:.1f}s")
+
+        clip_duration = _random.uniform(3.5, 5.0)
+
+        # Detect face position for centered crop
+        face_x_offset = detect_face_crop_offset(str(temp_video), seek_time=seek_time)
+        crop_x = f"(iw-1080)/2+{face_x_offset}" if face_x_offset != 0 else "(iw-1080)/2"
+        if face_x_offset != 0:
+            print(f"Event B-roll: Face detected, crop offset={face_x_offset}px")
+
+        # Extract and format to 1080x1920 portrait
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", f"{seek_time:.2f}",
+                "-i", str(temp_video),
+                "-t", f"{clip_duration:.2f}",
+                "-vf", (
+                    "scale=1080:1920:force_original_aspect_ratio=increase,"
+                    f"crop=1080:1920:{crop_x}:(ih-1920)/2,"
+                    "fps=30"
+                ),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-an",
+                "-movflags", "+faststart",
+                str(output_path),
+            ],
+            capture_output=True, text=True, timeout=60
+        )
+
+        # Don't delete temp_dir - it's cached by query hash for reuse across indices
+
+        if output_path.exists() and output_path.stat().st_size > 5000:
+            print(f"Event B-roll: Created {output_name} ({output_path.stat().st_size // 1024}KB) from t={seek_time:.1f}s")
+            return {"clip_path": str(output_path), "filename": output_name}
+        else:
+            return {"error": "FFmpeg split failed", "clip_path": None}
+
+    except subprocess.TimeoutExpired:
+        return {"error": "Timeout", "clip_path": None}
+    except Exception as e:
+        print(f"Event B-roll error: {e}")
+        return {"error": str(e), "clip_path": None}
+
 
 @app.post("/transcribe-whisper")
 async def transcribe_whisper(request: TranscribeRequest):
@@ -2682,6 +3298,7 @@ def render_viral_clip(request: RenderClipRequest):
     encoder, gpu_opts = get_gpu_encoder()
 
     try:
+        effect_failures = []  # Track non-fatal effect failures for reporting
         report_status(request.status_webhook_url, "Processing: Setup")
         # 1. Setup: Duration
         duration = request.end_time - request.start_time
@@ -2718,6 +3335,34 @@ def render_viral_clip(request: RenderClipRequest):
         whisper_result = safe_transcribe(str(temp_extracted), word_timestamps=True)
         fresh_segments = whisper_result.get("segments", [])
         print(f"Fresh transcription: {len(fresh_segments)} segments")
+
+        # FALLBACK: If fresh Whisper fails, use pre-existing transcript segments from request
+        # (adjusted to clip-relative timestamps)
+        if not fresh_segments and request.transcript_segments:
+            print(f"[Whisper] Fresh transcription empty - falling back to request transcript_segments ({len(request.transcript_segments)} segments)")
+            for seg in request.transcript_segments:
+                # Adjust timestamps: original video timestamps -> clip-relative (subtract start_time)
+                adj_start = seg.get("start", 0) - request.start_time
+                adj_end = seg.get("end", 0) - request.start_time
+                # Only include segments that overlap with the clip
+                if adj_end > 0 and adj_start < duration:
+                    adj_seg = dict(seg)
+                    adj_seg["start"] = max(0, adj_start)
+                    adj_seg["end"] = min(duration, adj_end)
+                    # Adjust word-level timestamps too if present
+                    if "words" in adj_seg:
+                        adj_words = []
+                        for w in adj_seg["words"]:
+                            w_start = w.get("start", 0) - request.start_time
+                            w_end = w.get("end", 0) - request.start_time
+                            if w_end > 0 and w_start < duration:
+                                adj_w = dict(w)
+                                adj_w["start"] = max(0, w_start)
+                                adj_w["end"] = min(duration, w_end)
+                                adj_words.append(adj_w)
+                        adj_seg["words"] = adj_words
+                    fresh_segments.append(adj_seg)
+            print(f"[Whisper] Fallback: {len(fresh_segments)} segments after time adjustment")
 
         # Build fresh trigger words from TRAD_TRIGGER_WORDS list
         fresh_trigger_words = []
@@ -2859,7 +3504,6 @@ def render_viral_clip(request: RenderClipRequest):
         if effect_config.get("temporal_trail"): effects_summary.append("temporal_trail")
         if effect_config.get("camera_shake"): effects_summary.append(f"shake({effect_config['shake_intensity']}px)")
         if effect_config.get("wave_displacement"): effects_summary.append("wave_disp")
-        if effect_config.get("speed_ramps"): effects_summary.append(f"speed_ramps({len(effect_config['speed_ramps'])})")
         if effect_config.get("audio_saturation"): effects_summary.append("audio_sat")
         if effect_config.get("broll_transition_type"): effects_summary.append(f"transition({effect_config['broll_transition_type']})")
         if effect_config["letterbox"]: effects_summary.append(f"letterbox({effect_config['letterbox_ratio']})")
@@ -3006,18 +3650,6 @@ def render_viral_clip(request: RenderClipRequest):
         report_status(request.status_webhook_url, "Processing: GPU FX")
         subprocess.run(cmd_mega, check=True)
 
-        # 3.25. SPEED RAMPS - retime segments after all effects are baked
-        speed_ramps = effect_config.get("speed_ramps", []) or request.speed_ramps
-        if speed_ramps:
-            report_status(request.status_webhook_url, "Processing: Speed Ramps")
-            temp_ramped = temp_dir / f"ramped_{uuid.uuid4().hex[:8]}.mp4"
-            if apply_speed_ramps(temp_main, temp_ramped, speed_ramps, encoder, gpu_opts):
-                # Replace temp_main with ramped version
-                temp_main.unlink()
-                subprocess.run(["mv", str(temp_ramped), str(temp_main)], check=True)
-            elif temp_ramped.exists():
-                temp_ramped.unlink()
-
         # 3.5. Chromatic Aberration Pass (MoviePy) - RGB split effect
         # ALWAYS add 4 intro pulses at the start, plus BIG keyword trigger hits
         report_status(request.status_webhook_url, "Processing: RGB Glitch")
@@ -3077,6 +3709,7 @@ def render_viral_clip(request: RenderClipRequest):
             print(f"Applied {len(trigger_windows)} RGB glitch pulses (4 intro + {len(trigger_windows)-4} keywords)")
         except Exception as e:
             print(f"WARNING: Chromatic aberration failed, continuing without: {e}")
+            effect_failures.append("rgb_glitch")
             # Continue with unmodified temp_main
 
         # 3.6. Vintage VHS Effects Pass - conditionally applied based on template
@@ -3090,6 +3723,7 @@ def render_viral_clip(request: RenderClipRequest):
                 subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True)
             except Exception as e:
                 print(f"WARNING: Vintage VHS effects failed, continuing without: {e}")
+                effect_failures.append("vhs_effects")
                 # Continue with unmodified temp_main
         else:
             print("VHS effects: DISABLED (clean template)")
@@ -3115,6 +3749,7 @@ def render_viral_clip(request: RenderClipRequest):
                 subprocess.run(["mv", str(temp_template), str(temp_main)], check=True)
             except Exception as e:
                 print(f"WARNING: Template effects failed, continuing without: {e}")
+                effect_failures.append("template_fx")
                 import traceback
                 traceback.print_exc()
 
@@ -3132,6 +3767,7 @@ def render_viral_clip(request: RenderClipRequest):
                     temp_datamosh.unlink()
             except Exception as e:
                 print(f"WARNING: Datamosh effect failed, continuing without: {e}")
+                effect_failures.append("datamosh")
 
         pixel_sort_segs = effect_config.get("pixel_sort_segments", [])
         if pixel_sort_segs:
@@ -3145,6 +3781,7 @@ def render_viral_clip(request: RenderClipRequest):
                     temp_psort.unlink()
             except Exception as e:
                 print(f"WARNING: Pixel sort effect failed, continuing without: {e}")
+                effect_failures.append("pixel_sort")
 
         # 3.6.3 DURATION ENFORCEMENT - MoviePy can sometimes produce longer output
         # Re-mux with hard duration limit to ensure clip is exactly the right length
@@ -3163,145 +3800,309 @@ def render_viral_clip(request: RenderClipRequest):
             subprocess.run(["mv", str(temp_trimmed), str(temp_main)], check=True)
             print(f"Duration enforced: {duration:.1f}s")
 
-        # 3.7. B-ROLL CLIMAX MONTAGE (if climax_time specified and B-roll available)
+        # 3.7. B-ROLL INTERCUT (flash B-Roll at trigger words, speaker stays visible)
+        # Strategy: Short B-Roll flashes (0.7-1.0s) at trigger word timestamps,
+        # with speaker always returning. Audio stays continuous throughout.
+        # Zones: HOOK (0-3s) -> BUILD (flashes) -> CLIMAX (speaker payoff) -> REACTION (rapid burst) -> TAIL
         if request.climax_time and request.broll_paths and request.broll_duration and request.broll_duration >= 3:
-            report_status(request.status_webhook_url, "Processing: B-Roll Montage")
+            report_status(request.status_webhook_url, "Processing: B-Roll Intercut")
 
             # climax_time is absolute (in source video), convert to clip-relative
             climax_clip_time = request.climax_time - request.start_time
 
-            # Validate climax is within the clip
             if 0 < climax_clip_time < duration - 3:
-                print(f"B-Roll: Climax at {climax_clip_time:.1f}s (clip-relative), duration {request.broll_duration:.1f}s")
-                print(f"B-Roll: {len(request.broll_paths)} clips available")
+                print(f"B-Roll Intercut: Climax at {climax_clip_time:.1f}s, {len(request.broll_paths)} clips available")
 
                 try:
-                    # Get beat times for B-roll cut sync
-                    broll_beat_times = []
-                    if bgm_path:
-                        try:
-                            # Detect beats for the B-roll section (offset by climax time)
-                            all_beats = detect_beats(str(bgm_path), duration)
-                            # Filter beats that fall within the B-roll window
-                            broll_beat_times = [b - climax_clip_time for b in all_beats
-                                               if climax_clip_time <= b < climax_clip_time + request.broll_duration]
-                            print(f"B-Roll: {len(broll_beat_times)} beat-sync points in montage window")
-                        except Exception as e:
-                            print(f"B-Roll: Beat detection failed, using 1s intervals: {e}")
+                    # === ZONE DEFINITIONS ===
+                    HOOK_END = 3.0                    # No B-Roll in first 3s
+                    CLIMAX_BEFORE = 2.0               # Protect 2s before climax
+                    CLIMAX_AFTER = 1.5                # Protect 1.5s after climax
+                    REACTION_DUR = min(4.0, max(0, duration - climax_clip_time - CLIMAX_AFTER - 3.0))
+                    FLASH_DUR = 0.7                   # Default B-Roll flash duration
+                    FLASH_DUR_CURSE = 1.0             # Longer flash for curse words
+                    MIN_GAP = 2.5                     # Minimum gap between flashes
+                    MAX_FLASHES = 12                  # Max intercut points per clip
+                    REACTION_CUT = 0.4               # Cut interval for reaction burst
 
-                    # Generate B-roll montage
-                    temp_broll_montage = temp_dir / f"temp_broll_{uid}.mp4"
-                    cleanup_files.append(temp_broll_montage)
+                    # === SELECT INSERTION POINTS from trigger words ===
+                    insertion_points = []
+                    last_insert_end = -999
 
-                    # Pass caption data so B-roll gets same ASS captions and effects
-                    broll_caption_data = {
-                        "segments": fresh_segments,
-                        "climax_clip_time": climax_clip_time,
-                        "font": selected_font,
-                        "trigger_words": fresh_trigger_words,
-                        "caption_style": caption_style
-                    }
+                    for trig in sorted(fresh_trigger_words, key=lambda t: t.get('start', 0)):
+                        t = trig.get('start', 0)
+                        word = trig.get('word', '')
 
-                    # Use template-specific cut interval for B-roll pacing
-                    broll_cut_interval = effect_config.get("broll_cut_interval", 0.5)
-                    print(f"B-Roll: Using {broll_cut_interval}s cut interval (template config)")
+                        # Skip hook zone
+                        if t < HOOK_END:
+                            continue
+                        # Skip climax protection zone
+                        if climax_clip_time - CLIMAX_BEFORE <= t <= climax_clip_time + CLIMAX_AFTER:
+                            continue
+                        # Skip if too close to previous flash
+                        if t < last_insert_end + MIN_GAP:
+                            continue
+                        # Skip if too close to end
+                        if t > duration - 3.0:
+                            continue
 
-                    broll_transition = effect_config.get("broll_transition_type") or request.broll_transition_type
-                    broll_transition_dur = effect_config.get("broll_transition_duration", 0.3)
+                        flash_dur = FLASH_DUR_CURSE if word in CURSE_WORDS else FLASH_DUR
+                        insertion_points.append({
+                            'time': t,
+                            'word': word,
+                            'duration': flash_dur
+                        })
+                        last_insert_end = t + flash_dur
 
-                    broll_montage_path = generate_broll_montage(
-                        broll_paths=request.broll_paths,
-                        duration=request.broll_duration,
-                        beat_times=broll_beat_times,
-                        output_path=temp_broll_montage,
-                        effect_settings=request.effect_settings,
-                        caption_data=broll_caption_data,
-                        cut_interval=broll_cut_interval,
-                        transition_type=broll_transition,
-                        transition_duration=broll_transition_dur
-                    )
+                        if len(insertion_points) >= MAX_FLASHES:
+                            break
 
-                    if broll_montage_path and Path(broll_montage_path).exists():
-                        # Splice: [pre-climax] + [B-roll with speaker audio] + [post-broll]
-                        temp_pre_climax = temp_dir / f"temp_pre_climax_{uid}.mp4"
-                        temp_post_broll = temp_dir / f"temp_post_broll_{uid}.mp4"
-                        temp_climax_audio = temp_dir / f"temp_climax_audio_{uid}.aac"
-                        temp_broll_with_audio = temp_dir / f"temp_broll_audio_{uid}.mp4"
-                        temp_spliced = temp_dir / f"temp_spliced_{uid}.mp4"
-                        cleanup_files.extend([temp_pre_climax, temp_post_broll, temp_climax_audio,
-                                            temp_broll_with_audio, temp_spliced])
+                    # If too few trigger words, fill gaps with interval-based flashes
+                    # This ensures visual variety even when speaker doesn't use "power words"
+                    if len(insertion_points) < 6:
+                        FILL_INTERVAL = 5.0  # seconds between fill flashes
+                        # Find time ranges that need filling
+                        reaction_start_t = climax_clip_time + CLIMAX_AFTER
+                        reaction_end_t = reaction_start_t + REACTION_DUR
+                        # Zones to fill: BUILD (HOOK_END to climax-BEFORE) and TAIL (reaction_end to duration-3)
+                        fill_zones = [
+                            (HOOK_END, climax_clip_time - CLIMAX_BEFORE),
+                            (reaction_end_t, duration - 3.0)
+                        ]
+                        for zone_start, zone_end in fill_zones:
+                            if zone_end - zone_start < FILL_INTERVAL:
+                                continue
+                            t = zone_start + FILL_INTERVAL / 2  # Start mid-interval
+                            while t < zone_end and len(insertion_points) < MAX_FLASHES:
+                                # Check this point doesn't conflict with existing insertions
+                                conflicts = False
+                                for existing in insertion_points:
+                                    if abs(t - existing['time']) < MIN_GAP:
+                                        conflicts = True
+                                        break
+                                if not conflicts:
+                                    insertion_points.append({
+                                        'time': t,
+                                        'word': '_beat',
+                                        'duration': FLASH_DUR
+                                    })
+                                t += FILL_INTERVAL
+                        # Re-sort by time after adding fills
+                        insertion_points.sort(key=lambda ip: ip['time'])
+                        print(f"B-Roll Intercut: Filled to {len(insertion_points)} points (was sparse)")
 
-                        # 1. Extract pre-climax portion (video + audio)
+                    print(f"B-Roll Intercut: {len(insertion_points)} flash points total")
+                    for ip in insertion_points:
+                        print(f"  [{ip['time']:.1f}s] '{ip['word']}' ({ip['duration']:.1f}s)")
+
+                    if insertion_points or REACTION_DUR > 1.0:
+                        encoder_local, gpu_opts_local = get_gpu_encoder()
+                        saturation = effect_config.get("saturation", 1.25)
+                        grade_filter = f"eq=contrast=1.15:brightness=0.03:saturation={saturation}"
+                        broll_index = 0
+
+                        # Split insertion points into BUILD (before climax) and TAIL (after reaction)
+                        reaction_start = climax_clip_time + CLIMAX_AFTER
+                        reaction_end = reaction_start + REACTION_DUR
+                        build_points = [ip for ip in insertion_points if ip['time'] < climax_clip_time - CLIMAX_BEFORE]
+                        tail_points = [ip for ip in insertion_points if ip['time'] >= reaction_end]
+                        print(f"B-Roll Intercut: {len(build_points)} build flashes, {len(tail_points)} tail flashes")
+
+                        # 1. Extract continuous audio from main video (trim to video duration)
+                        temp_full_audio = temp_dir / f"intercut_audio_{uid}.aac"
+                        cleanup_files.append(temp_full_audio)
                         subprocess.run([
                             "ffmpeg", "-y", "-i", str(temp_main),
-                            "-t", str(climax_clip_time),
-                            "-c:v", "copy", "-c:a", "copy",
-                            str(temp_pre_climax)
-                        ], check=True)
-                        print(f"B-Roll: Extracted pre-climax (0 to {climax_clip_time:.1f}s)")
-
-                        # 2. Extract speaker audio from climax to end of B-roll section
-                        subprocess.run([
-                            "ffmpeg", "-y", "-i", str(temp_main),
-                            "-ss", str(climax_clip_time),
-                            "-t", str(request.broll_duration),
                             "-vn", "-c:a", "aac",
-                            str(temp_climax_audio)
+                            "-t", f"{duration:.3f}",
+                            str(temp_full_audio)
                         ], check=True)
-                        print(f"B-Roll: Extracted speaker audio ({climax_clip_time:.1f}s to {climax_clip_time + request.broll_duration:.1f}s)")
 
-                        # 3. Add speaker audio to B-roll montage (video from B-roll, audio from speaker)
-                        subprocess.run([
-                            "ffmpeg", "-y",
-                            "-i", str(broll_montage_path),
-                            "-i", str(temp_climax_audio),
-                            "-c:v", "copy", "-c:a", "aac",
-                            "-shortest",
-                            str(temp_broll_with_audio)
-                        ], check=True)
-                        print(f"B-Roll: Combined B-roll video with speaker audio")
+                        # 2. Build video segments: [speaker] [broll flash] [speaker] ...
+                        video_segments = []
+                        current_time = 0.0
 
-                        # 4. Extract post-broll portion (if any remains before outro)
-                        post_broll_start = climax_clip_time + request.broll_duration
-                        post_broll_duration = duration - post_broll_start - 2  # Leave 2s for outro
-
-                        if post_broll_duration > 0.5:
+                        def extract_speaker_seg(start, end):
+                            """Extract a video-only segment from the speaker video (re-encode for exact timing)."""
+                            if end - start < 0.05:
+                                return
+                            seg_path = temp_dir / f"ic_spk_{len(video_segments):03d}_{uid}.mp4"
+                            cleanup_files.append(seg_path)
+                            # Re-encode for frame-accurate cuts (no keyframe alignment issues)
                             subprocess.run([
-                                "ffmpeg", "-y", "-i", str(temp_main),
-                                "-ss", str(post_broll_start),
-                                "-t", str(post_broll_duration),
-                                "-c:v", "copy", "-c:a", "copy",
-                                str(temp_post_broll)
+                                "ffmpeg", "-y",
+                                "-ss", f"{start:.3f}",
+                                "-i", str(temp_main),
+                                "-t", f"{end - start:.3f}",
+                                "-an",
+                                "-c:v", encoder_local, *gpu_opts_local,
+                                "-video_track_timescale", "15360",
+                                str(seg_path)
                             ], check=True)
-                            print(f"B-Roll: Extracted post-broll ({post_broll_start:.1f}s to {post_broll_start + post_broll_duration:.1f}s)")
+                            if seg_path.exists() and seg_path.stat().st_size > 500:
+                                video_segments.append(seg_path)
 
-                        # 5. Concatenate: pre-climax + B-roll + post-broll (if exists)
-                        # Debug: Check durations of files being concatenated
-                        pre_climax_dur = get_video_info(str(temp_pre_climax))["duration"]
-                        broll_audio_dur = get_video_info(str(temp_broll_with_audio))["duration"]
-                        print(f"DEBUG SPLICE: pre_climax={pre_climax_dur:.1f}s, broll_with_audio={broll_audio_dur:.1f}s")
+                        def extract_broll_flash(flash_dur, fallback_time=None):
+                            """Extract and process a short B-Roll flash clip.
+                            Returns True if successful, False if failed.
+                            If failed and fallback_time is provided, extracts speaker video instead."""
+                            nonlocal broll_index
+                            if broll_index >= len(request.broll_paths):
+                                if fallback_time is not None:
+                                    extract_speaker_seg(fallback_time, fallback_time + flash_dur)
+                                return False
+                            broll_clip = request.broll_paths[broll_index]
+                            broll_index += 1
+                            seg_path = temp_dir / f"ic_brl_{len(video_segments):03d}_{uid}.mp4"
+                            cleanup_files.append(seg_path)
 
-                        splice_list = temp_dir / f"splice_concat_{uid}.txt"
-                        cleanup_files.append(splice_list)
-                        with open(splice_list, "w") as f:
-                            f.write(f"file '{temp_pre_climax}'\n")
-                            f.write(f"file '{temp_broll_with_audio}'\n")
-                            if post_broll_duration > 0.5 and temp_post_broll.exists():
-                                f.write(f"file '{temp_post_broll}'\n")
+                            # Get source duration for random seek
+                            try:
+                                probe = subprocess.run([
+                                    "ffprobe", "-v", "error",
+                                    "-show_entries", "format=duration",
+                                    "-of", "default=noprint_wrappers=1:nokey=1", broll_clip
+                                ], capture_output=True, text=True)
+                                clip_dur = float(probe.stdout.strip()) if probe.stdout.strip() else 10.0
+                            except:
+                                clip_dur = 10.0
 
-                        subprocess.run([
-                            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                            "-i", str(splice_list),
-                            "-c:v", "copy", "-c:a", "aac",
-                            str(temp_spliced)
-                        ], check=True)
+                            # Random start for variety
+                            max_start = max(0, clip_dur - flash_dur - 0.3)
+                            rand_start = random.uniform(0, max_start) if max_start > 0 else 0
 
-                        # Replace temp_main with spliced version
-                        subprocess.run(["mv", str(temp_spliced), str(temp_main)], check=True)
-                        print(f"B-Roll: Montage spliced successfully at {climax_clip_time:.1f}s for {request.broll_duration:.1f}s")
+                            # Detect face position for centered crop
+                            face_x_offset = detect_face_crop_offset(broll_clip, seek_time=rand_start)
+                            # Build crop expression with face offset
+                            crop_x = f"(iw-1080)/2+{face_x_offset}" if face_x_offset != 0 else "(iw-1080)/2"
+
+                            result = subprocess.run([
+                                "ffmpeg", "-y",
+                                "-ss", f"{rand_start:.3f}",
+                                "-i", broll_clip,
+                                "-t", f"{flash_dur:.3f}",
+                                "-vf",
+                                f"fps=30,"
+                                f"scale=1080:1920:force_original_aspect_ratio=increase,"
+                                f"crop=1080:1920:{crop_x}:(ih-1920)/2,"
+                                f"{grade_filter},"
+                                f"noise=alls=15:allf=t+u",
+                                "-c:v", encoder_local, *gpu_opts_local,
+                                "-video_track_timescale", "15360",
+                                "-an",
+                                str(seg_path)
+                            ], capture_output=True, text=True)
+                            if seg_path.exists() and seg_path.stat().st_size > 500:
+                                video_segments.append(seg_path)
+                                return True
+                            else:
+                                # B-Roll failed - fill with speaker video to maintain sync
+                                if fallback_time is not None:
+                                    extract_speaker_seg(fallback_time, fallback_time + flash_dur)
+                                return False
+
+                        # === BUILD zone: flashes before climax ===
+                        for ip in build_points:
+                            t = ip['time']
+                            flash_dur = ip['duration']
+                            extract_speaker_seg(current_time, t)
+                            extract_broll_flash(flash_dur, fallback_time=t)
+                            current_time = t + flash_dur
+
+                        # === CLIMAX: speaker delivers the payoff (no B-Roll) ===
+                        if REACTION_DUR > 1.0 and broll_index < len(request.broll_paths):
+                            extract_speaker_seg(current_time, reaction_start)
+                            current_time = reaction_start
+
+                            # === REACTION burst: rapid B-Roll post-climax ===
+                            reaction_remaining = REACTION_DUR
+                            reaction_clips = 0
+                            while reaction_remaining > 0.2 and broll_index < len(request.broll_paths):
+                                cut_dur = min(REACTION_CUT, reaction_remaining)
+                                reaction_pos = reaction_start + (REACTION_DUR - reaction_remaining)
+                                extract_broll_flash(cut_dur, fallback_time=reaction_pos)
+                                reaction_remaining -= cut_dur
+                                reaction_clips += 1
+                            current_time = reaction_end
+                            print(f"B-Roll Intercut: Reaction burst = {reaction_clips} cuts ({REACTION_DUR:.1f}s)")
+                        else:
+                            # No reaction possible, just continue speaker
+                            pass
+
+                        # === TAIL zone: more flashes after reaction ===
+                        for ip in tail_points:
+                            t = ip['time']
+                            flash_dur = ip['duration']
+                            # Only process if we haven't passed this point
+                            if t > current_time + 0.5:
+                                extract_speaker_seg(current_time, t)
+                                extract_broll_flash(flash_dur, fallback_time=t)
+                                current_time = t + flash_dur
+
+                        # === Final speaker segment until end ===
+                        if current_time < duration - 0.2:
+                            extract_speaker_seg(current_time, duration)
+
+                        # 3. Concat all video segments (re-encode for consistent streams)
+                        if len(video_segments) >= 2:
+                            temp_intercut_video = temp_dir / f"intercut_video_{uid}.mp4"
+                            concat_list = temp_dir / f"intercut_list_{uid}.txt"
+                            cleanup_files.extend([temp_intercut_video, concat_list])
+
+                            with open(concat_list, "w") as f:
+                                for seg in video_segments:
+                                    f.write(f"file '{seg}'\n")
+
+                            subprocess.run([
+                                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                                "-i", str(concat_list),
+                                "-c:v", "copy",
+                                "-an",
+                                str(temp_intercut_video)
+                            ], check=True)
+
+                            # 4. Merge intercut video + continuous audio
+                            # Probe video duration to detect drift from segment re-encoding
+                            probe_vid = subprocess.run([
+                                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                "-of", "default=noprint_wrappers=1:nokey=1", str(temp_intercut_video)
+                            ], capture_output=True, text=True)
+                            intercut_vid_dur = float(probe_vid.stdout.strip()) if probe_vid.stdout.strip() else duration
+
+                            # Apply atempo correction if audio/video duration differ > 100ms
+                            audio_filter_args = []
+                            drift = abs(duration - intercut_vid_dur)
+                            if drift > 0.1 and intercut_vid_dur > 1.0:
+                                tempo = duration / intercut_vid_dur
+                                tempo = max(0.9, min(1.1, tempo))  # Clamp to ±10%
+                                audio_filter_args = ["-af", f"atempo={tempo:.6f}"]
+                                print(f"B-Roll Intercut: Audio tempo correction {tempo:.4f}x (drift={drift:.2f}s)")
+
+                            temp_merged = temp_dir / f"intercut_merged_{uid}.mp4"
+                            cleanup_files.append(temp_merged)
+                            merge_cmd = [
+                                "ffmpeg", "-y",
+                                "-i", str(temp_intercut_video),
+                                "-i", str(temp_full_audio),
+                                "-c:v", "copy", "-c:a", "aac",
+                                *audio_filter_args,
+                                "-shortest",
+                                str(temp_merged)
+                            ]
+                            subprocess.run(merge_cmd, check=True)
+
+                            # Replace temp_main
+                            subprocess.run(["mv", str(temp_merged), str(temp_main)], check=True)
+                            print(f"B-Roll Intercut: Done - {len(insertion_points)} flashes + reaction burst, speaker audio continuous")
+                        else:
+                            print(f"B-Roll Intercut: Not enough segments ({len(video_segments)}), skipping")
+
+                    else:
+                        print(f"B-Roll Intercut: No valid insertion points, skipping")
 
                 except Exception as e:
-                    print(f"WARNING: B-roll montage failed, continuing without: {e}")
+                    print(f"WARNING: B-roll intercut failed, continuing without: {e}")
+                    effect_failures.append("broll_intercut")
                     import traceback
                     traceback.print_exc()
             else:
@@ -3422,7 +4223,15 @@ def render_viral_clip(request: RenderClipRequest):
             cleanup_files.append(final_mix)
 
         info = get_video_info(str(output_path))
-        return {"success": True, "path": str(output_path), "filename": output_filename, "duration": info["duration"]}
+        if effect_failures:
+            print(f"[RenderComplete] {len(effect_failures)} effect(s) failed: {effect_failures}")
+        return {
+            "success": True,
+            "path": str(output_path),
+            "filename": output_filename,
+            "duration": info["duration"],
+            "effect_failures": effect_failures
+        }
 
     except Exception as e:
         import traceback
