@@ -424,10 +424,16 @@ class PexelsService:
             logger.info(f"Using AI-tagged metadata with {len(category_index_from_metadata)} categories")
 
         # STEP 1: Also scan for LOCAL CURATED clips by filename (fallback)
+        # Blacklist clips that don't fit well (e.g., firefighters - never contextually appropriate)
+        BLACKLISTED_PREFIXES = ["fire_firemen"]
+
         local_curated = {}  # category -> [list of paths]
         if self.BROLL_DIR.exists():
             for f in self.BROLL_DIR.glob("*.mp4"):
                 if f.name.startswith("pexels_"):
+                    continue
+                # Skip blacklisted clips
+                if any(f.name.lower().startswith(bl) for bl in BLACKLISTED_PREFIXES):
                     continue
                 parts = f.name.split("_")
                 if parts:

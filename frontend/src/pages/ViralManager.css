@@ -69,6 +69,34 @@
   color: #fff;
 }
 
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.panel-header button {
+  background: #007bff;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.panel-header button:hover {
+  background: #0056b3;
+}
+
+.panel-header button:disabled {
+  background: #555;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -341,6 +369,26 @@
 .status-badge.error {
   background: #dc3545;
   color: #fff;
+}
+
+.download-progress {
+  margin-top: 6px;
+  font-size: 0.85em;
+  color: #aaa;
+  font-family: monospace;
+}
+
+.download-progress .dl-size {
+  color: #4fc3f7;
+  font-weight: 600;
+}
+
+.download-progress .dl-speed {
+  color: #81c784;
+}
+
+.download-progress .dl-frags {
+  color: #888;
 }
 
 .error-text {
@@ -1159,4 +1207,27 @@
 }
 .save-btn:hover {
   background: #7c3aed;
+}
+
+/* Effect Failure Badge */
+.effect-failures {
+  margin: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.failure-badge {
+  background: #7f1d1d;
+  color: #fca5a5;
+  font-size: 0.75em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.failure-list {
+  color: #888;
+  font-size: 0.7em;
+  font-family: monospace;
 }

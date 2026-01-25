@@ -314,6 +314,11 @@ export const getVideoDetails = async (id) => {
   return data;
 };
 
+export const getDownloadProgress = async (id) => {
+  const { data } = await api.get(`/api/viral/videos/${id}/download-progress`);
+  return data;
+};
+
 export const analyzeVideo = async (id) => {
   const { data } = await api.post(`/api/viral/videos/${id}/analyze`);
   return data;

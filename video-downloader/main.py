@@ -4042,15 +4042,27 @@ def render_viral_clip(request: RenderClipRequest):
                             if seg_path.exists() and seg_path.stat().st_size > 500:
                                 video_segments.append(seg_path)
 
+                        def probe_segment_duration(seg_path):
+                            """Probe actual duration of an encoded segment."""
+                            try:
+                                p = subprocess.run([
+                                    "ffprobe", "-v", "error",
+                                    "-show_entries", "format=duration",
+                                    "-of", "default=noprint_wrappers=1:nokey=1", str(seg_path)
+                                ], capture_output=True, text=True)
+                                return float(p.stdout.strip()) if p.stdout.strip() else None
+                            except:
+                                return None
+
                         def extract_broll_flash(flash_dur, fallback_time=None):
                             """Extract and process a short B-Roll flash clip.
-                            Returns True if successful, False if failed.
+                            Returns actual encoded duration (float), or 0.0 if failed.
                             If failed and fallback_time is provided, extracts speaker video instead."""
                             nonlocal broll_index
                             if broll_index >= len(request.broll_paths):
                                 if fallback_time is not None:
                                     extract_speaker_seg(fallback_time, fallback_time + flash_dur)
-                                return False
+                                return flash_dur  # Speaker seg used, assume intended duration
                             broll_clip = request.broll_paths[broll_index]
                             broll_index += 1
                             seg_path = temp_dir / f"ic_brl_{len(video_segments):03d}_{uid}.mp4"
@@ -4094,20 +4106,21 @@ def render_viral_clip(request: RenderClipRequest):
                             ], capture_output=True, text=True)
                             if seg_path.exists() and seg_path.stat().st_size > 500:
                                 video_segments.append(seg_path)
-                                return True
+                                actual_dur = probe_segment_duration(seg_path)
+                                return actual_dur if actual_dur else flash_dur
                             else:
                                 # B-Roll failed - fill with speaker video to maintain sync
                                 if fallback_time is not None:
                                     extract_speaker_seg(fallback_time, fallback_time + flash_dur)
-                                return False
+                                return flash_dur  # Speaker seg used, assume intended duration
 
                         # === BUILD zone: flashes before climax ===
                         for ip in build_points:
                             t = ip['time']
                             flash_dur = ip['duration']
                             extract_speaker_seg(current_time, t)
-                            extract_broll_flash(flash_dur, fallback_time=t)
-                            current_time = t + flash_dur
+                            actual_dur = extract_broll_flash(flash_dur, fallback_time=t)
+                            current_time = t + actual_dur
 
                         # === CLIMAX: speaker delivers the payoff (no B-Roll) ===
                         if REACTION_DUR > 1.0 and broll_index < len(request.broll_paths):
@@ -4116,14 +4129,16 @@ def render_viral_clip(request: RenderClipRequest):
 
                             # === REACTION burst: rapid B-Roll post-climax ===
                             reaction_remaining = REACTION_DUR
+                            reaction_actual_total = 0.0
                             reaction_clips = 0
                             while reaction_remaining > 0.2 and broll_index < len(request.broll_paths):
                                 cut_dur = min(REACTION_CUT, reaction_remaining)
                                 reaction_pos = reaction_start + (REACTION_DUR - reaction_remaining)
-                                extract_broll_flash(cut_dur, fallback_time=reaction_pos)
+                                actual_dur = extract_broll_flash(cut_dur, fallback_time=reaction_pos)
                                 reaction_remaining -= cut_dur
+                                reaction_actual_total += actual_dur
                                 reaction_clips += 1
-                            current_time = reaction_end
+                            current_time = reaction_start + reaction_actual_total
                             print(f"B-Roll Intercut: Reaction burst = {reaction_clips} cuts ({REACTION_DUR:.1f}s)")
                         else:
                             # No reaction possible, just continue speaker
@@ -4136,8 +4151,8 @@ def render_viral_clip(request: RenderClipRequest):
                             # Only process if we haven't passed this point
                             if t > current_time + 0.5:
                                 extract_speaker_seg(current_time, t)
-                                extract_broll_flash(flash_dur, fallback_time=t)
-                                current_time = t + flash_dur
+                                actual_dur = extract_broll_flash(flash_dur, fallback_time=t)
+                                current_time = t + actual_dur
 
                         # === Final speaker segment until end ===
                         if current_time < duration - 0.2:
@@ -4169,14 +4184,16 @@ def render_viral_clip(request: RenderClipRequest):
                             ], capture_output=True, text=True)
                             intercut_vid_dur = float(probe_vid.stdout.strip()) if probe_vid.stdout.strip() else duration
 
-                            # Apply atempo correction if audio/video duration differ > 100ms
+                            # Safety net: trim audio to match video duration (no tempo stretch)
+                            # With actual-duration tracking, drift should be <100ms
                             audio_filter_args = []
                             drift = abs(duration - intercut_vid_dur)
-                            if drift > 0.1 and intercut_vid_dur > 1.0:
-                                tempo = duration / intercut_vid_dur
-                                tempo = max(0.9, min(1.1, tempo))  # Clamp to ±10%
-                                audio_filter_args = ["-af", f"atempo={tempo:.6f}"]
-                                print(f"B-Roll Intercut: Audio tempo correction {tempo:.4f}x (drift={drift:.2f}s)")
+                            if drift > 0.05:
+                                print(f"B-Roll Intercut: Audio/video drift={drift:.3f}s (video={intercut_vid_dur:.3f}s, audio={duration:.3f}s)")
+                                if drift > 1.0:
+                                    print(f"  WARNING: Large drift detected - possible segment encoding issue")
+                            # Use -shortest flag (already set) to trim audio to video length
+                            # No atempo needed - speaker segments fill gaps naturally
 
                             temp_merged = temp_dir / f"intercut_merged_{uid}.mp4"
                             cleanup_files.append(temp_merged)

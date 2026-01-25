@@ -3,7 +3,7 @@ import api, {
     getInfluencers, createInfluencer, fetchInfluencerVideos,
     analyzeVideo, getVideoDetails, getInfluencerVideos, getViralClips, API_URL,
     getBrollClips, uploadBrollFromYoutube, getBrollUploadStatus, retagBrollClips, deleteBrollClip,
-    getEffectsCatalog, updateClipEffects
+    getEffectsCatalog, updateClipEffects, getDownloadProgress
 } from '../api';
 import './ViralManager.css'; // We'll assume standard styling or create it
 
@@ -40,12 +40,37 @@ const ViralManager = () => {
     const [brollTagging, setBrollTagging] = useState(false);
     const [brollFilter, setBrollFilter] = useState('all');
 
+    // Download progress tracking
+    const [downloadProgress, setDownloadProgress] = useState({}); // { videoId: { bytes, speed, fragment } }
+
     useEffect(() => {
         loadInfluencers();
         loadClips();
         loadTemplates();
         loadBroll();
     }, []);
+
+    // Poll download progress for videos in "downloading" state
+    useEffect(() => {
+        const downloadingVideos = videos.filter(v => v.status?.toLowerCase() === 'downloading');
+        if (downloadingVideos.length === 0) return;
+
+        const pollProgress = async () => {
+            for (const v of downloadingVideos) {
+                try {
+                    const data = await getDownloadProgress(v.id);
+                    setDownloadProgress(prev => {
+                        const prevBytes = prev[v.id]?.bytes_downloaded || 0;
+                        const speed = prevBytes > 0 ? (data.bytes_downloaded - prevBytes) / 5 : 0; // bytes per second (5s interval)
+                        return { ...prev, [v.id]: { ...data, speed: speed > 0 ? speed : prev[v.id]?.speed || 0 } };
+                    });
+                } catch (e) { /* ignore */ }
+            }
+        };
+        pollProgress();
+        const interval = setInterval(pollProgress, 5000);
+        return () => clearInterval(interval);
+    }, [videos]);
 
     const loadClips = async () => {
         try {
@@ -537,6 +562,23 @@ const ViralManager = () => {
                                                                 </span>
                                                             </div>
                                                         )}
+                                                        {v.status?.toLowerCase() === 'downloading' && downloadProgress[v.id] && (
+                                                            <div className="download-progress">
+                                                                <span className="dl-size">
+                                                                    {(downloadProgress[v.id].bytes_downloaded / (1024*1024*1024)).toFixed(2)} GB
+                                                                </span>
+                                                                {downloadProgress[v.id].speed > 0 && (
+                                                                    <span className="dl-speed">
+                                                                        {' '}@ {(downloadProgress[v.id].speed / (1024*1024)).toFixed(1)} MB/s
+                                                                    </span>
+                                                                )}
+                                                                {downloadProgress[v.id].fragment_info && (
+                                                                    <span className="dl-frags">
+                                                                        {' '}(frag {downloadProgress[v.id].fragment_info.current}{downloadProgress[v.id].fragment_info.total ? `/${downloadProgress[v.id].fragment_info.total}` : ''})
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                         {v.status === 'error' && <p className="error-text" title={v.error_message}>{v.error_message}</p>}
 
                                                         <div className="actions-row">
@@ -558,72 +600,6 @@ const ViralManager = () => {
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="actions">
-                                                    {v.clips && v.clips.length > 0 && (
-                                                        <div className="clips-mini-list">
-                                                            <h5>Generated Clips ({v.clips.length})</h5>
-                                                            {v.clips.sort((a, b) => a.id - b.id).map(c => {
-                                                                const isReady = ['completed', 'ready'].includes(c.status?.toLowerCase());
-                                                                return (
-                                                                    <div key={c.id} className="clip-mini-item">
-                                                                        <div className="clip-info">
-                                                                            <span className="clip-type">{c.clip_type}</span>:
-                                                                            <span className="clip-title" title={c.title}>{c.title}</span>
-                                                                            <EffectBadges clip={c} compact={true} />
-                                                                            <TemplateSelector clip={c} compact={true} />
-                                                                        </div>
-                                                                        <div className="mini-actions">
-                                                                            <div className="status-display">
-                                                                                {(['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s))) && <span className="spinner-small"></span>}
-                                                                                <span className="status-text" title={c.status}>{c.status}</span>
-                                                                            </div>
-
-                                                                            {isReady && (
-                                                                                <>
-                                                                                    <button
-                                                                                        className="play-clip-btn"
-                                                                                        onClick={(e) => {
-                                                                                            e.stopPropagation();
-                                                                                            setViewingClip(c);
-                                                                                        }}
-                                                                                    >
-                                                                                        Play
-                                                                                    </button>
-                                                                                    <button
-                                                                                        className="render-btn-mini rerender-btn"
-                                                                                        disabled={renderingClips[c.id]}
-                                                                                        onClick={(e) => {
-                                                                                            e.stopPropagation();
-                                                                                            handleRender(c.id);
-                                                                                        }}
-                                                                                    >
-                                                                                        {renderingClips[c.id] ? '...' : 'Re-render'}
-                                                                                    </button>
-                                                                                </>
-                                                                            )}
-                                                                            {!isReady && !['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s)) && (
-                                                                                <div className="pending-actions">
-                                                                                    {(c.status === 'pending' || c.status === 'error' || c.status === 'failed') && (
-                                                                                        <button
-                                                                                            className={`render-btn-mini ${['error', 'failed'].includes(c.status) ? 'retry-btn' : ''}`}
-                                                                                            disabled={renderingClips[c.id]}
-                                                                                            onClick={(e) => {
-                                                                                                e.stopPropagation();
-                                                                                                handleRender(c.id);
-                                                                                            }}
-                                                                                        >
-                                                                                            {renderingClips[c.id] ? 'Starting...' : (['error', 'failed'].includes(c.status) ? 'Retry' : 'Render')}
-                                                                                        </button>
-                                                                                    )}
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                </div>
                                             </div>
                                         ))}
                                 </div>
@@ -636,7 +612,10 @@ const ViralManager = () => {
                 {
                     activeTab === 'clips' && (
                         <div className="clips-panel">
-                            <button onClick={loadClips}>Refresh Clips</button>
+                            <div className="panel-header">
+                                <h2>All Clips</h2>
+                                <button onClick={loadClips}>Refresh</button>
+                            </div>
                             <div className="card-grid">
                                 {[...clips]
                                     .sort((a, b) => {
@@ -672,6 +651,12 @@ const ViralManager = () => {
                                             </div>
                                             <p>Type: {c.clip_type}</p>
                                             <EffectBadges clip={c} />
+                                            {c.render_metadata?.effect_failures?.length > 0 && (
+                                                <div className="effect-failures" title={c.render_metadata.effect_failures.join(', ')}>
+                                                    <span className="failure-badge">⚠ {c.render_metadata.effect_failures.length} effect{c.render_metadata.effect_failures.length > 1 ? 's' : ''} failed</span>
+                                                    <span className="failure-list">{c.render_metadata.effect_failures.join(', ')}</span>
+                                                </div>
+                                            )}
                                             <TemplateSelector clip={c} />
                                             <div className="actions">
                                                 {canRender && (

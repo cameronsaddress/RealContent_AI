@@ -236,26 +236,52 @@ class ClipAnalyzerService(BaseService):
                 if recommended_template_id is not None:
                     recommended_template_id = int(recommended_template_id)
 
-                # Extract B-roll categories from Grok response
-                broll_categories = clip_data.get("broll_categories", ["war", "chaos", "power"])
-                # Validate categories
-                valid_categories = [
-                    "war", "money", "luxury", "gym", "relationships",
-                    "city", "crowd", "sports", "fashion", "cars",
-                    "faith", "chaos", "nature_power", "history",
-                    # Legacy aliases (mapped to new categories)
-                    "wealth", "strength", "nature", "people", "victory", "power"
+                # Extract hybrid B-roll insertions (new system)
+                broll_insertions = clip_data.get("broll_insertions", [])
+                valid_local_categories = [
+                    "warfare", "navy", "fighter_jets", "patriotic", "ww2",
+                    "cathedrals", "castles", "faith",
+                    "explosions", "nature_power", "storms", "lions", "eagles", "wolves",
+                    "money", "luxury", "cars", "gym", "city",
+                    "crowd", "sports", "boxing", "fashion",
+                    # Legacy aliases
+                    "war", "chaos", "history"
                 ]
-                # Map legacy category names to new ones
                 category_aliases = {
-                    "wealth": "money", "strength": "gym", "nature": "nature_power",
-                    "people": "crowd", "victory": "sports", "power": "war"
+                    "war": "warfare", "chaos": "explosions", "history": "ww2",
+                    "military": "warfare", "jets": "fighter_jets"
                 }
-                broll_categories = [category_aliases.get(c, c) for c in broll_categories if c in valid_categories]
-                # Deduplicate
-                broll_categories = list(dict.fromkeys(broll_categories))
-                if not broll_categories:
-                    broll_categories = ["war", "chaos", "money"]  # Default fallback
+                validated_insertions = []
+                local_categories_used = set()
+                for ins in broll_insertions:
+                    if not isinstance(ins, dict):
+                        continue
+                    source = ins.get("source", "")
+                    if source == "local":
+                        cat = ins.get("category", "")
+                        cat = category_aliases.get(cat, cat)
+                        if cat in valid_local_categories:
+                            validated_insertions.append({
+                                "time": float(ins.get("time", 0)),
+                                "source": "local",
+                                "category": cat,
+                                "visual": ins.get("visual", "")
+                            })
+                            local_categories_used.add(cat)
+                    elif source == "youtube":
+                        query = ins.get("query", "")
+                        if query and len(query) > 5:
+                            validated_insertions.append({
+                                "time": float(ins.get("time", 0)),
+                                "source": "youtube",
+                                "query": query,
+                                "visual": ins.get("visual", "")
+                            })
+                if validated_insertions:
+                    logger.info(f"B-roll insertions: {len(validated_insertions)} points ({len([i for i in validated_insertions if i['source']=='local'])} local, {len([i for i in validated_insertions if i['source']=='youtube'])} youtube)")
+
+                # Extract local categories for backwards compatibility
+                broll_categories = list(local_categories_used) if local_categories_used else []
 
                 # Extract and validate director effects from Grok
                 raw_effects = clip_data.get("effects", {})
@@ -303,6 +329,7 @@ class ClipAnalyzerService(BaseService):
                         "climax_time": climax_time,
                         "broll_enabled": True,
                         "broll_categories": broll_categories,
+                        "broll_insertions": validated_insertions,
                         "director_effects": director_effects,
                         "topic_broll": topic_broll if topic_broll else [],
                         "topic_broll_keywords": topic_broll_keywords if topic_broll_keywords else []
@@ -370,37 +397,62 @@ TEMPLATE SELECTION RULES:
 
 DO NOT default to Maximum Impact for everything - use the variety of templates based on content."""
 
-        # B-roll categories available for visual montage
-        broll_categories = [
-            "war", "money", "luxury", "gym", "relationships",
-            "city", "crowd", "sports", "fashion", "cars",
-            "faith", "chaos", "nature_power", "history"
-        ]
-        broll_category_descriptions = """
-AVAILABLE B-ROLL CATEGORIES (choose 2-4 that MATCH what the speaker is SAYING):
-- money: cash counting, stock trading, wolf of wall street vibes, hustle motivation
-- luxury: supercars, mansions, private jets, watches, dubai lifestyle
-- gym: weightlifting, bodybuilding, intense workouts, gains
-- relationships: dating podcasts, couples arguing, red pill moments
-- city: urban nightlife, city skylines, neon lights, nightlife aesthetic
-- crowd: rallies, stadium crowds, concerts, protests, masses of people
-- sports: UFC knockouts, boxing, football hits, basketball dunks, competition
-- fashion: runway shows, streetwear, designer fits, drip
-- cars: supercars revving, car meets, drifting, exhaust flames, racing
-- war: military combat, soldiers, weapons, tanks, battlefield footage
-- faith: churches, cathedrals, crosses, religious imagery, prayer
-- chaos: fire, explosions, destruction, riots, disorder
-- nature_power: volcanoes, tsunamis, tornadoes, lightning, avalanches
-- history: archival footage, WW2, documentary clips, historical events
+        # Local thematic B-Roll categories (for abstract/emotional content)
+        local_broll_descriptions = """
+=== LOCAL THEMATIC B-ROLL (for ABSTRACT/EMOTIONAL content) ===
+Use these when the speaker discusses THEMES, IDEAS, or EMOTIONS - NOT specific events.
 
-IMPORTANT: Match the B-roll to what is being SAID, not generic "hype" imagery.
-- Speaker talks about money/success → use "money" or "luxury"
-- Speaker talks about women/dating → use "relationships"
-- Speaker talks about fighting/conflict → use "sports" or "war"
-- Speaker talks about discipline/grind → use "gym"
-- Speaker talks about power/politics → use "crowd" or "war"
-- Speaker talks about lifestyle/flex → use "luxury" or "cars"
-- Speaker references current events → use closest matching category"""
+MILITARY/PATRIOTIC (use when speaker invokes American power, strength, or pride):
+- "warfare": US military power, soldiers, tanks, battlefield, Air Force jets
+- "navy": aircraft carriers, naval power, battleships
+- "fighter_jets": F-16s, stealth bombers, aerial dominance
+- "patriotic": American flags, monuments, patriotic imagery, unity
+- "ww2": historical military footage, D-Day, archive footage
+
+FAITH/WESTERN CIVILIZATION (use when speaker discusses Christianity, tradition, or Western values):
+- "cathedrals": Gothic cathedrals, church interiors, stained glass, sacred architecture
+- "castles": Medieval castles, European heritage, fortresses
+- "faith": crosses, religious imagery, prayer, churches
+
+CHAOS/POWER (use when speaker discusses destruction, chaos, or overwhelming force):
+- "explosions": nuclear tests, massive explosions, destruction
+- "nature_power": volcanoes, tsunamis, tornadoes, lightning strikes, avalanches
+- "storms": thunderstorms, lightning, dramatic weather
+- "lions": lion footage (for "lions don't concern themselves..." metaphors)
+- "eagles": eagle footage (for American symbolism)
+- "wolves": wolf pack footage (for predator/pack metaphors)
+
+LIFESTYLE/SUCCESS (use when speaker discusses hustle, wealth, or winning):
+- "money": cash counting, stock trading, Wolf of Wall Street vibes
+- "luxury": supercars, mansions, private jets, billionaire lifestyle
+- "cars": supercars, lamborghinis, car meets, exhaust flames
+- "gym": weightlifting, bodybuilding, Sam Sulek/CBum clips
+- "city": NYC skyline, Dubai at night, Tokyo neon, urban power
+
+CROWD/ENERGY (use when speaker discusses movements, unity, or mass energy):
+- "crowd": rallies, stadium celebrations, concert crowds, protests
+- "sports": UFC knockouts, boxing highlights, competitive intensity
+
+=== WHEN TO USE LOCAL B-ROLL ===
+✓ "America is the greatest nation" → warfare, patriotic, fighter_jets
+✓ "We need to project strength" → warfare, navy, military power
+✓ "Western civilization is under attack" → cathedrals, castles, faith
+✓ "God will judge them" / "Christ is King" → cathedrals, faith
+✓ "The world is descending into chaos" → explosions, nature_power
+✓ "Grind until you win" → gym, money, luxury
+✓ "Lions don't care about sheep" → lions
+✓ "This is spiritual warfare" → faith, cathedrals
+
+=== WHEN TO USE YOUTUBE (NOT local) ===
+✗ "The ICE shooting in Newark..." → YouTube: search for actual bodycam footage
+✗ "Did you see what Trump said at Iowa?" → YouTube: search for rally footage
+✗ "AOC just said on the House floor..." → YouTube: search for C-SPAN clip
+✗ "This court case in Texas..." → YouTube: search for courtroom footage
+✗ Any SPECIFIC event with VIDEO EVIDENCE → YouTube
+
+The rule is simple:
+- ABSTRACT THEMES (power, faith, chaos, success) → LOCAL thematic footage
+- SPECIFIC EVENTS (news, incidents, speeches) → YOUTUBE actual footage"""
 
         return f"""
 {system_instructions}
@@ -432,15 +484,32 @@ For EACH clip you MUST identify:
    - For a 45s clip, place climax around 18-27 seconds in (leaves 15-25s for epic B-roll montage before outro)
    - Provide the ABSOLUTE timestamp (relative to original video, not relative to clip start)
 
-3. B-ROLL CATEGORIES (EMOTIONAL ACCENT ONLY): Choose 1-2 categories for HIGH-IMPACT emotional moments.
-   These local clips are ONLY used as rare accent cuts (1 per every 5-6 topic clips).
-   ONLY select if the speech FEELS: patriotic, warlike, powerful, triumphant, or explosive.
-   If the speech is about a SPECIFIC event/person/situation, do NOT use these categories -
-   the topic B-roll (YouTube footage) will cover the visual content instead.
-   Leave "broll_categories" EMPTY [] if the clip is purely about a specific recent event.
-{broll_category_descriptions}
+3. B-ROLL INSERTIONS (HYBRID - LOCAL + YOUTUBE): Plan 5-10 B-Roll insertion points throughout the clip.
+   For EACH insertion, decide whether to use LOCAL thematic footage or YOUTUBE event footage.
 
-5. TOPIC B-ROLL (REQUIRED - PRIMARY B-ROLL SOURCE): Identify the MAIN TOPIC the speaker is discussing.
+{local_broll_descriptions}
+
+   For each insertion, specify:
+   - "time": seconds into the clip (relative to clip START, not video start)
+   - "source": "local" or "youtube"
+   - For "local": include "category" (e.g., "warfare", "cathedrals", "money")
+   - For "youtube": include "query" (specific search query for that moment)
+   - "visual": brief description of what should be shown
+
+   Example broll_insertions for a clip about American military response to an attack:
+   [
+     {{"time": 5, "source": "youtube", "query": "terror attack news footage 2025", "visual": "News coverage of the attack"}},
+     {{"time": 12, "source": "local", "category": "warfare", "visual": "US military jets scrambling"}},
+     {{"time": 18, "source": "local", "category": "navy", "visual": "Aircraft carrier launching fighters"}},
+     {{"time": 24, "source": "youtube", "query": "Pentagon press conference response", "visual": "Military officials responding"}},
+     {{"time": 30, "source": "local", "category": "patriotic", "visual": "American flag, unity imagery"}}
+   ]
+
+   IMPORTANT: Mix sources naturally based on what the speaker is saying at each moment.
+   When they reference a SPECIFIC EVENT → YouTube
+   When they speak about THEMES/VALUES/EMOTIONS → Local
+
+4. TOPIC B-ROLL QUERIES (for YouTube video discovery): Provide 1-3 search queries to find relevant YouTube videos.
    IMPORTANT: Read the transcript BEFORE the clip start time to understand the FULL CONTEXT.
    The speaker often introduces a topic 30-60 seconds before the clip's most viral moment.
    Use that preceding context to understand WHAT SPECIFIC EVENT, PERSON, or SITUATION
@@ -523,7 +592,6 @@ Return ONLY valid JSON in this format:
       "end": 55.2,
       "climax_time": 30.0,
       "template_id": 2,
-      "broll_categories": ["sports", "crowd", "money"],
       "type": "antagonistic",
       "title": "TOP G DESTROYS DEBATE OPPONENT",
       "reason": "High conflict moment, very engaging",
@@ -533,6 +601,13 @@ Return ONLY valid JSON in this format:
           {{"word": "DESTROYED", "start": 20.5, "end": 21.0}},
           {{"word": "LIAR", "start": 25.2, "end": 25.8}},
           {{"word": "WAR", "start": 30.0, "end": 30.3}}
+      ],
+      "broll_insertions": [
+          {{"time": 5, "source": "youtube", "query": "Trump Iowa rally footage 2025", "visual": "Rally crowd footage"}},
+          {{"time": 12, "source": "local", "category": "crowd", "visual": "Stadium crowd energy"}},
+          {{"time": 20, "source": "youtube", "query": "Trump Iowa rally footage 2025", "visual": "Trump on stage"}},
+          {{"time": 28, "source": "local", "category": "patriotic", "visual": "American flags waving"}},
+          {{"time": 35, "source": "local", "category": "warfare", "visual": "Military power imagery"}}
       ],
       "topic_broll": ["Trump Iowa rally footage crowd 2025", "Trump rally live stream full"],
       "topic_broll_keywords": ["Trump", "rally", "Iowa", "crowd", "supporters", "speech"],

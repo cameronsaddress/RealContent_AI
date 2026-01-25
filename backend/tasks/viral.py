@@ -512,9 +512,9 @@ def merge_director_effects(template_settings: dict, director_effects: dict) -> d
 # 3. Grok picks exact timestamps from each YouTube video
 # 4. Return seek_times for precise clip extraction
 
-EMOTIONAL_BROLL_CATEGORIES = {"crowd", "nature_power", "sports", "gym", "cars"}
-# Local B-Roll is ONLY used for these emotion-matching categories.
-# All other B-Roll is YouTube topic clips from current events.
+
+# B-Roll is ONLY sourced from fresh YouTube/Rumble downloads matching the clip's spoken content.
+# No local stock footage is used.
 
 async def _select_broll_timestamps(
     speaker_context: str,
@@ -872,50 +872,135 @@ async def _render_clip_async(clip_id: int):
                 has_topic_broll = bool(render_meta.get("topic_broll"))
 
                 if has_topic_broll:
-                    # Event-specific clip: skip local B-Roll entirely.
-                    # Topic B-Roll (YouTube) will be fetched below.
-                    # Local clips (jets, war, explosions) are NOT relevant for specific events.
-                    logger.info(f"Skipping local B-roll fetch - clip has topic_broll queries (event-specific)")
+                    logger.info(f"Clip has topic_broll queries - will use fresh YouTube footage only")
                     broll_paths = []
                 else:
-                    # General/emotional clip: use local B-Roll categories
-                    logger.info(f"Fetching local B-roll for climax montage: climax at {climax_relative:.1f}s, duration {broll_duration:.1f}s")
-                    try:
-                        from services.pexels import PexelsService, DEFAULT_BROLL_CATEGORIES
-                        pexels = PexelsService()
-
-                        clips_needed = int(broll_duration * 2) + 5
-
-                        categories = DEFAULT_BROLL_CATEGORIES
-                        if render_meta.get("broll_categories"):
-                            categories = render_meta["broll_categories"]
-                            logger.info(f"Using Grok-selected B-roll categories: {categories}")
-                        elif template and template.broll_categories:
-                            categories = template.broll_categories
-                            logger.info(f"Using template B-roll categories: {categories}")
-
-                        broll_paths = pexels.get_broll_clips(
-                            categories=categories,
-                            count=clips_needed
-                        )
-
-                        broll_paths = [p.replace("/app/assets/broll/", "/broll/") for p in broll_paths]
-                        logger.info(f"Fetched {len(broll_paths)} local B-roll clips for climax montage")
-                    except Exception as e:
-                        logger.error(f"Failed to fetch B-roll: {e}")
-                        broll_paths = []
+                    # No topic_broll queries - skip B-Roll entirely rather than use inaccurate stock footage
+                    logger.info(f"No topic_broll queries for this clip - skipping B-Roll (no stock footage)")
+                    broll_paths = []
+                    broll_duration = 0
             else:
                 logger.info(f"B-roll duration too short ({broll_duration:.1f}s < 3s), skipping montage")
                 broll_duration = 0
 
-        # --- TOPIC B-ROLL (TWO-PASS): Grok picks exact timestamps from YouTube ---
-        # Pass 1: Fetch YouTube transcripts for topic_broll queries
-        # Pass 2: Grok reviews transcripts + speaker context, picks exact timestamps
-        # Topic clips are PRIMARY (95%+), local clips only for emotional beats
+        # --- HYBRID B-ROLL SYSTEM: Mix local thematic + YouTube event footage ---
+        # New system: broll_insertions specifies source per insertion point
+        # Fallback: topic_broll queries for older clips without broll_insertions
         render_meta = clip.render_metadata or {}
+        broll_insertions = render_meta.get("broll_insertions", [])
         topic_broll_queries = render_meta.get("topic_broll", [])
         topic_broll_keywords = render_meta.get("topic_broll_keywords", [])
-        if topic_broll_queries:
+
+        # --- NEW HYBRID SYSTEM: Process broll_insertions if available ---
+        if broll_insertions:
+            logger.info(f"Hybrid B-roll: {len(broll_insertions)} insertion points specified")
+            hybrid_paths = []
+
+            # Group YouTube queries for batch processing
+            youtube_insertions = [i for i in broll_insertions if i.get("source") == "youtube"]
+            local_insertions = [i for i in broll_insertions if i.get("source") == "local"]
+            logger.info(f"Hybrid B-roll: {len(youtube_insertions)} YouTube + {len(local_insertions)} local insertions")
+
+            # Collect unique YouTube queries
+            unique_queries = list(dict.fromkeys([i.get("query", "") for i in youtube_insertions if i.get("query")]))
+
+            # Build speaker context for YouTube selection
+            speaker_lines = []
+            for seg in clip_segments:
+                speaker_lines.append(f"[{seg['start']:.1f}s] {seg.get('text', '')}")
+            speaker_context = "\n".join(speaker_lines)
+
+            # Fetch YouTube clips via two-pass selection
+            youtube_clip_map = {}  # query -> list of clip paths
+            if unique_queries:
+                broll_selections = await _select_broll_timestamps(
+                    speaker_context=speaker_context,
+                    topic_queries=unique_queries,
+                    clip_id=clip.id,
+                    video_pub_date=video_pub_date_str,
+                )
+                for sel in broll_selections or []:
+                    try:
+                        query = sel.get("query", "")
+                        clip_index = len(youtube_clip_map.get(query, []))
+                        resp = httpx.post(
+                            f"{VIDEO_PROCESSOR_URL}/download-event-broll",
+                            json={
+                                "query": query,
+                                "clip_id": clip.id,
+                                "index": len(hybrid_paths) + clip_index,
+                                "keywords": [],
+                                "seek_time": sel.get("seek_time", 0),
+                                "video_pub_date": video_pub_date_str,
+                            },
+                            timeout=180.0
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            clip_path = data.get("clip_path")
+                            if clip_path:
+                                if query not in youtube_clip_map:
+                                    youtube_clip_map[query] = []
+                                youtube_clip_map[query].append(clip_path)
+                                logger.info(f"Hybrid B-roll: YouTube clip -> {clip_path}")
+                    except Exception as e:
+                        logger.warning(f"Hybrid B-roll: YouTube fetch failed: {e}")
+
+            # Fetch local clips by category (blacklist firefighters)
+            local_clip_map = {}  # category -> list of clip paths
+            BLACKLISTED_PREFIXES = ["fire_firemen"]  # Remove firefighter footage
+
+            if local_insertions:
+                from services.pexels import PexelsService
+                pexels = PexelsService()
+                unique_categories = list(dict.fromkeys([i.get("category", "") for i in local_insertions if i.get("category")]))
+
+                for category in unique_categories:
+                    try:
+                        # Get multiple clips for this category (may need several)
+                        needed = sum(1 for i in local_insertions if i.get("category") == category)
+                        clips = pexels.get_broll_clips(categories=[category], count=needed + 2)
+                        # Filter out blacklisted clips and convert paths
+                        filtered_clips = []
+                        for p in clips:
+                            p = p.replace("/app/assets/broll/", "/broll/")
+                            # Skip blacklisted prefixes (e.g., firefighters)
+                            basename = os.path.basename(p).lower()
+                            if not any(basename.startswith(bl) for bl in BLACKLISTED_PREFIXES):
+                                filtered_clips.append(p)
+                        local_clip_map[category] = filtered_clips
+                        logger.info(f"Hybrid B-roll: {len(filtered_clips)} local clips for '{category}'")
+                    except Exception as e:
+                        logger.warning(f"Hybrid B-roll: Local fetch for '{category}' failed: {e}")
+                        local_clip_map[category] = []
+
+            # Build final broll_paths in insertion order
+            youtube_usage = {q: 0 for q in youtube_clip_map}
+            local_usage = {c: 0 for c in local_clip_map}
+
+            for ins in sorted(broll_insertions, key=lambda x: x.get("time", 0)):
+                source = ins.get("source", "")
+                if source == "youtube":
+                    query = ins.get("query", "")
+                    if query in youtube_clip_map and youtube_usage[query] < len(youtube_clip_map[query]):
+                        hybrid_paths.append(youtube_clip_map[query][youtube_usage[query]])
+                        youtube_usage[query] += 1
+                elif source == "local":
+                    category = ins.get("category", "")
+                    if category in local_clip_map and local_usage[category] < len(local_clip_map[category]):
+                        hybrid_paths.append(local_clip_map[category][local_usage[category]])
+                        local_usage[category] += 1
+
+            if hybrid_paths:
+                broll_paths = hybrid_paths
+                logger.info(f"Hybrid B-roll: Final {len(broll_paths)} clips ({sum(1 for p in broll_paths if '/event_' in p)} YouTube, {sum(1 for p in broll_paths if '/event_' not in p)} local)")
+            else:
+                logger.warning("Hybrid B-roll: No clips obtained")
+                broll_paths = []
+                broll_duration = 0
+
+        # --- LEGACY FALLBACK: topic_broll queries (for older clips without broll_insertions) ---
+        elif topic_broll_queries:
             logger.info(f"Topic B-roll (two-pass): {len(topic_broll_queries)} queries: {topic_broll_queries}")
 
             # Build speaker context from clip transcript (what Nick is saying)
@@ -1007,39 +1092,13 @@ async def _render_clip_async(clip_id: int):
                             logger.warning(f"Topic B-roll fallback failed for '{query}': {e}")
                             break
 
-            # MIXING LOGIC: Topic clips are PRIMARY.
-            # Local B-Roll only for emotional categories (patriotic, war, power, crowd energy)
+            # Use ONLY fresh topic clips from YouTube - no local stock footage
             if topic_clips:
-                broll_categories = render_meta.get("broll_categories", [])
-                emotional_local = [p for p in broll_paths
-                                   if any(cat in os.path.basename(p).lower() for cat in EMOTIONAL_BROLL_CATEGORIES)]
-                non_emotional_local = [p for p in broll_paths if p not in emotional_local]
-
-                if emotional_local:
-                    # Sprinkle emotional local clips (1 every 5-6 topic clips for accent)
-                    combined = []
-                    emotional_iter = iter(emotional_local)
-                    topic_idx = 0
-                    for t_clip in topic_clips:
-                        combined.append(t_clip)
-                        topic_idx += 1
-                        if topic_idx % 5 == 0:
-                            e_clip = next(emotional_iter, None)
-                            if e_clip:
-                                combined.append(e_clip)
-                    # Add remaining emotional clips at end
-                    combined.extend(list(emotional_iter))
-                    broll_paths = combined
-                    logger.info(f"Topic B-roll: {len(topic_clips)} topic + {len(emotional_local)} emotional local = {len(broll_paths)} total (dropped {len(non_emotional_local)} generic)")
-                else:
-                    # No emotional local clips - use topic clips only
-                    broll_paths = topic_clips
-                    logger.info(f"Topic B-roll: {len(topic_clips)} topic clips (no emotional local)")
+                broll_paths = topic_clips
+                logger.info(f"Topic B-roll: Using {len(topic_clips)} fresh YouTube clips (no stock footage)")
             else:
-                # Topic-specific clip but no topic clips obtained.
-                # Do NOT use local B-Roll (jets, war footage, etc.) for event-specific clips.
-                # Better to show no B-Roll than irrelevant military footage.
-                logger.warning("Topic B-roll: No topic clips obtained - clearing local B-roll (event-specific clip)")
+                # No topic clips obtained - skip B-Roll entirely
+                logger.warning("Topic B-roll: No clips obtained from YouTube - no B-Roll for this clip")
                 broll_paths = []
                 broll_duration = 0
 
