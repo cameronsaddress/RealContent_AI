@@ -501,6 +501,10 @@ def merge_director_effects(template_settings: dict, director_effects: dict) -> d
         if isinstance(segs, list):
             merged["pixel_sort_segments"] = segs[:3]
 
+    # BGM mood (dark, triumphant, aggressive, melancholic, hype)
+    if director_effects.get("bgm_mood"):
+        merged["bgm_mood"] = director_effects["bgm_mood"]
+
     logger.info(f"Merged effects: template={list(template_settings.keys()) if template_settings else []}, "
                 f"director={list(director_effects.keys())}, result keys={list(merged.keys())}")
     return merged
@@ -1125,6 +1129,23 @@ async def _render_clip_async(clip_id: int):
         caption_style = effect_settings.get("caption_style", "standard")
         broll_transition_type = effect_settings.get("transition")
 
+        # Extract cold open hook data from render_metadata
+        hook_phrase = render_meta.get("hook_phrase")
+        hook_timestamp = render_meta.get("hook_timestamp")
+        visual_hook_time = render_meta.get("visual_hook_time")
+
+        # Extract emotional arc data for dynamic intensity ramp
+        setup_end = render_meta.get("setup_end")
+        escalation_peak = render_meta.get("escalation_peak")
+        quotable_line = render_meta.get("quotable_line")
+
+        # Extract dramatic pauses for effect hold
+        key_pauses = render_meta.get("key_pauses", [])
+
+        # Extract caption pacing data
+        rapid_fire_sections = render_meta.get("rapid_fire_sections", [])
+        question_moments = render_meta.get("question_moments", [])
+
         async with httpx.AsyncClient(timeout=3600.0) as client:  # 60min for extraction + per-clip transcription
             payload = {
                 "video_path": video.local_path,
@@ -1147,6 +1168,23 @@ async def _render_clip_async(clip_id: int):
                 # Grok director: per-clip effect overrides
                 "caption_style": caption_style,
                 "broll_transition_type": broll_transition_type,
+                # Cold open hook for retention optimization
+                "hook_phrase": hook_phrase,
+                "hook_timestamp": hook_timestamp,
+                "visual_hook_time": visual_hook_time,
+                "hook_enabled": True,  # Enable by default, can be controlled via template
+                # Emotional arc for dynamic intensity ramp
+                "setup_end": setup_end,
+                "escalation_peak": escalation_peak,
+                "quotable_line": quotable_line,
+                # Dramatic pauses for effect hold
+                "key_pauses": key_pauses,
+                # Title card at start
+                "title_card_text": clip.title,
+                "title_card_enabled": False,  # Disabled by default, can be enabled via template
+                # Caption pacing
+                "rapid_fire_sections": rapid_fire_sections,
+                "question_moments": question_moments,
             }
             
             response = await client.post(

@@ -132,15 +132,18 @@ CATEGORY_WEIGHTS = {
     "boxing": 3,
     "rockets": 2,
     "mountains": 2,
-    "wolves": 2,
-    "eagles": 2,
-    "lions": 2,
-    "sharks": 2,
-    "bulls": 2,
 
     # Racing - moderate now (weight 2)
     "racing": 2,
 }
+
+# Blacklisted B-roll prefixes - these never fit contextually
+BLACKLISTED_PREFIXES = [
+    "fire_firemen",  # Firefighters - never fits
+    # Animals - too generic, don't match content themes
+    "eagles", "wolves", "lions", "sharks", "bulls", "predators",
+    "snakes", "animals", "wildlife",
+]
 
 # Per-category limits - max clips per montage
 # Prevents over-representation of certain content types
@@ -162,6 +165,55 @@ class PexelsService:
     def __init__(self):
         self.api_key = settings.PEXELS_API_KEY
         self.BROLL_DIR.mkdir(parents=True, exist_ok=True)
+        self._used_clips_path = self.BROLL_DIR / "used_clips.json"
+
+    def _load_used_clips(self) -> dict:
+        """Load the used clips tracking state per category."""
+        if self._used_clips_path.exists():
+            try:
+                with open(self._used_clips_path, "r") as f:
+                    return json.load(f)
+            except:
+                pass
+        return {}  # category -> [list of used filenames]
+
+    def _save_used_clips(self, used: dict):
+        """Save the used clips tracking state."""
+        try:
+            with open(self._used_clips_path, "w") as f:
+                json.dump(used, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save used clips state: {e}")
+
+    def _mark_clip_used(self, clip_path: str, category: str):
+        """Mark a clip as used for a category. Resets when category exhausted."""
+        used = self._load_used_clips()
+        filename = Path(clip_path).name
+        if category not in used:
+            used[category] = []
+        if filename not in used[category]:
+            used[category].append(filename)
+        self._save_used_clips(used)
+
+    def _get_unused_clips(self, available: list, category: str) -> list:
+        """
+        Filter to unused clips for this category.
+        If all clips exhausted, reset tracking and return all.
+        """
+        used = self._load_used_clips()
+        used_in_cat = set(used.get(category, []))
+
+        # Filter to unused
+        unused = [p for p in available if Path(p).name not in used_in_cat]
+
+        if not unused and available:
+            # Category exhausted - reset and return all
+            logger.info(f"B-roll category '{category}' exhausted ({len(used_in_cat)} clips), resetting")
+            used[category] = []
+            self._save_used_clips(used)
+            return available
+
+        return unused if unused else available
 
     def search_videos(
         self,
@@ -424,9 +476,7 @@ class PexelsService:
             logger.info(f"Using AI-tagged metadata with {len(category_index_from_metadata)} categories")
 
         # STEP 1: Also scan for LOCAL CURATED clips by filename (fallback)
-        # Blacklist clips that don't fit well (e.g., firefighters - never contextually appropriate)
-        BLACKLISTED_PREFIXES = ["fire_firemen"]
-
+        # Use module-level blacklist for clips that never fit contextually
         local_curated = {}  # category -> [list of paths]
         if self.BROLL_DIR.exists():
             for f in self.BROLL_DIR.glob("*.mp4"):
@@ -466,11 +516,14 @@ class PexelsService:
                     ]
                     # Filter by category limits
                     available = [p for p in available if self._check_category_limits(p, category_counts, metadata)]
+                    # Prefer unused clips, reset when exhausted
+                    available = self._get_unused_clips(available, category)
 
                     if available:
                         clip_path = random.choice(available)
                         if Path(clip_path).exists():
                             paths.append(clip_path)
+                            self._mark_clip_used(clip_path, category)
                             self._update_category_counts(clip_path, category_counts, metadata)
                             clip_caption = metadata["clips"].get(Path(clip_path).name, {}).get("caption", "")
                             caption_preview = clip_caption[:60] if clip_caption else "no caption"
@@ -504,10 +557,13 @@ class PexelsService:
                         available = [p for p in local_curated[prefix] if p not in paths]
                         # Filter by category limits
                         available = [p for p in available if self._check_category_limits(p, category_counts, metadata)]
+                        # Prefer unused clips, reset when exhausted
+                        available = self._get_unused_clips(available, prefix)
 
                         if available:
                             clip_path = random.choice(available)
                             paths.append(clip_path)
+                            self._mark_clip_used(clip_path, prefix)
                             self._update_category_counts(clip_path, category_counts, metadata)
                             logger.info(f"Using filename-matched B-roll for '{category}' (prefix: {prefix}): {Path(clip_path).name}")
                             break
@@ -518,10 +574,13 @@ class PexelsService:
                             available = [p for p in fallback_clips if p not in paths]
                             # Filter by category limits
                             available = [p for p in available if self._check_category_limits(p, category_counts, metadata)]
+                            # Prefer unused clips, reset when exhausted
+                            available = self._get_unused_clips(available, fallback_cat)
 
                             if available:
                                 clip_path = random.choice(available)
                                 paths.append(clip_path)
+                                self._mark_clip_used(clip_path, fallback_cat)
                                 self._update_category_counts(clip_path, category_counts, metadata)
                                 logger.info(f"Using fallback B-roll (from '{fallback_cat}'): {Path(clip_path).name}")
                                 break

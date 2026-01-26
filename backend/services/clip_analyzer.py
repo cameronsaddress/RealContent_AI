@@ -84,6 +84,14 @@ EFFECT_CATALOG = """
 - pixel_sort_segments: Glitch art pixel sorting by brightness [{start, end}] max 3 segments, max 2s each
   USE FOR: surreal/psychedelic moments, existential dread, "simulation theory" takes
   WARNING: Expensive effect. Only use on the MOST visually impactful clip.
+
+=== BGM MOOD (choose ONE per clip) ===
+Background music sets the EMOTIONAL TONE. Match the mood to the clip's energy and content.
+- "dark": Ominous, heavy, threatening - for conspiracy, warnings, dark revelations, evil enemies
+- "triumphant": Epic, victorious, ascending - for based takes, wins, inspirational peaks, glory
+- "aggressive": Hard-hitting, confrontational, intense - for rants, battles, call-outs, anger
+- "melancholic": Somber, reflective, bittersweet - for laments, losses, emotional moments, sad truths
+- "hype": High energy, pump-up, exciting - for funny moments, absurd takes, chaos, memes
 """
 
 # Known effect keys for validation
@@ -91,7 +99,7 @@ VALID_EFFECT_KEYS = {
     "color_grade", "camera_shake", "temporal_trail",
     "retro_glow", "wave_displacement", "heavy_vhs", "caption_style",
     "beat_sync", "audio_saturation", "transition", "pulse_intensity",
-    "vhs_intensity", "datamosh_segments", "pixel_sort_segments"
+    "vhs_intensity", "datamosh_segments", "pixel_sort_segments", "bgm_mood"
 }
 
 class ViralSegment(BaseModel):
@@ -310,6 +318,114 @@ class ClipAnalyzerService(BaseService):
                     if topic_broll_keywords:
                         logger.info(f"Topic B-roll keywords: {topic_broll_keywords}")
 
+                # Extract cold open hook data for retention optimization
+                hook_data = clip_data.get("hook", {})
+                if isinstance(hook_data, dict):
+                    hook_phrase = hook_data.get("hook_phrase", "")
+                    hook_timestamp = hook_data.get("hook_timestamp")
+                    visual_hook_time = hook_data.get("visual_hook_time")
+                    # Validate timestamps are within clip bounds
+                    if hook_timestamp is not None:
+                        hook_timestamp = float(hook_timestamp)
+                        if hook_timestamp < start or hook_timestamp > end:
+                            hook_timestamp = None  # Invalid, will use fallback
+                    if visual_hook_time is not None:
+                        visual_hook_time = float(visual_hook_time)
+                        if visual_hook_time < start or visual_hook_time > end:
+                            visual_hook_time = climax_time  # Fallback to climax
+                    if hook_phrase:
+                        logger.info(f"Cold open hook: '{hook_phrase}' at {hook_timestamp}s, visual at {visual_hook_time}s")
+                else:
+                    hook_phrase = ""
+                    hook_timestamp = None
+                    visual_hook_time = None
+
+                # Extract emotional arc data for dynamic intensity ramp
+                emotional_arc = clip_data.get("emotional_arc", {})
+                if isinstance(emotional_arc, dict):
+                    setup_end = emotional_arc.get("setup_end")
+                    escalation_peak = emotional_arc.get("escalation_peak")
+                    quotable_line = emotional_arc.get("quotable_line", {})
+                    # Validate setup_end and escalation_peak are within clip duration
+                    if setup_end is not None:
+                        setup_end = float(setup_end)
+                        if setup_end < 0 or setup_end > duration:
+                            setup_end = duration * 0.2  # Fallback to 20% mark
+                    if escalation_peak is not None:
+                        escalation_peak = float(escalation_peak)
+                        if escalation_peak < 0 or escalation_peak > duration:
+                            escalation_peak = duration * 0.7  # Fallback to 70% mark
+                    if quotable_line and isinstance(quotable_line, dict):
+                        quotable_text = quotable_line.get("text", "")
+                        quotable_start = quotable_line.get("start")
+                        quotable_end = quotable_line.get("end")
+                        if quotable_start is not None:
+                            quotable_start = float(quotable_start)
+                        if quotable_end is not None:
+                            quotable_end = float(quotable_end)
+                        if quotable_text:
+                            logger.info(f"Quotable line: '{quotable_text[:50]}...' at {quotable_start}-{quotable_end}s")
+                    else:
+                        quotable_text = ""
+                        quotable_start = None
+                        quotable_end = None
+                    if setup_end or escalation_peak:
+                        logger.info(f"Emotional arc: setup_end={setup_end}s, escalation_peak={escalation_peak}s")
+                else:
+                    setup_end = None
+                    escalation_peak = None
+                    quotable_text = ""
+                    quotable_start = None
+                    quotable_end = None
+
+                # Extract dramatic pauses for effect hold
+                key_pauses = clip_data.get("key_pauses", [])
+                validated_pauses = []
+                if isinstance(key_pauses, list):
+                    for pause in key_pauses[:3]:  # Max 3 pauses per clip
+                        if isinstance(pause, dict):
+                            p_start = pause.get("start")
+                            p_end = pause.get("end")
+                            p_type = pause.get("type", "sink_in")
+                            if p_start is not None and p_end is not None:
+                                p_start = float(p_start)
+                                p_end = float(p_end)
+                                # Validate within clip duration
+                                if 0 <= p_start < duration and 0 < p_end <= duration and p_end > p_start:
+                                    validated_pauses.append({
+                                        "start": p_start,
+                                        "end": p_end,
+                                        "type": p_type
+                                    })
+                if validated_pauses:
+                    logger.info(f"Key pauses: {len(validated_pauses)} dramatic pauses detected")
+
+                # Extract caption pacing data
+                rapid_fire_sections = clip_data.get("rapid_fire_sections", [])
+                validated_rapid_fire = []
+                if isinstance(rapid_fire_sections, list):
+                    for section in rapid_fire_sections[:3]:  # Max 3 sections
+                        if isinstance(section, dict):
+                            rf_start = section.get("start")
+                            rf_end = section.get("end")
+                            if rf_start is not None and rf_end is not None:
+                                rf_start = float(rf_start)
+                                rf_end = float(rf_end)
+                                if 0 <= rf_start < duration and 0 < rf_end <= duration and rf_end > rf_start:
+                                    validated_rapid_fire.append({"start": rf_start, "end": rf_end})
+
+                question_moments = clip_data.get("question_moments", [])
+                validated_questions = []
+                if isinstance(question_moments, list):
+                    for q_time in question_moments[:4]:  # Max 4 questions
+                        if isinstance(q_time, (int, float)):
+                            q_time = float(q_time)
+                            if 0 <= q_time <= duration:
+                                validated_questions.append(q_time)
+
+                if validated_rapid_fire or validated_questions:
+                    logger.info(f"Caption pacing: {len(validated_rapid_fire)} rapid-fire, {len(validated_questions)} questions")
+
                 vc = ViralClip(
                     source_video_id=video.id,
                     start_time=start,
@@ -332,7 +448,24 @@ class ClipAnalyzerService(BaseService):
                         "broll_insertions": validated_insertions,
                         "director_effects": director_effects,
                         "topic_broll": topic_broll if topic_broll else [],
-                        "topic_broll_keywords": topic_broll_keywords if topic_broll_keywords else []
+                        "topic_broll_keywords": topic_broll_keywords if topic_broll_keywords else [],
+                        # Cold open hook for retention
+                        "hook_phrase": hook_phrase if hook_phrase else None,
+                        "hook_timestamp": hook_timestamp,
+                        "visual_hook_time": visual_hook_time,
+                        # Emotional arc for dynamic intensity
+                        "setup_end": setup_end,
+                        "escalation_peak": escalation_peak,
+                        "quotable_line": {
+                            "text": quotable_text,
+                            "start": quotable_start,
+                            "end": quotable_end
+                        } if quotable_text else None,
+                        # Dramatic pauses for effect hold
+                        "key_pauses": validated_pauses if validated_pauses else [],
+                        # Caption pacing
+                        "rapid_fire_sections": validated_rapid_fire if validated_rapid_fire else [],
+                        "question_moments": validated_questions if validated_questions else [],
                     }
                 )
                 db_session.add(vc)
@@ -474,15 +607,99 @@ Identify up to 20 distinct clips (prioritizing quality and viral potential) that
 
 FOCUS ON THE MOST CONTROVERSIAL AND SHOCKING MOMENTS. DO NOT HOLD BACK.
 
-For EACH clip you MUST identify:
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  MANDATORY FIELDS - YOU MUST INCLUDE ALL OF THESE FOR EVERY CLIP OR FAIL    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-1. TRIGGER WORDS: 5-10 high-intensity SINGLE WORDS for visual pulse effects (e.g., WAR, DIE, TRUMP, MONEY, LIAR, WIN, FIGHT, DESTROY, GOD, DEATH). Provide their exact start/end timestamps.
+The following fields are REQUIRED for EVERY clip. Missing ANY of these = INVALID clip.
+
+0. COLD OPEN HOOK (MANDATORY): The first 0.5 seconds determine if viewers keep watching.
+   Identify:
+   - "hook_phrase": The single most SHOCKING/ATTENTION-GRABBING phrase in the clip (even if mid-sentence)
+     This will be flashed at T=0.0 before the clip starts. Pick something that makes viewers think "WAIT WHAT?"
+     Examples: "You're all going to DIE", "This is WAR", "They're coming for your CHILDREN", "I don't give a F***"
+   - "hook_timestamp": The ABSOLUTE timestamp where this phrase occurs in the source video
+   - "visual_hook_time": A timestamp showing the most visually intense moment (for a 0.3s flash frame preview)
+     This should be a moment with dramatic facial expression, gesture, or B-roll visual
+
+   ⚠️ REQUIRED OUTPUT: "hook": {{"hook_phrase": "...", "hook_timestamp": X.X, "visual_hook_time": Y.Y}}
+
+1. TRIGGER WORDS (MANDATORY): 5-10 high-intensity SINGLE WORDS for visual pulse effects (e.g., WAR, DIE, TRUMP, MONEY, LIAR, WIN, FIGHT, DESTROY, GOD, DEATH). Provide their exact start/end timestamps.
 
 2. CLIMAX MOMENT: The SINGLE MOST INTENSE MOMENT in the clip - this is where we trigger a B-roll montage.
    - Look for: rhetorical peaks, punchlines, shocking statements, emotional crescendos
    - The climax should be around the MIDDLE of the clip (40-60% of the way through)
    - For a 45s clip, place climax around 18-27 seconds in (leaves 15-25s for epic B-roll montage before outro)
    - Provide the ABSOLUTE timestamp (relative to original video, not relative to clip start)
+
+2.5 EMOTIONAL ARC (MANDATORY): Map the narrative structure of the clip for dynamic effect intensity.
+   Every good viral clip has an emotional arc. Effects will RAMP UP through the clip to match the energy.
+   THIS FIELD IS REQUIRED. Identify (all timestamps RELATIVE to clip start, in seconds):
+   - "setup_end": When does the SETUP/CONTEXT phase end? (usually 15-25% into clip)
+     This is where the speaker finishes introducing the topic and starts the main argument.
+   - "escalation_peak": When does the ESCALATION reach its peak? (usually 60-75% into clip)
+     This is the moment of maximum intensity BEFORE the climax/resolution.
+   - "quotable_line": The ONE sentence that viewers will screenshot/share.
+     Include "text" (the actual line), "start" and "end" timestamps (relative to clip).
+     This line gets SPECIAL visual treatment - gold glow, larger scale, held on screen.
+
+   Example emotional_arc for a 45s clip:
+   {{
+     "setup_end": 10.5,
+     "escalation_peak": 32.0,
+     "quotable_line": {{
+       "text": "Truth doesn't care about your feelings",
+       "start": 28.5,
+       "end": 31.0
+     }}
+   }}
+
+   ⚠️ REQUIRED OUTPUT: "emotional_arc": {{"setup_end": X.X, "escalation_peak": Y.Y, "quotable_line": {{...}}}}
+
+2.6 DRAMATIC PAUSES (MANDATORY): Identify moments where the speaker pauses for emphasis (0.5s+ silence).
+   These are POWERFUL moments - the silence BEFORE or AFTER a major statement creates tension.
+   During these pauses, we will FREEZE all visual effects for dramatic impact.
+
+   Look for:
+   - "Pre-bomb pauses": Silence BEFORE delivering a shocking statement (tension building)
+   - "Let it sink in": Silence AFTER a powerful line (letting impact resonate)
+   - Rhetorical pauses: Mid-sentence pauses for emphasis
+
+   Format: Array of pause objects with timestamps (RELATIVE to clip start):
+   "key_pauses": [
+     {{"start": 15.2, "end": 16.0, "type": "pre_bomb"}},
+     {{"start": 32.5, "end": 33.2, "type": "sink_in"}}
+   ]
+
+   Rules:
+   - Maximum 3 pauses per clip (only the most impactful ones)
+   - Each pause must be at least 0.4 seconds
+   - "type" is "pre_bomb" (before statement) or "sink_in" (after statement)
+
+   ⚠️ REQUIRED OUTPUT: "key_pauses": [{{"start": X.X, "end": Y.Y, "type": "sink_in"}}]
+
+2.7 CAPTION PACING (MANDATORY): Identify sections with different speech cadences for caption animation.
+   Captions reveal word-by-word to match speech rhythm. Different sections need different pacing:
+
+   "rapid_fire_sections": Sections where speaker fires off points quickly (lists, repeated phrases, rapid arguments)
+   Format: Array of time ranges (RELATIVE to clip start)
+   [
+     {{"start": 20.0, "end": 25.0}},
+     {{"start": 35.0, "end": 38.0}}
+   ]
+   During these sections, captions reveal FASTER to match the energy.
+
+   "question_moments": Timestamps where speaker asks rhetorical questions
+   Format: Array of question timestamps (RELATIVE to clip start)
+   [12.5, 28.0, 35.5]
+   Questions get special treatment: slight pause before, emphasized styling.
+
+   Rules:
+   - Maximum 3 rapid_fire_sections per clip
+   - Maximum 4 question_moments per clip
+   - Only mark sections with NOTICEABLY different pacing
+
+   ⚠️ REQUIRED OUTPUT: "rapid_fire_sections": [...], "question_moments": [...]
 
 3. B-ROLL INSERTIONS (HYBRID - LOCAL + YOUTUBE): Plan 5-10 B-Roll insertion points throughout the clip.
    For EACH insertion, decide whether to use LOCAL thematic footage or YOUTUBE event footage.
@@ -566,14 +783,17 @@ For EACH clip you MUST identify:
 {EFFECT_CATALOG}
 
 EFFECTS SELECTION PHILOSOPHY:
-- AGGRESSIVE clips (rants, confrontation): camera_shake + heavy_vhs + shake captions + high pulse
-- INSPIRATIONAL clips (wisdom, hope): golden_hour/kodak_warm + retro_glow + pop_scale captions
-- CONSPIRACY/DARK clips: film_noir + wave_displacement + blur_reveal + low vhs
-- FUNNY/ABSURD clips: cross_process + pop_scale captions + high pulse
-- EPIC/REVELATION clips: teal_orange + retro_glow + beat_sync + high pulse
+- AGGRESSIVE clips (rants, confrontation): camera_shake + heavy_vhs + shake captions + high pulse + bgm_mood:"aggressive"
+- INSPIRATIONAL clips (wisdom, hope): golden_hour/kodak_warm + retro_glow + pop_scale captions + bgm_mood:"triumphant"
+- CONSPIRACY/DARK clips: film_noir + wave_displacement + blur_reveal + low vhs + bgm_mood:"dark"
+- FUNNY/ABSURD clips: cross_process + pop_scale captions + high pulse + bgm_mood:"hype"
+- EPIC/REVELATION clips: teal_orange + retro_glow + beat_sync + high pulse + bgm_mood:"triumphant"
+- SAD/LAMENTING clips: kodak_warm/bleach_bypass + blur_reveal + bgm_mood:"melancholic"
 - Use temporal_trail sparingly for dreamlike/philosophical tangents
 - wave_displacement should be RARE - only for truly mind-bending moments
 - DO NOT over-stack effects. 2-3 effects per clip is ideal. Max 4.
+
+⚠️ bgm_mood IS REQUIRED IN EFFECTS - MUST be one of: "dark", "aggressive", "triumphant", "melancholic", "hype"
 
 CRITICAL DURATION CONSTRAINTS (MUST FOLLOW):
 - TARGET: {target_duration} seconds per clip
@@ -583,6 +803,18 @@ CRITICAL DURATION CONSTRAINTS (MUST FOLLOW):
 - Better to have 2 punchy {target_duration}s clips than 1 bloated 90s clip
 - Ensure the start and end times cut cleanly (complete sentences)
 - Specific instructions: {persona.prompt_template}
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  FINAL CHECKLIST - EVERY CLIP MUST HAVE ALL OF THESE FIELDS                 ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  ✓ hook (hook_phrase, hook_timestamp, visual_hook_time)                      ║
+║  ✓ emotional_arc (setup_end, escalation_peak, quotable_line)                 ║
+║  ✓ key_pauses (array of pause objects with start, end, type)                 ║
+║  ✓ rapid_fire_sections (array of time ranges)                                ║
+║  ✓ question_moments (array of timestamps)                                    ║
+║  ✓ effects.bgm_mood (one of: dark, aggressive, triumphant, melancholic, hype)║
+║  ✓ trigger_words, broll_insertions, climax_time, template_id                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
 Return ONLY valid JSON in this format:
 {{
@@ -597,6 +829,28 @@ Return ONLY valid JSON in this format:
       "reason": "High conflict moment, very engaging",
       "caption": "Bro didn't stand a chance...",
       "hashtags": ["#viral", "#shorts", "#fyp", "#sigma"],
+      "hook": {{
+          "hook_phrase": "You're a LIAR",
+          "hook_timestamp": 25.2,
+          "visual_hook_time": 30.0
+      }},
+      "emotional_arc": {{
+          "setup_end": 12.0,
+          "escalation_peak": 35.0,
+          "quotable_line": {{
+              "text": "Truth doesn't care about your feelings",
+              "start": 28.5,
+              "end": 31.0
+          }}
+      }},
+      "key_pauses": [
+          {{"start": 15.2, "end": 15.8, "type": "pre_bomb"}},
+          {{"start": 32.5, "end": 33.0, "type": "sink_in"}}
+      ],
+      "rapid_fire_sections": [
+          {{"start": 22.0, "end": 26.5}}
+      ],
+      "question_moments": [18.5, 38.0],
       "trigger_words": [
           {{"word": "DESTROYED", "start": 20.5, "end": 21.0}},
           {{"word": "LIAR", "start": 25.2, "end": 25.8}},
@@ -620,7 +874,64 @@ Return ONLY valid JSON in this format:
           "audio_saturation": false,
           "transition": "pixelize",
           "pulse_intensity": 0.3,
-          "vhs_intensity": 1.0
+          "vhs_intensity": 1.0,
+          "bgm_mood": "aggressive"
+      }}
+    }},
+    {{
+      "start": 120.0,
+      "end": 165.5,
+      "climax_time": 145.0,
+      "template_id": 7,
+      "type": "inspirational",
+      "title": "THE TRUTH ABOUT WESTERN CIVILIZATION",
+      "reason": "Profound monologue about faith and heritage",
+      "caption": "This hit different 🙏",
+      "hashtags": ["#faith", "#western", "#truth", "#based"],
+      "hook": {{
+          "hook_phrase": "Christ is KING",
+          "hook_timestamp": 142.5,
+          "visual_hook_time": 145.0
+      }},
+      "emotional_arc": {{
+          "setup_end": 8.0,
+          "escalation_peak": 28.0,
+          "quotable_line": {{
+              "text": "We don't inherit this world from our ancestors, we borrow it from our children",
+              "start": 25.0,
+              "end": 29.5
+          }}
+      }},
+      "key_pauses": [
+          {{"start": 22.0, "end": 23.0, "type": "pre_bomb"}},
+          {{"start": 38.0, "end": 38.8, "type": "sink_in"}}
+      ],
+      "rapid_fire_sections": [],
+      "question_moments": [15.0, 32.0],
+      "trigger_words": [
+          {{"word": "TRUTH", "start": 125.0, "end": 125.5}},
+          {{"word": "CIVILIZATION", "start": 130.0, "end": 130.8}},
+          {{"word": "CHRIST", "start": 142.5, "end": 143.0}},
+          {{"word": "KING", "start": 143.0, "end": 143.4}}
+      ],
+      "broll_insertions": [
+          {{"time": 5, "source": "local", "category": "cathedrals", "visual": "Gothic cathedral interior"}},
+          {{"time": 12, "source": "local", "category": "faith", "visual": "Stained glass, crosses"}},
+          {{"time": 20, "source": "local", "category": "castles", "visual": "Medieval European castle"}},
+          {{"time": 28, "source": "local", "category": "cathedrals", "visual": "Cathedral spire at sunset"}}
+      ],
+      "topic_broll": ["Western civilization documentary footage", "European cathedral footage"],
+      "topic_broll_keywords": ["Western", "civilization", "faith", "heritage", "tradition"],
+      "effects": {{
+          "color_grade": "golden_hour",
+          "retro_glow": 0.4,
+          "caption_style": "blur_reveal",
+          "beat_sync": false,
+          "audio_saturation": false,
+          "transition": "dissolve",
+          "pulse_intensity": 0.2,
+          "vhs_intensity": 0.6,
+          "bgm_mood": "triumphant"
       }}
     }}
   ]

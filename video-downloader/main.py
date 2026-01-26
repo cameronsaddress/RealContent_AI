@@ -50,6 +50,65 @@ MUSIC_DIR = Path("/music")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+
+def select_music_by_mood(mood: str = None) -> Path:
+    """
+    Select background music based on mood from mood_mapping.json.
+
+    Args:
+        mood: One of "dark", "triumphant", "aggressive", "melancholic", "hype"
+              If None or invalid, selects randomly from all tracks.
+
+    Returns:
+        Path to selected music file, or None if no music available.
+    """
+    if not MUSIC_DIR.exists():
+        return None
+
+    mood_mapping_path = MUSIC_DIR / "mood_mapping.json"
+
+    # Load mood mapping if it exists
+    mood_tracks = {}
+    if mood_mapping_path.exists():
+        try:
+            with open(mood_mapping_path, 'r', encoding='utf-8') as f:
+                mapping = json.load(f)
+                mood_tracks = mapping.get("moods", {})
+        except Exception as e:
+            print(f"[BGM] Warning: Could not load mood_mapping.json: {e}")
+
+    # Get all available music files
+    all_music = list(MUSIC_DIR.glob("*.mp3")) + list(MUSIC_DIR.glob("*.wav"))
+    if not all_music:
+        return None
+
+    # If we have a valid mood and tracks for it, select from that mood
+    if mood and mood in mood_tracks:
+        mood_info = mood_tracks[mood]
+        track_names = mood_info.get("tracks", [])
+
+        # Find files that match the mood tracks
+        mood_files = []
+        for track_name in track_names:
+            track_path = MUSIC_DIR / track_name
+            if track_path.exists():
+                mood_files.append(track_path)
+
+        if mood_files:
+            selected = random.choice(mood_files)
+            print(f"[BGM] Selected '{mood}' mood track: {selected.name}")
+            return selected
+        else:
+            print(f"[BGM] No available tracks for mood '{mood}', falling back to random")
+    elif mood:
+        print(f"[BGM] Unknown mood '{mood}', falling back to random")
+
+    # Fallback: random selection from all music
+    selected = random.choice(all_music)
+    print(f"[BGM] Selected random track: {selected.name}")
+    return selected
+
+
 # Trigger words for pulse/glitch effects - HARSH words only
 # Curse words, negative connotation, destruction, violence
 HARSH_TRIGGER_WORDS = [
@@ -762,6 +821,25 @@ class RenderClipRequest(BaseModel):
     # === NEW: Grok Director effect fields ===
     caption_style: str = "standard"  # "standard"|"pop_scale"|"shake"|"blur_reveal"
     broll_transition_type: Optional[str] = None  # "pixelize"|"radial"|"dissolve"|"slideleft"
+    # === Cold Open Hook (retention optimization) ===
+    hook_phrase: Optional[str] = None  # Text to flash at T=0 (e.g., "You're a LIAR")
+    hook_timestamp: Optional[float] = None  # Absolute timestamp of hook phrase in source
+    visual_hook_time: Optional[float] = None  # Timestamp for flash frame preview
+    hook_enabled: bool = True  # Enable/disable cold open hook
+    # === Emotional Arc (dynamic intensity) ===
+    setup_end: Optional[float] = None  # Seconds into clip where setup ends (relative to clip start)
+    escalation_peak: Optional[float] = None  # Seconds into clip where escalation peaks
+    quotable_line: Optional[dict] = None  # {"text": str, "start": float, "end": float} for special treatment
+    # === BGM Mood Matching ===
+    bgm_mood: Optional[str] = None  # "dark"|"triumphant"|"aggressive"|"melancholic"|"hype"
+    # === Dramatic Pauses ===
+    key_pauses: Optional[List[dict]] = []  # [{"start": float, "end": float, "type": str}]
+    # === Title Card ===
+    title_card_text: Optional[str] = None  # Title text to show at start (e.g., "TOP G DESTROYS OPPONENT")
+    title_card_enabled: bool = False  # Enable/disable title card overlay
+    # === Caption Pacing ===
+    rapid_fire_sections: Optional[List[dict]] = []  # [{"start": float, "end": float}] - faster caption reveal
+    question_moments: Optional[List[float]] = []  # [float] - timestamps of rhetorical questions
 
 def report_status(webhook_url: str, status: str):
     if not webhook_url: return
@@ -855,6 +933,7 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
             if any(phrase in error_msg for phrase in [
                 "cannot reshape tensor",
                 "size of tensor",
+                "stack expects",
                 "expected size for",
                 "dimensions of batch",
                 "key.size",
@@ -1062,6 +1141,31 @@ def get_video_info(path: str) -> dict:
     }
 
 
+def probe_av_durations(path: str, label: str = "") -> tuple:
+    """
+    Probe both audio and video stream durations separately for sync debugging.
+    Returns (video_dur, audio_dur, drift).
+    """
+    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", path]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  SYNC DEBUG [{label}]: ffprobe failed")
+        return (0, 0, 0)
+
+    data = json.loads(result.stdout)
+    video_dur = 0
+    audio_dur = 0
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video":
+            video_dur = float(stream.get("duration", 0))
+        elif stream.get("codec_type") == "audio":
+            audio_dur = float(stream.get("duration", 0))
+
+    drift = video_dur - audio_dur
+    print(f"  SYNC DEBUG [{label}]: video={video_dur:.3f}s, audio={audio_dur:.3f}s, drift={drift:.3f}s")
+    return (video_dur, audio_dur, drift)
+
+
 def detect_audio_volume(path: str, max_duration: float = 60) -> dict:
     """
     Detect audio volume levels using FFmpeg's volumedetect filter.
@@ -1200,11 +1304,12 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
     processed = clip.transform(rgb_shift_effect)
 
     # Write output with GPU encoding if available
+    # Preserve original fps to avoid audio/video sync drift
     processed.write_videofile(
         output_path,
         codec='libx264',  # Use CPU codec for reliability
         preset='ultrafast',
-        fps=30,  # Force consistent 30fps to match B-roll segments
+        fps=clip.fps,  # Preserve original fps to avoid audio drift
         audio_codec='aac',
         logger=None  # Suppress progress bar
     )
@@ -1291,11 +1396,12 @@ def apply_datamosh_effect(video_path: str, output_path: str, segments: list, dur
 
         processed = clip.transform(datamosh_frame)
 
+        # Preserve original fps to avoid audio/video sync drift
         processed.write_videofile(
             output_path,
             codec='libx264',
             preset='ultrafast',
-            fps=30,
+            fps=clip.fps,  # Preserve original fps
             audio_codec='aac',
             logger=None
         )
@@ -1404,11 +1510,12 @@ def apply_pixel_sort_effect(video_path: str, output_path: str, segments: list, d
 
         processed = clip.transform(pixel_sort_frame)
 
+        # Preserve original fps to avoid audio/video sync drift
         processed.write_videofile(
             output_path,
             codec='libx264',
             preset='ultrafast',
-            fps=30,
+            fps=clip.fps,  # Preserve original fps
             audio_codec='aac',
             logger=None
         )
@@ -1939,6 +2046,254 @@ def generate_broll_montage(
         return None
 
 
+def generate_cold_open_hook(
+    source_video: str,
+    visual_hook_time: float,
+    output_path: Path,
+    hook_phrase: str = None,
+    hook_duration: float = 0.4,
+    start_time: float = 0,
+    font: str = "Impact"
+) -> bool:
+    """
+    Generate a cold open hook clip - a quick flash frame to grab attention in first 0.3s.
+
+    Args:
+        source_video: Path to the source video
+        visual_hook_time: Absolute timestamp in source for the hook frame
+        output_path: Where to save the hook clip
+        hook_phrase: Optional text to overlay (e.g., "You're a LIAR")
+        hook_duration: Duration of the hook clip (default 0.4s)
+        start_time: Clip start time (for relative timestamp calculation)
+        font: Font to use for text overlay
+
+    Returns:
+        True if successful, False otherwise
+    """
+    temp_dir = Path("/tmp")
+    uid = uuid.uuid4().hex[:8]
+    temp_frame = temp_dir / f"hook_frame_{uid}.png"
+
+    try:
+        print(f"[ColdOpen] Generating hook at t={visual_hook_time}s, phrase='{hook_phrase or 'none'}'")
+
+        # 1. Extract the hook frame from source video
+        extract_cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(visual_hook_time),
+            "-i", source_video,
+            "-vframes", "1",
+            "-q:v", "2",
+            str(temp_frame)
+        ]
+        result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=10)
+
+        if not temp_frame.exists():
+            print(f"[ColdOpen] Failed to extract frame: {result.stderr[:200] if result.stderr else 'no output'}")
+            return False
+
+        # 2. Build filter complex for hook video:
+        #    - Scale to 1080x1920
+        #    - Add zoom punch (1.0 -> 1.15 over duration)
+        #    - Add RGB split flash effect
+        #    - Add brightness flash (white flash at start)
+        #    - Optional: text overlay
+
+        filters = []
+
+        # Base: scale + crop to 9:16
+        filters.append("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920")
+
+        # Zoom punch: start zoomed in, zoom out slightly for impact
+        # This creates a "punch in" effect
+        filters.append(f"zoompan=z='1.15-0.15*on/({hook_duration}*30)':d={int(hook_duration*30)}:s=1080x1920:fps=30")
+
+        # RGB split glitch effect (subtle)
+        filters.append("split=3[r][g][b]")
+        filters.append("[r]lutrgb=g=0:b=0,crop=1080:1920:8:0[r1]")
+        filters.append("[g]lutrgb=r=0:b=0[g1]")
+        filters.append("[b]lutrgb=r=0:g=0,crop=1080:1920:-8:0[b1]")
+        filters.append("[r1][g1]blend=all_mode=screen[rg]")
+        filters.append("[rg][b1]blend=all_mode=screen")
+
+        # Brightness flash at start (fade from white)
+        filters.append(f"fade=t=in:st=0:d=0.15:color=white")
+
+        # High contrast + saturation boost
+        filters.append("eq=contrast=1.3:saturation=1.4:brightness=0.05")
+
+        filter_str = ",".join(filters[:3])  # Just scale, zoompan, and fade for now (simpler)
+
+        # Actually, let's simplify - zoompan from image is complex
+        # Just use a simple approach: create video from image with effects
+
+        # Simplified filter: scale, add motion, RGB shift, brightness flash
+        simple_filter = (
+            f"loop=loop={int(hook_duration*30)}:size=1:start=0,"
+            f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+            f"zoompan=z='1.12-0.12*(on/{int(hook_duration*30)})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(hook_duration*30)}:s=1080x1920:fps=30,"
+            f"fade=t=in:st=0:d=0.12:color=white,"
+            f"eq=contrast=1.25:saturation=1.3:brightness=0.03"
+        )
+
+        # Add text overlay if hook_phrase is provided
+        if hook_phrase and len(hook_phrase) > 0:
+            # Sanitize text for FFmpeg
+            safe_text = hook_phrase.upper().replace("'", "'\\''").replace(":", "\\:")
+            # Large bold text, center screen, with shadow/outline
+            text_filter = (
+                f",drawtext=text='{safe_text}':"
+                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"fontsize=90:fontcolor=white:borderw=4:bordercolor=black:"
+                f"shadowx=3:shadowy=3:shadowcolor=black@0.7:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2+100"
+            )
+            simple_filter += text_filter
+
+        # 3. Generate the hook video
+        # Note: Input order matters - image first, then audio generator
+        hook_cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-i", str(temp_frame),  # Image input (looped)
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",  # Silent audio input
+            "-t", str(hook_duration),
+            "-vf", simple_filter,
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+            "-c:a", "aac", "-b:a", "128k",
+            "-map", "0:v", "-map", "1:a",  # Map video from input 0, audio from input 1
+            "-shortest",
+            str(output_path)
+        ]
+
+        result = subprocess.run(hook_cmd, capture_output=True, text=True, timeout=30)
+
+        # Cleanup temp frame
+        if temp_frame.exists():
+            temp_frame.unlink()
+
+        if output_path.exists() and output_path.stat().st_size > 1000:
+            print(f"[ColdOpen] Generated hook clip: {output_path} ({output_path.stat().st_size // 1024}KB)")
+            return True
+        else:
+            print(f"[ColdOpen] Hook generation failed: {result.stderr[-300:] if result.stderr else 'no output'}")
+            return False
+
+    except Exception as e:
+        print(f"[ColdOpen] Error generating hook: {e}")
+        if temp_frame.exists():
+            temp_frame.unlink()
+        return False
+
+
+def generate_title_card(
+    title_text: str,
+    output_path: Path,
+    duration: float = 0.8,
+    font: str = "Impact"
+) -> bool:
+    """
+    Generate a title card overlay clip - shows the clip title at start.
+
+    Args:
+        title_text: The title to display (e.g., "TOP G DESTROYS OPPONENT")
+        output_path: Where to save the title card clip
+        duration: Duration of the title card (default 0.8s)
+        font: Font to use for text
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        print(f"[TitleCard] Generating title card: '{title_text[:40]}...' ({duration}s)")
+
+        # Sanitize title for FFmpeg (escape special characters)
+        safe_title = title_text.upper()
+        safe_title = safe_title.replace("'", "'\\''").replace(":", "\\:").replace('"', '\\"')
+
+        # Limit title length and wrap if needed
+        if len(safe_title) > 40:
+            # Split into two lines at word boundary
+            words = safe_title.split()
+            line1 = ""
+            line2 = ""
+            for word in words:
+                if len(line1) + len(word) < 22:
+                    line1 += word + " "
+                else:
+                    line2 += word + " "
+            safe_title = line1.strip()
+            safe_title2 = line2.strip()
+        else:
+            safe_title2 = None
+
+        # Build filter complex for title card:
+        # - Black background with subtle gradient
+        # - Large bold title text
+        # - Fade in/out animation
+        # - Slight glow effect
+
+        # Create dark background with slight blue tint
+        bg_filter = "color=c=0x0a0a12:s=1080x1920:d={dur},format=yuv420p".format(dur=duration)
+
+        # Main title text (centered)
+        text_y = "h/2-text_h/2" if not safe_title2 else "h/2-text_h"
+        text_filter = (
+            f",drawtext=text='{safe_title}':"
+            f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+            f"fontsize=72:fontcolor=white:"
+            f"borderw=5:bordercolor=black:"
+            f"shadowx=4:shadowy=4:shadowcolor=black@0.8:"
+            f"x=(w-text_w)/2:y={text_y}"
+        )
+
+        # Second line if title is long
+        if safe_title2:
+            text_filter += (
+                f",drawtext=text='{safe_title2}':"
+                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"fontsize=72:fontcolor=white:"
+                f"borderw=5:bordercolor=black:"
+                f"shadowx=4:shadowy=4:shadowcolor=black@0.8:"
+                f"x=(w-text_w)/2:y=h/2+30"
+            )
+
+        # Fade in and fade out
+        fade_filter = f",fade=t=in:st=0:d=0.2,fade=t=out:st={duration-0.15}:d=0.15"
+
+        # Combine all filters
+        full_filter = bg_filter + text_filter + fade_filter
+
+        # Generate the title card video with silent audio
+        title_cmd = [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", full_filter,
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-t", str(duration),
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+            "-c:a", "aac", "-b:a", "128k",
+            "-map", "0:v", "-map", "1:a",
+            "-shortest",
+            str(output_path)
+        ]
+
+        result = subprocess.run(title_cmd, capture_output=True, text=True, timeout=30)
+
+        if output_path.exists() and output_path.stat().st_size > 1000:
+            print(f"[TitleCard] Generated title card: {output_path} ({output_path.stat().st_size // 1024}KB)")
+            return True
+        else:
+            print(f"[TitleCard] Title card generation failed: {result.stderr[-300:] if result.stderr else 'no output'}")
+            return False
+
+    except Exception as e:
+        print(f"[TitleCard] Error generating title card: {e}")
+        return False
+
+
 def apply_vintage_vhs_effects(video_path: str, output_path: str, duration: float, rgb_trigger_windows: list = None):
     """
     Apply vintage VHS effects after each RGB glitch trigger, plus a continuous VHS head error.
@@ -2027,10 +2382,12 @@ def apply_vintage_vhs_effects(video_path: str, output_path: str, duration: float
 
     processed = clip.transform(vintage_effect)
 
+    # Preserve original fps to avoid audio/video sync drift
     processed.write_videofile(
         output_path,
         codec='libx264',
         preset='ultrafast',
+        fps=clip.fps,  # CRITICAL: Preserve original fps to avoid audio drift
         audio_codec='aac',
         logger=None
     )
@@ -2350,10 +2707,12 @@ def apply_flash_frames(video_path: str, output_path: str, trigger_times: list,
         return frame
 
     processed = clip.transform(add_flash)
+    # Preserve original fps to avoid audio/video sync drift
     processed.write_videofile(
         output_path,
         codec='libx264',
         preset='ultrafast',
+        fps=clip.fps,  # CRITICAL: Preserve original fps to avoid audio drift
         audio_codec='aac',
         logger=None
     )
@@ -2461,6 +2820,8 @@ def apply_combined_template_effects(video_path: str, output_path: str, effect_co
 
     def combined_effect(get_frame, t):
         frame = get_frame(t)
+        # Copy frame to make it writable (MoviePy may pass read-only arrays)
+        frame = frame.copy()
         h, w = frame.shape[:2]
 
         # 1. SCAN LINES (subtle CRT effect)
@@ -2513,10 +2874,12 @@ def apply_combined_template_effects(video_path: str, output_path: str, effect_co
 
     processed = clip.transform(combined_effect)
 
+    # Preserve original fps to avoid audio/video sync drift
     processed.write_videofile(
         output_path,
         codec='libx264',
         preset='ultrafast',
+        fps=clip.fps,  # CRITICAL: Preserve original fps to avoid audio drift
         audio_codec='aac',
         logger=None
     )
@@ -2536,7 +2899,7 @@ def apply_combined_template_effects(video_path: str, output_path: str, effect_co
     print(f"Applied template effects: {', '.join(effects_applied) if effects_applied else 'none'}")
 
 
-def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None, caption_style: str = "standard"):
+def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: float = 0.0, font: str = "Honk", trigger_words: list = None, caption_style: str = "standard", quotable_line: dict = None, question_moments: list = None):
     """
     Generate ASS karaoke captions with enhanced trigger word effects.
 
@@ -2545,27 +2908,85 @@ def generate_karaoke_ass(segments: list[dict], output_path: Path, start_offset: 
     - "pop_scale": ALL words bounce in with overshoot scale, triggers get bigger
     - "shake": trigger words vibrate/shake with position offsets
     - "blur_reveal": words sharpen from blur as spoken, triggers get extra blur + scale
+
+    quotable_line: dict with {"text": str, "start": float, "end": float}
+    - Gets SPECIAL treatment: gold glow, 3.5x scale, held on screen 0.5s longer
+
+    question_moments: list of timestamps (relative to clip start)
+    - Words near questions get emphasized styling (larger, question mark color)
     """
     # Build trigger word lookup (by time range)
+    # Skip single-letter words like "a", "I" - they're not meaningful triggers
     trigger_windows = []
     if trigger_words:
         for trig in trigger_words:
+            word = trig.get('word', '').lower().strip()
+            # Skip single character words (a, I, etc.) - not meaningful
+            if len(word) <= 1:
+                continue
             t_start = trig.get('start', 0) - start_offset
             t_end = trig.get('end', t_start + 0.5) - start_offset
-            word = trig.get('word', '').lower()
             trigger_windows.append((t_start, t_end, word))
 
     def is_trigger_word(w_start, w_end, w_text):
-        """Check if word matches any trigger window"""
+        """Check if word matches any trigger window (exact match only)"""
         w_start_rel = w_start - start_offset
         w_end_rel = w_end - start_offset
         w_lower = w_text.lower().strip('.,!?;:')
 
+        # Skip single-letter words
+        if len(w_lower) <= 1:
+            return False
+
         for t_start, t_end, t_word in trigger_windows:
+            # Time-based match: word overlaps trigger window
             if w_start_rel < t_end and w_end_rel > t_start:
-                if t_word in w_lower or w_lower in t_word:
+                # Exact word match (not substring)
+                if t_word == w_lower:
                     return True
-            if t_word and (t_word in w_lower or w_lower in t_word):
+            # Fallback: exact word match regardless of time
+            if t_word and t_word == w_lower:
+                return True
+        return False
+
+    # Quotable line detection
+    quotable_start = None
+    quotable_end = None
+    if quotable_line and isinstance(quotable_line, dict):
+        quotable_start = quotable_line.get("start")
+        quotable_end = quotable_line.get("end")
+        if quotable_start is not None and quotable_end is not None:
+            # Convert to clip-relative time (already relative to clip start)
+            quotable_start = float(quotable_start)
+            quotable_end = float(quotable_end)
+            print(f"[Captions] Quotable line: {quotable_start:.1f}s - {quotable_end:.1f}s")
+
+    def is_quotable_word(w_start, w_end):
+        """Check if word falls within quotable line time range"""
+        if quotable_start is None or quotable_end is None:
+            return False
+        w_start_rel = w_start - start_offset
+        w_end_rel = w_end - start_offset
+        # Word is in quotable range if it overlaps
+        return w_start_rel < quotable_end and w_end_rel > quotable_start
+
+    # Question moment detection - words within 1.5s before question timestamp get special styling
+    question_windows = []
+    if question_moments and isinstance(question_moments, list):
+        for q_time in question_moments:
+            if isinstance(q_time, (int, float)):
+                # Words in the 1.5s before the question marker get emphasized
+                question_windows.append((float(q_time) - 1.5, float(q_time) + 0.2))
+        if question_windows:
+            print(f"[Captions] Question moments: {len(question_windows)} questions detected")
+
+    def is_question_word(w_start, w_end):
+        """Check if word is near a rhetorical question moment"""
+        if not question_windows:
+            return False
+        w_start_rel = w_start - start_offset
+        for q_start, q_end in question_windows:
+            if w_start_rel >= q_start and w_start_rel <= q_end:
                 return True
         return False
 
@@ -2578,6 +2999,8 @@ PlayResY: 1920
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Karaoke,{font},149,&H00FFFFFF,&H00FF00FF,&H00000000,&HAA000000,-1,0,0,0,100,100,2,0,1,5,2,2,20,20,120,1
 Style: TriggerWord,{font},149,&H00FFFF00,&H00FF00FF,&H000000FF,&HAA000000,-1,0,0,0,300,300,2,0,1,8,3,2,20,20,120,1
+Style: QuotableLine,{font},149,&H0000D7FF,&H00FF00FF,&H00004080,&HAA000000,-1,0,0,0,100,100,2,0,1,6,3,2,20,20,120,1
+Style: QuestionWord,{font},149,&H00E0FFFF,&H00FF00FF,&H00006080,&HAA000000,-1,0,0,0,110,110,2,0,1,6,2,2,20,20,120,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -2592,9 +3015,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cs = int((s - int(s)) * 100)
         return f"{h}:{m:02d}:{int(s):02d}.{cs:02d}"
 
-    def build_word_fx(w_text, dur_cs, is_trigger, style):
+    def build_word_fx(w_text, dur_cs, is_trigger, style, is_quotable=False, is_question=False):
         """Build ASS override tags for a word based on caption_style."""
         dur_ms = dur_cs * 10
+
+        # QUESTION WORDS: Light cyan color, slightly larger scale
+        # Priority: trigger > quotable > question > normal
+        if is_question and not is_trigger and not is_quotable:
+            # Question emphasis: light cyan, 1.1x scale, italic feel
+            question_fx = f"\\c&H00E0FFFF&\\bord4\\fscx110\\fscy110\\fsp2"
+            return f"{{\\k{dur_cs}{question_fx}}}{w_text}? {{\\r}}" if w_text.endswith("?") else f"{{\\k{dur_cs}{question_fx}}}{w_text} {{\\r}}"
+
+        # QUOTABLE LINE: Gold glow, larger scale, extra emphasis
+        # Takes priority over normal styling but combines with trigger effects
+        if is_quotable and not is_trigger:
+            # Gold color with glow effect: &H0000D7FF = RGB(255, 215, 0) = Gold
+            # Scale 1.2x with soft glow border
+            gold_fx = f"\\c&H0000D7FF&\\bord4\\shad2\\fscx120\\fscy120\\blur0.5"
+            return f"{{\\k{dur_cs}{gold_fx}}}{w_text} {{\\r}}"
+        elif is_quotable and is_trigger:
+            # Quotable + Trigger: MAXIMUM emphasis - gold + 3.5x scale + glow
+            gold_trigger_fx = f"\\c&H0000D7FF&\\bord8\\shad4\\fscx350\\fscy350\\blur1\\t(0,{dur_ms},\\fscx140\\fscy140\\blur0)"
+            return f"{{\\k{dur_cs}{gold_trigger_fx}}}{w_text.upper()} {{\\r}}"
 
         if style == "pop_scale":
             # Pop scale: words bounce in with overshoot
@@ -2657,7 +3099,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if dur_cs < 1: dur_cs = 1
 
             is_trigger = is_trigger_word(w_start, w_end, w_text)
-            karaoke += build_word_fx(w_text, dur_cs, is_trigger, caption_style)
+            is_quotable = is_quotable_word(w_start, w_end)
+            is_question = is_question_word(w_start, w_end)
+            karaoke += build_word_fx(w_text, dur_cs, is_trigger, caption_style, is_quotable, is_question)
 
             current_time = w_end
 
@@ -3487,11 +3931,11 @@ def render_viral_clip(request: RenderClipRequest):
         print(f"Found {len(fresh_trigger_words)} trigger words in fresh transcript")
 
         # 4. Prepare Resources
-        # BGM
-        bgm_path = None
-        if MUSIC_DIR.exists():
-            music_files = list(MUSIC_DIR.glob("*.mp3")) + list(MUSIC_DIR.glob("*.wav"))
-            if music_files: bgm_path = random.choice(music_files)
+        # BGM - Select based on mood from Grok director or effect_settings
+        bgm_mood = request.bgm_mood
+        if not bgm_mood and request.effect_settings:
+            bgm_mood = request.effect_settings.get("bgm_mood")
+        bgm_path = select_music_by_mood(bgm_mood)
 
         # Font Selection - "random" picks from installed custom fonts
         selected_font = request.font
@@ -3506,7 +3950,7 @@ def render_viral_clip(request: RenderClipRequest):
         if request.effect_settings and request.effect_settings.get("caption_style"):
             caption_style = request.effect_settings["caption_style"]
         report_status(request.status_webhook_url, f"Processing: Karaoke ({selected_font}, {caption_style})")
-        generate_karaoke_ass(fresh_segments, ass_path, 0.0, selected_font, fresh_trigger_words, caption_style)
+        generate_karaoke_ass(fresh_segments, ass_path, 0.0, selected_font, fresh_trigger_words, caption_style, request.quotable_line, request.question_moments)
 
         # 3. MEGA-FILTER CHAIN (V5: CUDA NATIVE)
         # Architecture: 
@@ -3577,10 +4021,53 @@ def render_viral_clip(request: RenderClipRequest):
         zoom_base = "min(1+0.001*t,1.5)"
         # Use beat pulse if available, otherwise very subtle sine fallback
         heartbeat = beat_pulse if beat_pulse else "+0.003*sin(2*3.14159*t*2.0)"
-        
-        # Combined Scale Factor
-        scale_factor = f"({zoom_base}+{heartbeat}{trigger_sum})"
-        
+
+        # === DRAMATIC PAUSE HANDLING ===
+        # During pauses: freeze all dynamic effects (multiplier = 0)
+        # After pause ends: add a quick punch to emphasize return
+        pause_freeze = ""  # Multiplier for dynamic effects (1 normally, 0 during pause)
+        pause_punch = ""   # Extra zoom punch after pause ends
+
+        if request.key_pauses:
+            print(f"[Pause] Processing {len(request.key_pauses)} dramatic pauses")
+            freeze_parts = []
+            punch_parts = []
+
+            for pause in request.key_pauses[:3]:  # Max 3 pauses
+                p_start = float(pause.get("start", 0))
+                p_end = float(pause.get("end", p_start + 0.5))
+                p_type = pause.get("type", "sink_in")
+
+                if p_end > p_start:
+                    # During pause window: multiply dynamic effects by 0
+                    freeze_parts.append(f"(1-between(t,{p_start:.3f},{p_end:.3f}))")
+
+                    # After pause ends: 0.3s zoom punch (quick in, slow out)
+                    punch_attack = 0.08
+                    punch_decay = 0.25
+                    punch_peak = p_end + punch_attack
+                    punch_end = punch_peak + punch_decay
+                    punch_intensity = 0.15 if p_type == "pre_bomb" else 0.10  # Stronger punch for pre-bomb
+
+                    # Attack: ramp up from p_end to punch_peak
+                    punch_parts.append(f"+{punch_intensity}*between(t,{p_end:.3f},{punch_peak:.3f})*((t-{p_end:.3f})/{punch_attack})")
+                    # Decay: ease down from punch_peak to punch_end
+                    punch_parts.append(f"+{punch_intensity}*between(t,{punch_peak:.3f},{punch_end:.3f})*(1-((t-{punch_peak:.3f})/{punch_decay}))")
+
+                    print(f"  [{p_type}] Freeze {p_start:.2f}s-{p_end:.2f}s, punch at {p_end:.2f}s")
+
+            if freeze_parts:
+                pause_freeze = "*" + "*".join(freeze_parts)
+            if punch_parts:
+                pause_punch = "".join(punch_parts)
+
+        # Combined Scale Factor with pause handling
+        # Base zoom grows steadily, dynamic effects (heartbeat, triggers) freeze during pauses
+        if pause_freeze:
+            scale_factor = f"({zoom_base}+({heartbeat}{trigger_sum}){pause_freeze}{pause_punch})"
+        else:
+            scale_factor = f"({zoom_base}+{heartbeat}{trigger_sum})"
+
         # We vary Width(w) and Height(h) using the expression.
         # Force even dimensions (2-aligned) for YUV420P / CUDA compatibility
         # Ensure factor >= 1 using max(1, ...) to prevent crop failure
@@ -3622,11 +4109,34 @@ def render_viral_clip(request: RenderClipRequest):
         print(f"  Pulse intensity: {pulse_intensity_base}")
 
         # === COLOR GRADING: LUT or EQ ===
+        # Check for emotional arc data for dynamic intensity ramp
+        setup_end = request.setup_end
+        escalation_peak = request.escalation_peak
+
         lut_file = effect_config.get("lut_file")
         if lut_file and os.path.exists(lut_file):
             escaped_lut = lut_file.replace(":", "\\:").replace("'", "\\'")
             grade_filter = f"lut3d=file='{escaped_lut}':interp=tetrahedral"
             print(f"[Effects] Using LUT grade: {lut_file}")
+        elif setup_end is not None and escalation_peak is not None and escalation_peak > setup_end:
+            # Dynamic intensity ramp: start softer, build to peak at escalation_peak
+            # Using eval=frame allows time-based expressions with 't'
+            # Ramp: intensity = base + (peak - base) * smoothstep(setup_end, escalation_peak, t)
+            # FFmpeg smoothstep: clip(t - start, 0, end - start) / (end - start)
+            base_sat = max(0.9, saturation - 0.25)  # Start 0.25 lower, min 0.9
+            base_con = max(1.0, contrast - 0.1)  # Start 0.1 lower, min 1.0
+            base_bri = brightness - 0.02  # Start slightly darker
+
+            # Linear ramp from setup_end to escalation_peak
+            ramp_duration = escalation_peak - setup_end
+            sat_expr = f"'{base_sat}+{saturation-base_sat}*clip((t-{setup_end})/{ramp_duration},0,1)'"
+            con_expr = f"'{base_con}+{contrast-base_con}*clip((t-{setup_end})/{ramp_duration},0,1)'"
+            bri_expr = f"'{base_bri}+{brightness-base_bri}*clip((t-{setup_end})/{ramp_duration},0,1)'"
+
+            grade_filter = f"eq=contrast={con_expr}:brightness={bri_expr}:saturation={sat_expr}:eval=frame"
+            print(f"[Effects] Dynamic intensity ramp: setup_end={setup_end}s, escalation_peak={escalation_peak}s")
+            print(f"  Saturation: {base_sat:.2f} -> {saturation:.2f}")
+            print(f"  Contrast: {base_con:.2f} -> {contrast:.2f}")
         else:
             grade_filter = f"eq=contrast={contrast}:brightness={brightness}:saturation={saturation}"
 
@@ -3750,6 +4260,9 @@ def render_viral_clip(request: RenderClipRequest):
         report_status(request.status_webhook_url, "Processing: GPU FX")
         subprocess.run(cmd_mega, check=True)
 
+        # DEBUG: Check AV sync after mega-filter
+        probe_av_durations(str(temp_main), "after mega-filter")
+
         # 3.5. Chromatic Aberration Pass (MoviePy) - RGB split effect
         # ALWAYS add 4 intro pulses at the start, plus BIG keyword trigger hits
         report_status(request.status_webhook_url, "Processing: RGB Glitch")
@@ -3807,6 +4320,8 @@ def render_viral_clip(request: RenderClipRequest):
             # Replace temp_main with chromatic version
             subprocess.run(["mv", str(temp_chroma), str(temp_main)], check=True)
             print(f"Applied {len(trigger_windows)} RGB glitch pulses (4 intro + {len(trigger_windows)-4} keywords)")
+            # DEBUG: Check AV sync after chromatic aberration
+            probe_av_durations(str(temp_main), "after chroma/RGB")
         except Exception as e:
             print(f"WARNING: Chromatic aberration failed, continuing without: {e}")
             effect_failures.append("rgb_glitch")
@@ -3821,6 +4336,8 @@ def render_viral_clip(request: RenderClipRequest):
                 apply_vintage_vhs_effects(str(temp_main), str(temp_vintage), duration, rgb_trigger_windows=trigger_windows)
                 # Replace temp_main with vintage effects version
                 subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True)
+                # DEBUG: Check AV sync after VHS effects
+                probe_av_durations(str(temp_main), "after VHS")
             except Exception as e:
                 print(f"WARNING: Vintage VHS effects failed, continuing without: {e}")
                 effect_failures.append("vhs_effects")
@@ -4268,20 +4785,180 @@ def render_viral_clip(request: RenderClipRequest):
             ]
             subprocess.run(cmd_outro_process, check=True)
 
+            # 4.5 Cold Open Hook (RETENTION OPTIMIZATION)
+            # Generate a 0.4s flash frame to grab attention in first moments
+            temp_hook = temp_dir / f"temp_hook_{uid}.mp4"
+            hook_generated = False
+            if request.hook_enabled and request.visual_hook_time is not None:
+                report_status(request.status_webhook_url, "Processing: Cold Open Hook")
+                try:
+                    hook_generated = generate_cold_open_hook(
+                        source_video=request.video_path,
+                        visual_hook_time=request.visual_hook_time,
+                        output_path=temp_hook,
+                        hook_phrase=request.hook_phrase,
+                        hook_duration=0.4,
+                        start_time=request.start_time,
+                        font=selected_font if 'selected_font' in dir() else "Impact"
+                    )
+                    if hook_generated:
+                        cleanup_files.append(temp_hook)
+                        print(f"Cold Open Hook: Generated successfully")
+                except Exception as e:
+                    print(f"Cold Open Hook: Failed to generate, continuing without: {e}")
+                    effect_failures.append("cold_open_hook")
+            elif request.hook_enabled:
+                # Fallback: use climax_time or 40% through clip for visual hook
+                fallback_hook_time = request.climax_time if request.climax_time else (request.start_time + (request.end_time - request.start_time) * 0.4)
+                if fallback_hook_time >= request.start_time and fallback_hook_time <= request.end_time:
+                    try:
+                        hook_generated = generate_cold_open_hook(
+                            source_video=request.video_path,
+                            visual_hook_time=fallback_hook_time,
+                            output_path=temp_hook,
+                            hook_phrase=request.hook_phrase,
+                            hook_duration=0.4,
+                            start_time=request.start_time
+                        )
+                        if hook_generated:
+                            cleanup_files.append(temp_hook)
+                            print(f"Cold Open Hook: Generated with fallback time {fallback_hook_time:.1f}s")
+                    except Exception as e:
+                        print(f"Cold Open Hook: Fallback failed, continuing without: {e}")
+                        effect_failures.append("cold_open_hook")
+
+            # 4.6 Title Card (optional)
+            temp_title_card = temp_dir / f"temp_title_{uid}.mp4"
+            title_card_generated = False
+            if request.title_card_enabled and request.title_card_text:
+                report_status(request.status_webhook_url, "Processing: Title Card")
+                try:
+                    title_card_generated = generate_title_card(
+                        title_text=request.title_card_text,
+                        output_path=temp_title_card,
+                        duration=0.8,
+                        font=selected_font if 'selected_font' in dir() else "Impact"
+                    )
+                    if title_card_generated:
+                        cleanup_files.append(temp_title_card)
+                        print(f"Title Card: Generated successfully")
+                except Exception as e:
+                    print(f"Title Card: Failed to generate, continuing without: {e}")
+                    effect_failures.append("title_card")
+
             # 5. Concat (RAM Disk)
             report_status(request.status_webhook_url, "Processing: Merging")
             temp_main_trim = temp_dir / f"temp_trim_{uid}.mp4"
             subprocess.run(["ffmpeg", "-y", "-threads", "0", "-i", str(temp_main), "-t", str(total_dur - 2), "-c", "copy", str(temp_main_trim)], check=True)
             cleanup_files.append(temp_main_trim)
-            
-            with open(temp_concat_list, "w") as f:
-                f.write(f"file '{temp_main_trim}'\nfile '{temp_grid}'\n")
-            
-            # Re-encode audio to fix timestamp issues from concat (Non-monotonic DTS)
-            subprocess.run(["ffmpeg", "-y", "-threads", "0", "-fflags", "+genpts", "-f", "concat", "-safe", "0", "-i", str(temp_concat_list), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-avoid_negative_ts", "make_zero", str(output_path)], check=True)
+
+            # Build concat list: [hook] + [title_card] + main + outro
+            concat_files = []
+            if hook_generated and temp_hook.exists():
+                concat_files.append(temp_hook)
+            if title_card_generated and temp_title_card.exists():
+                concat_files.append(temp_title_card)
+            concat_files.extend([temp_main_trim, temp_grid])
+
+            # Debug: probe each concat input for AV durations
+            print(f"SYNC DEBUG [concat inputs]:")
+            for cf in concat_files:
+                probe_av_durations(str(cf), f"  {cf.name}")
+
+            # Use FFmpeg concat filter instead of concat demuxer
+            # The concat filter properly normalizes timestamps across inputs
+            num_inputs = len(concat_files)
+            input_args = []
+            for cf in concat_files:
+                input_args.extend(["-i", str(cf)])
+
+            # Build concat filter: [0:v][0:a][1:v][1:a]...[n:v][n:a]concat=n=N:v=1:a=1[outv][outa]
+            filter_inputs = "".join([f"[{i}:v][{i}:a]" for i in range(num_inputs)])
+            concat_filter = f"{filter_inputs}concat=n={num_inputs}:v=1:a=1[outv][outa]"
+
+            subprocess.run([
+                "ffmpeg", "-y", "-threads", "0",
+                *input_args,
+                "-filter_complex", concat_filter,
+                "-map", "[outv]", "-map", "[outa]",
+                "-c:v", "libx264", "-preset", "ultrafast",  # Re-encode video for filter output
+                "-c:a", "aac", "-b:a", "192k",
+                str(output_path)
+            ], check=True)
+
+            # Debug: probe final output for AV durations
+            probe_av_durations(str(output_path), "final output")
 
         else:
-            subprocess.run(["cp", str(temp_main), str(output_path)], check=True)
+            # No outro - still try to add cold open hook and title card
+            temp_hook = temp_dir / f"temp_hook_{uid}.mp4"
+            hook_generated = False
+            if request.hook_enabled and (request.visual_hook_time is not None or request.climax_time is not None):
+                hook_time = request.visual_hook_time if request.visual_hook_time else request.climax_time
+                if hook_time and hook_time >= request.start_time and hook_time <= request.end_time:
+                    try:
+                        hook_generated = generate_cold_open_hook(
+                            source_video=request.video_path,
+                            visual_hook_time=hook_time,
+                            output_path=temp_hook,
+                            hook_phrase=request.hook_phrase,
+                            hook_duration=0.4,
+                            start_time=request.start_time
+                        )
+                        if hook_generated:
+                            cleanup_files.append(temp_hook)
+                    except Exception as e:
+                        print(f"Cold Open Hook: Failed, continuing without: {e}")
+
+            # Title card (no outro branch)
+            temp_title_card = temp_dir / f"temp_title_{uid}.mp4"
+            title_card_generated = False
+            if request.title_card_enabled and request.title_card_text:
+                try:
+                    title_card_generated = generate_title_card(
+                        title_text=request.title_card_text,
+                        output_path=temp_title_card,
+                        duration=0.8,
+                        font=selected_font if 'selected_font' in dir() else "Impact"
+                    )
+                    if title_card_generated:
+                        cleanup_files.append(temp_title_card)
+                except Exception as e:
+                    print(f"Title Card: Failed, continuing without: {e}")
+
+            # Concat [hook] + [title_card] + main (if any prefix clips exist)
+            has_prefix = (hook_generated and temp_hook.exists()) or (title_card_generated and temp_title_card.exists())
+            if has_prefix:
+                temp_concat_no_outro = temp_dir / f"temp_concat_no_outro_{uid}.txt"
+                cleanup_files.append(temp_concat_no_outro)
+                # Build concat file list
+                concat_files = []
+                if hook_generated and temp_hook.exists():
+                    concat_files.append(temp_hook)
+                if title_card_generated and temp_title_card.exists():
+                    concat_files.append(temp_title_card)
+                concat_files.append(temp_main)
+
+                # Use FFmpeg concat filter for proper timestamp handling
+                num_inputs = len(concat_files)
+                input_args = []
+                for cf in concat_files:
+                    input_args.extend(["-i", str(cf)])
+
+                filter_inputs = "".join([f"[{i}:v][{i}:a]" for i in range(num_inputs)])
+                concat_filter = f"{filter_inputs}concat=n={num_inputs}:v=1:a=1[outv][outa]"
+
+                subprocess.run([
+                    "ffmpeg", "-y", "-threads", "0",
+                    *input_args,
+                    "-filter_complex", concat_filter,
+                    "-map", "[outv]", "-map", "[outa]",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    str(output_path)
+                ], check=True)
+            else:
+                subprocess.run(["cp", str(temp_main), str(output_path)], check=True)
 
         # 6. BGM Mix (Final Pass) with AUTO VOLUME DETECTION
         if bgm_path:
@@ -4342,6 +5019,11 @@ def render_viral_clip(request: RenderClipRequest):
         info = get_video_info(str(output_path))
         if effect_failures:
             print(f"[RenderComplete] {len(effect_failures)} effect(s) failed: {effect_failures}")
+
+        # Report final "ready" status immediately after render completes
+        report_status(request.status_webhook_url, "ready")
+        print(f"[RenderComplete] Reported 'ready' status via webhook")
+
         return {
             "success": True,
             "path": str(output_path),
