@@ -46,6 +46,8 @@ BROLL_CATEGORIES = [
     "weapons and firearms",
     "explosions and destruction",
     "political leaders and speeches",
+    "fighter jets and aircraft",
+    "navy ships and warships",
 
     # Wealth & Success
     "money and cash",
@@ -59,24 +61,28 @@ BROLL_CATEGORIES = [
     "prayer and worship",
     "crosses and religious symbols",
     "bible and scripture",
+    "cathedrals and gothic architecture",
 
     # Strength & Masculinity
     "boxing and fighting",
     "gym and weightlifting",
     "sports and athletics",
     "muscles and bodybuilding",
+    "lions and powerful animals",
 
     # Nature & Beauty
     "mountains and landscapes",
     "ocean and water",
     "sunset and sunrise",
     "animals and wildlife",
+    "storms and lightning",
 
     # Society & People
     "crowds and masses",
     "family and children",
     "women and femininity",
     "men and masculinity",
+    "rallies and protests",
 
     # Emotions & States
     "chaos and disorder",
@@ -98,17 +104,53 @@ BROLL_CATEGORIES = [
 ]
 
 # Simplified category mapping for Grok
+# These are the categories that Grok can request in broll_insertions
 CATEGORY_KEYWORDS = {
-    "war": ["war and military combat", "soldiers and troops", "weapons and firearms", "explosions and destruction"],
-    "wealth": ["money and cash", "luxury and wealth", "business and corporate", "stock market and trading"],
+    # DESTRUCTION & CONFLICT
+    "war": ["war and military combat", "soldiers and troops", "weapons and firearms"],
+    "chaos": ["chaos and disorder", "darkness and shadows", "anger and rage"],
+    "explosions": ["explosions and destruction"],
+    "storms": ["storms and lightning"],
+    "fire": ["fire and flames"],
+
+    # MONEY & SUCCESS
+    "money": ["money and cash", "stock market and trading"],
+    "luxury": ["luxury and wealth", "business and corporate"],
+    "wealth": ["luxury and wealth", "money and cash"],
+    "city": ["city and urban"],
+
+    # FITNESS & STRENGTH
+    "gym": ["gym and weightlifting"],
+    "sports": ["sports and athletics"],
+    "boxing": ["boxing and fighting"],
+    "strength": ["muscles and bodybuilding", "boxing and fighting"],
+
+    # PATRIOTIC & FAITH
+    "patriotic": ["american flag and patriotism"],
+    "crowd": ["crowds and masses", "rallies and protests"],
     "faith": ["church and religion", "prayer and worship", "crosses and religious symbols", "bible and scripture"],
-    "strength": ["boxing and fighting", "gym and weightlifting", "sports and athletics", "muscles and bodybuilding"],
+    "cathedrals": ["cathedrals and gothic architecture", "church and religion"],
+
+    # ANIMALS & NATURE
+    "lions": ["lions and powerful animals"],
+    "eagles": ["lions and powerful animals", "animals and wildlife"],  # eagles share animal category
+    "wolves": ["lions and powerful animals", "animals and wildlife"],
     "nature": ["mountains and landscapes", "ocean and water", "sunset and sunrise", "animals and wildlife"],
-    "people": ["crowds and masses", "family and children", "women and femininity", "men and masculinity"],
-    "chaos": ["chaos and disorder", "fire and flames", "darkness and shadows", "anger and rage"],
-    "victory": ["victory and celebration", "light and brightness", "american flag and patriotism"],
-    "power": ["political leaders and speeches", "cars and vehicles", "city and urban"],
-    "history": ["historical footage", "news and media"]
+
+    # MILITARY TECH
+    "jets": ["fighter jets and aircraft"],
+    "navy": ["navy ships and warships"],
+    "helicopters": ["fighter jets and aircraft"],
+
+    # VEHICLES
+    "cars": ["cars and vehicles"],
+    "racing": ["cars and vehicles", "sports and athletics"],
+
+    # OTHER
+    "history": ["historical footage", "news and media"],
+    "people": ["family and children", "women and femininity", "men and masculinity", "crowds and masses"],
+    "victory": ["victory and celebration", "light and brightness"],
+    "power": ["political leaders and speeches"],
 }
 
 

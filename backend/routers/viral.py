@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List, Optional
@@ -9,9 +10,12 @@ from pathlib import Path
 
 from models import (
     get_db, Influencer, InfluencerVideo, ViralClip, ClipPersona,
-    InfluencerPlatformType, RenderTemplate
+    InfluencerPlatformType, RenderTemplate, PublishingConfig, PublishingQueueItem
 )
 from pydantic import BaseModel
+from utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/viral", tags=["viral"])
 
@@ -29,12 +33,63 @@ class VideoAnalyzeRequest(BaseModel):
     video_id: int
     persona_id: Optional[int] = None
 
+
+# --- Auto-Mode Schemas ---
+class AutoModeConfig(BaseModel):
+    """Configuration for auto-mode processing of influencer videos."""
+    auto_mode_enabled: bool
+    fetch_frequency_hours: int = 24
+    max_videos_per_fetch: int = 5
+    auto_analyze_enabled: bool = True
+    auto_render_enabled: bool = False
+    auto_publish_enabled: bool = False
+
+
 # --- Endpoints ---
 
 @router.get("/influencers", response_model=List[dict])
 def list_influencers(db: Session = Depends(get_db)):
     influencers = db.query(Influencer).all()
-    return [{"id": i.id, "name": i.name, "platform": i.platform, "channel_url": i.channel_url} for i in influencers]
+    result = []
+    for i in influencers:
+        # Get video count and most recent thumbnail
+        videos = db.query(InfluencerVideo).filter(InfluencerVideo.influencer_id == i.id).all()
+        video_count = len(videos)
+
+        # Get thumbnail from most recent video with a thumbnail
+        thumbnail_url = None
+        for v in sorted(videos, key=lambda x: x.publication_date or x.created_at or datetime.min, reverse=True):
+            if v.thumbnail_url:
+                thumbnail_url = v.thumbnail_url
+                break
+
+        # Count total clips across all videos
+        clip_count = db.query(ViralClip).join(InfluencerVideo).filter(
+            InfluencerVideo.influencer_id == i.id
+        ).count()
+
+        # Count ready clips
+        ready_clips = db.query(ViralClip).join(InfluencerVideo).filter(
+            InfluencerVideo.influencer_id == i.id,
+            ViralClip.status.in_(['ready', 'completed'])
+        ).count()
+
+        result.append({
+            "id": i.id,
+            "name": i.name,
+            "platform": i.platform,
+            "channel_url": i.channel_url,
+            "profile_image_url": i.profile_image_url,
+            "thumbnail_url": thumbnail_url,
+            "video_count": video_count,
+            "clip_count": clip_count,
+            "ready_clips": ready_clips,
+            "auto_mode_enabled": i.auto_mode_enabled or False,
+            "auto_mode_enabled_at": i.auto_mode_enabled_at.isoformat() if i.auto_mode_enabled_at else None,
+            "last_fetch_at": i.last_fetch_at.isoformat() if i.last_fetch_at else None,
+            "fetch_frequency_hours": i.fetch_frequency_hours or 24
+        })
+    return result
 
 @router.post("/influencers")
 def create_influencer(inf: InfluencerCreate, db: Session = Depends(get_db)):
@@ -49,6 +104,65 @@ def create_influencer(inf: InfluencerCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_inf)
     return db_inf
+
+
+# --- Auto-Mode Configuration Endpoints ---
+
+@router.get("/influencers/{influencer_id}/auto-mode")
+def get_influencer_auto_mode(influencer_id: int, db: Session = Depends(get_db)):
+    """Get auto-mode configuration for an influencer."""
+    influencer = db.query(Influencer).filter(Influencer.id == influencer_id).first()
+    if not influencer:
+        raise HTTPException(status_code=404, detail="Influencer not found")
+
+    return {
+        "auto_mode_enabled": influencer.auto_mode_enabled or False,
+        "auto_mode_enabled_at": influencer.auto_mode_enabled_at.isoformat() if influencer.auto_mode_enabled_at else None,
+        "fetch_frequency_hours": influencer.fetch_frequency_hours or 24,
+        "max_videos_per_fetch": influencer.max_videos_per_fetch or 5,
+        "auto_analyze_enabled": influencer.auto_analyze_enabled if influencer.auto_analyze_enabled is not None else True,
+        "auto_render_enabled": influencer.auto_render_enabled or False,
+        "auto_publish_enabled": influencer.auto_publish_enabled or False,
+        "last_fetch_at": influencer.last_fetch_at.isoformat() if influencer.last_fetch_at else None
+    }
+
+
+@router.put("/influencers/{influencer_id}/auto-mode")
+def configure_influencer_auto_mode(influencer_id: int, config: AutoModeConfig, db: Session = Depends(get_db)):
+    """Enable/disable auto-mode and configure settings for an influencer."""
+    influencer = db.query(Influencer).filter(Influencer.id == influencer_id).first()
+    if not influencer:
+        raise HTTPException(status_code=404, detail="Influencer not found")
+
+    # Track when auto-mode was enabled (for NEW videos only constraint)
+    was_enabled = influencer.auto_mode_enabled
+    now_enabled = config.auto_mode_enabled
+
+    if now_enabled and not was_enabled:
+        # Just enabled - record timestamp for NEW videos constraint
+        influencer.auto_mode_enabled_at = datetime.utcnow()
+        logger.info(f"Auto-mode enabled for {influencer.name} at {influencer.auto_mode_enabled_at}")
+    elif not now_enabled and was_enabled:
+        # Disabled - clear the timestamp
+        influencer.auto_mode_enabled_at = None
+        logger.info(f"Auto-mode disabled for {influencer.name}")
+
+    influencer.auto_mode_enabled = config.auto_mode_enabled
+    influencer.fetch_frequency_hours = config.fetch_frequency_hours
+    influencer.max_videos_per_fetch = config.max_videos_per_fetch
+    influencer.auto_analyze_enabled = config.auto_analyze_enabled
+    influencer.auto_render_enabled = config.auto_render_enabled
+    influencer.auto_publish_enabled = config.auto_publish_enabled
+
+    db.commit()
+
+    return {
+        "status": "updated",
+        "influencer_id": influencer_id,
+        "auto_mode_enabled": influencer.auto_mode_enabled,
+        "auto_mode_enabled_at": influencer.auto_mode_enabled_at.isoformat() if influencer.auto_mode_enabled_at else None
+    }
+
 
 @router.post("/influencers/{id}/fetch")
 async def fetch_videos(id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -270,17 +384,59 @@ def update_viral_clip_status(id: int, status_update: StatusUpdate, db: Session =
     return {"status": "updated"}
 
 @router.get("/file/{filename}")
-def get_viral_file(filename: str):
+async def get_viral_file(filename: str, request: Request):
+    """
+    Stream video file with HTTP Range request support.
+    Enables seeking and progressive loading like YouTube.
+    """
     # Security: basic check to prevent traversal
     if ".." in filename or "/" in filename:
-         raise HTTPException(status_code=400, detail="Invalid filename")
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
-    file_path = f"/app/assets/output/{filename}"
-    if not os.path.exists(file_path):
+    file_path = Path(f"/app/assets/output/{filename}")
+    if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Return with proper media type for video streaming
-    return FileResponse(file_path, media_type="video/mp4")
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    # Default: stream entire file
+    start = 0
+    end = file_size - 1
+
+    if range_header:
+        # Parse range header: "bytes=0-1000" or "bytes=0-"
+        range_str = range_header.replace("bytes=", "")
+        parts = range_str.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if parts[1] else file_size - 1
+        end = min(end, file_size - 1)  # Clamp to file size
+
+    content_length = end - start + 1
+
+    def stream_file():
+        """Generator to stream file chunks."""
+        chunk_size = 1024 * 1024  # 1MB chunks
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            remaining = content_length
+            while remaining > 0:
+                read_size = min(chunk_size, remaining)
+                data = f.read(read_size)
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(content_length),
+        "Content-Type": "video/mp4",
+    }
+
+    status_code = 206 if range_header else 200
+    return StreamingResponse(stream_file(), status_code=status_code, headers=headers)
 
 @router.get("/music")
 def list_music():

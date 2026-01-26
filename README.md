@@ -488,6 +488,24 @@ POST /api/viral/broll/upload-youtube
 | GPU Rendering | Free | Local NVIDIA DGX |
 | Storage | Free | Local disk |
 
+### B-Roll Category System
+
+Grok assigns B-roll insertions using a semantic 28-category system. Categories map to local clips via AI tagging or filename prefixes, with YouTube fallback for missing content.
+
+**Valid Categories:**
+| Group | Categories |
+|-------|------------|
+| Destruction | `war`, `chaos`, `explosions`, `storms`, `fire` |
+| Money | `money`, `luxury`, `wealth`, `city` |
+| Fitness | `gym`, `sports`, `boxing`, `strength` |
+| Faith | `patriotic`, `crowd`, `faith`, `cathedrals` |
+| Animals | `lions`, `eagles`, `wolves`, `nature` |
+| Military | `jets`, `navy`, `helicopters` |
+| Vehicles | `cars`, `racing` |
+| Other | `history`, `people`, `victory`, `power` |
+
+**AI Tagging:** Run `docker exec -it SocialGen_video_processor python /app/scripts/tag_broll.py` to tag local clips with BLIP+CLIP.
+
 ---
 
 ## Cost Estimates (Main Pipeline)
@@ -548,4 +566,4 @@ docker exec SocialGen_backend python3 -m pytest /app/tests/ -v
 
 ---
 
-*Last updated: January 23, 2026*
+*Last updated: January 26, 2026*

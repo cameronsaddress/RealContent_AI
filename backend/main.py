@@ -19,6 +19,7 @@ from pathlib import Path
 # Import the new pipeline router (n8n replacement)
 from routers.pipeline import router as pipeline_router
 from routers.viral import router as viral_router
+from routers.publishing import router as publishing_router
 
 # Import Celery tasks for direct triggering (replacing n8n webhooks)
 from tasks.pipeline import run_pipeline
@@ -96,6 +97,7 @@ app.add_middleware(
 # Include the pipeline router (replaces n8n webhooks)
 app.include_router(pipeline_router)
 app.include_router(viral_router)
+app.include_router(publishing_router)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")

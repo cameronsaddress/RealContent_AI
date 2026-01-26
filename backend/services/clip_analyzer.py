@@ -531,50 +531,142 @@ TEMPLATE SELECTION RULES:
 DO NOT default to Maximum Impact for everything - use the variety of templates based on content."""
 
         # Local thematic B-Roll categories (for abstract/emotional content)
+        # IMPORTANT: These are the 28 categories that exist in our local library
         local_broll_descriptions = """
 === LOCAL THEMATIC B-ROLL (for ABSTRACT/EMOTIONAL content) ===
 Use these when the speaker discusses THEMES, IDEAS, or EMOTIONS - NOT specific events.
 
-MILITARY/PATRIOTIC (use when speaker invokes American power, strength, or pride):
-- "warfare": US military power, soldiers, tanks, battlefield, Air Force jets
-- "navy": aircraft carriers, naval power, battleships
-- "fighter_jets": F-16s, stealth bombers, aerial dominance
-- "patriotic": American flags, monuments, patriotic imagery, unity
-- "ww2": historical military footage, D-Day, archive footage
+⚠️ CRITICAL: You MUST ONLY use these category names. Any other category name will FAIL:
+  war, chaos, explosions, storms, fire,
+  money, luxury, wealth, city,
+  gym, sports, boxing, strength,
+  patriotic, crowd, faith, cathedrals,
+  lions, eagles, wolves, nature,
+  jets, navy, helicopters,
+  cars, racing,
+  history, people
 
-FAITH/WESTERN CIVILIZATION (use when speaker discusses Christianity, tradition, or Western values):
-- "cathedrals": Gothic cathedrals, church interiors, stained glass, sacred architecture
-- "castles": Medieval castles, European heritage, fortresses
-- "faith": crosses, religious imagery, prayer, churches
+CATEGORY DESCRIPTIONS (what footage is actually available):
 
-CHAOS/POWER (use when speaker discusses destruction, chaos, or overwhelming force):
-- "explosions": nuclear tests, massive explosions, destruction
-- "nature_power": volcanoes, tsunamis, tornadoes, lightning strikes, avalanches
-- "storms": thunderstorms, lightning, dramatic weather
-- "lions": lion footage (for "lions don't concern themselves..." metaphors)
-- "eagles": eagle footage (for American symbolism)
-- "wolves": wolf pack footage (for predator/pack metaphors)
+=== DESTRUCTION & CONFLICT (324+ clips) ===
+"war" - Military combat, soldiers, battlefield, warfare footage (324 clips)
+   USE FOR: "at war", military topics, combat references, soldiers
 
-LIFESTYLE/SUCCESS (use when speaker discusses hustle, wealth, or winning):
-- "money": cash counting, stock trading, Wolf of Wall Street vibes
-- "luxury": supercars, mansions, private jets, billionaire lifestyle
-- "cars": supercars, lamborghinis, car meets, exhaust flames
-- "gym": weightlifting, bodybuilding, Sam Sulek/CBum clips
-- "city": NYC skyline, Dubai at night, Tokyo neon, urban power
+"chaos" - Dark/intense footage, disorder, destruction
+   USE FOR: disorder, violence, society breaking down
 
-CROWD/ENERGY (use when speaker discusses movements, unity, or mass energy):
-- "crowd": rallies, stadium celebrations, concert crowds, protests
-- "sports": UFC knockouts, boxing highlights, competitive intensity
+"explosions" - Explosions, blasts, detonations, destruction (18 clips)
+   USE FOR: "exploded", "blew up", dramatic destruction, impact
+
+"storms" - Storms, lightning, thunder, dramatic weather (30 clips)
+   USE FOR: "storm is coming", dramatic tension, turbulence
+
+"fire" - Flames, fire, burning (30 clips)
+   USE FOR: "burning", "on fire", hellfire, destruction
+
+=== MONEY & SUCCESS (550+ clips) ===
+"money" - Cash counting, money stacks, bills, hustle (323 clips)
+   USE FOR: cash, money, payments, financial topics, "show me the money"
+
+"luxury" - Supercars, mansions, yachts, high-end lifestyle (228 clips)
+   USE FOR: "living large", rich lifestyle, expensive things
+
+"wealth" - Billionaire lifestyle, opulence, success symbols
+   USE FOR: "wealthy", "rich", millionaire/billionaire topics
+
+"city" - Urban skylines, nightlife, metropolitan scenes (244 clips)
+   USE FOR: city life, urban culture, metropolitan topics
+
+=== FITNESS & STRENGTH (375+ clips) ===
+"gym" - Weightlifting, bodybuilding, workout footage (292 clips)
+   USE FOR: "hit the gym", fitness, grinding, discipline, working out
+
+"sports" - UFC, football, basketball, athletic competition (252 clips)
+   USE FOR: sports references, competition, athletic feats
+
+"boxing" - Boxing, fighting, combat sports (31 clips)
+   USE FOR: "fight", boxing references, punches, knockout
+
+"strength" - Muscles, physical power displays
+   USE FOR: physical strength, power, masculinity
+
+=== PATRIOTIC & FAITH (180+ clips) ===
+"patriotic" - American flags, USA imagery, national symbols (106 clips)
+   USE FOR: "America First", USA, patriotism, "our country"
+
+"crowd" - Rallies, protests, masses of people (183 clips)
+   USE FOR: "the people", masses, movements, crowd energy
+
+"faith" - Crosses, churches, religious ceremonies
+   USE FOR: God, Christ, Christianity, religious themes
+
+"cathedrals" - Gothic cathedrals, grand church architecture (70 clips)
+   USE FOR: "build cathedrals", Western civilization, tradition
+
+=== ANIMALS & NATURE (505+ clips) ===
+"lions" - Lions, apex predators (30 clips)
+   USE FOR: "be a lion", dominance, king, predator metaphors
+
+"eagles" - Eagles, birds of prey (30 clips)
+   USE FOR: "soaring", America (bald eagle), freedom, vision
+
+"wolves" - Wolves, wolf packs (30 clips)
+   USE FOR: "lone wolf", pack mentality, hunting
+
+"nature" - Mountains, landscapes, oceans, scenic footage (385 clips)
+   USE FOR: nature references, beautiful scenery, outdoors
+
+=== MILITARY TECH (90+ clips) ===
+"jets" - Fighter jets, military aircraft (30 clips)
+   USE FOR: "jets", air power, military might, aviation
+
+"navy" - Warships, aircraft carriers, naval power (30 clips)
+   USE FOR: "navy", naval power, sea warfare
+
+"helicopters" - Military helicopters (30 clips)
+   USE FOR: helicopter references, air support
+
+=== VEHICLES (218+ clips) ===
+"cars" - Supercars, sports cars, automotive (178 clips)
+   USE FOR: car references, driving, automotive topics
+
+"racing" - Racing, drifting, motorsports (40 clips)
+   USE FOR: "racing", speed, competition, motorsports
+
+=== OTHER ===
+"history" - Historical footage, archive clips, WW2 (60+ clips)
+   USE FOR: "throughout history", historical references, past events
+
+"people" - Men, women, social interactions
+   USE FOR: discussions about people in general, humanity
 
 === WHEN TO USE LOCAL B-ROLL ===
-✓ "America is the greatest nation" → warfare, patriotic, fighter_jets
-✓ "We need to project strength" → warfare, navy, military power
-✓ "Western civilization is under attack" → cathedrals, castles, faith
-✓ "God will judge them" / "Christ is King" → cathedrals, faith
-✓ "The world is descending into chaos" → explosions, nature_power
-✓ "Grind until you win" → gym, money, luxury
-✓ "Lions don't care about sheep" → lions
-✓ "This is spiritual warfare" → faith, cathedrals
+✓ "We're at war" / "This is a battle" → war
+✓ "Society is falling apart" / "Everything is chaos" → chaos
+✓ "It all exploded" / "Blew up" / destruction → explosions
+✓ "A storm is coming" / turbulence → storms
+✓ "Burning down" / "On fire" → fire
+✓ "Show me the money" / "Cash" / payments → money
+✓ "Living large" / expensive / rich lifestyle → luxury
+✓ "The city" / urban / metropolitan → city
+✓ "Hit the gym" / "Work out" / fitness → gym
+✓ "Sports" / competition / athletics → sports
+✓ "Knockout" / "Fight" / boxing → boxing
+✓ "Be strong" / muscles → strength
+✓ "America First" / "USA" / patriotism → patriotic
+✓ "The people" / "The masses" / rallies → crowd
+✓ "God" / "Christ is King" / "Pray" → faith
+✓ "Build cathedrals" / Western civilization → cathedrals
+✓ "Be a lion" / "King" / apex predator → lions
+✓ "Soaring" / "Freedom" / eagle → eagles
+✓ "Lone wolf" / "Pack" / hunting → wolves
+✓ "Nature" / "Mountains" / scenery → nature
+✓ "Fighter jets" / "Air power" → jets
+✓ "Navy" / "Warships" → navy
+✓ "Helicopters" / air support → helicopters
+✓ "Cars" / driving / automotive → cars
+✓ "Racing" / speed / motorsports → racing
+✓ "Throughout history" / "Our ancestors" → history
 
 === WHEN TO USE YOUTUBE (NOT local) ===
 ✗ "The ICE shooting in Newark..." → YouTube: search for actual bodycam footage
@@ -582,10 +674,21 @@ CROWD/ENERGY (use when speaker discusses movements, unity, or mass energy):
 ✗ "AOC just said on the House floor..." → YouTube: search for C-SPAN clip
 ✗ "This court case in Texas..." → YouTube: search for courtroom footage
 ✗ Any SPECIFIC event with VIDEO EVIDENCE → YouTube
+✗ "Some random lady" / "This woman" / specific person → YouTube: search for that person/event
+✗ Specific news footage, incidents, statements → YouTube
 
 The rule is simple:
-- ABSTRACT THEMES (power, faith, chaos, success) → LOCAL thematic footage
-- SPECIFIC EVENTS (news, incidents, speeches) → YOUTUBE actual footage"""
+- ABSTRACT THEMES/EMOTIONS (war, chaos, money, gym, lions, etc.) → LOCAL thematic footage
+- SPECIFIC EVENTS, PEOPLE, OR INCIDENTS (news, specific person, speeches) → YOUTUBE actual footage
+
+⚠️ VALID LOCAL CATEGORIES:
+  war, chaos, explosions, storms, fire,
+  money, luxury, wealth, city,
+  gym, sports, boxing, strength,
+  patriotic, crowd, faith, cathedrals,
+  lions, eagles, wolves, nature,
+  jets, navy, helicopters,
+  cars, racing, history, people"""
 
         return f"""
 {system_instructions}
@@ -709,17 +812,17 @@ The following fields are REQUIRED for EVERY clip. Missing ANY of these = INVALID
    For each insertion, specify:
    - "time": seconds into the clip (relative to clip START, not video start)
    - "source": "local" or "youtube"
-   - For "local": include "category" (e.g., "warfare", "cathedrals", "money")
+   - For "local": include "category" - MUST be one of: people, strength, power, victory, wealth, history, war, chaos, faith
    - For "youtube": include "query" (specific search query for that moment)
    - "visual": brief description of what should be shown
 
    Example broll_insertions for a clip about American military response to an attack:
    [
      {{"time": 5, "source": "youtube", "query": "terror attack news footage 2025", "visual": "News coverage of the attack"}},
-     {{"time": 12, "source": "local", "category": "warfare", "visual": "US military jets scrambling"}},
-     {{"time": 18, "source": "local", "category": "navy", "visual": "Aircraft carrier launching fighters"}},
+     {{"time": 12, "source": "local", "category": "war", "visual": "Military combat footage"}},
+     {{"time": 18, "source": "local", "category": "power", "visual": "Displays of dominance"}},
      {{"time": 24, "source": "youtube", "query": "Pentagon press conference response", "visual": "Military officials responding"}},
-     {{"time": 30, "source": "local", "category": "patriotic", "visual": "American flag, unity imagery"}}
+     {{"time": 30, "source": "local", "category": "victory", "visual": "Success/winning imagery"}}
    ]
 
    IMPORTANT: Mix sources naturally based on what the speaker is saying at each moment.
@@ -858,10 +961,10 @@ Return ONLY valid JSON in this format:
       ],
       "broll_insertions": [
           {{"time": 5, "source": "youtube", "query": "Trump Iowa rally footage 2025", "visual": "Rally crowd footage"}},
-          {{"time": 12, "source": "local", "category": "crowd", "visual": "Stadium crowd energy"}},
+          {{"time": 12, "source": "youtube", "query": "Trump Iowa rally crowd footage", "visual": "Stadium crowd energy"}},
           {{"time": 20, "source": "youtube", "query": "Trump Iowa rally footage 2025", "visual": "Trump on stage"}},
-          {{"time": 28, "source": "local", "category": "patriotic", "visual": "American flags waving"}},
-          {{"time": 35, "source": "local", "category": "warfare", "visual": "Military power imagery"}}
+          {{"time": 28, "source": "local", "category": "victory", "visual": "Winning/success imagery"}},
+          {{"time": 35, "source": "local", "category": "power", "visual": "Dominance imagery"}}
       ],
       "topic_broll": ["Trump Iowa rally footage crowd 2025", "Trump rally live stream full"],
       "topic_broll_keywords": ["Trump", "rally", "Iowa", "crowd", "supporters", "speech"],
@@ -915,10 +1018,10 @@ Return ONLY valid JSON in this format:
           {{"word": "KING", "start": 143.0, "end": 143.4}}
       ],
       "broll_insertions": [
-          {{"time": 5, "source": "local", "category": "cathedrals", "visual": "Gothic cathedral interior"}},
-          {{"time": 12, "source": "local", "category": "faith", "visual": "Stained glass, crosses"}},
-          {{"time": 20, "source": "local", "category": "castles", "visual": "Medieval European castle"}},
-          {{"time": 28, "source": "local", "category": "cathedrals", "visual": "Cathedral spire at sunset"}}
+          {{"time": 5, "source": "youtube", "query": "Gothic cathedral interior footage", "visual": "Gothic cathedral interior"}},
+          {{"time": 12, "source": "local", "category": "faith", "visual": "Religious symbols, crosses"}},
+          {{"time": 20, "source": "youtube", "query": "Medieval European castle footage", "visual": "Medieval European castle"}},
+          {{"time": 28, "source": "local", "category": "history", "visual": "Historical footage"}}
       ],
       "topic_broll": ["Western civilization documentary footage", "European cathedral footage"],
       "topic_broll_keywords": ["Western", "civilization", "faith", "heritage", "tradition"],

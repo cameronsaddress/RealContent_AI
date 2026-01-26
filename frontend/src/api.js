@@ -394,3 +394,66 @@ export const updateClipEffects = async (clipId, effects) => {
   const { data } = await api.put(`/api/viral/viral-clips/${clipId}/effects`, effects);
   return data;
 };
+
+// Auto-Mode API
+export const getInfluencerAutoMode = async (influencerId) => {
+  const { data } = await api.get(`/api/viral/influencers/${influencerId}/auto-mode`);
+  return data;
+};
+
+export const updateInfluencerAutoMode = async (influencerId, settings) => {
+  const { data } = await api.put(`/api/viral/influencers/${influencerId}/auto-mode`, settings);
+  return data;
+};
+
+// Publishing API
+export const getPublishingConfigs = async () => {
+  const { data } = await api.get('/api/publishing/configs');
+  return data;
+};
+
+export const createPublishingConfig = async (config) => {
+  const { data } = await api.post('/api/publishing/configs', config);
+  return data;
+};
+
+export const updatePublishingConfig = async (configId, config) => {
+  const { data } = await api.put(`/api/publishing/configs/${configId}`, config);
+  return data;
+};
+
+export const deletePublishingConfig = async (configId) => {
+  const { data } = await api.delete(`/api/publishing/configs/${configId}`);
+  return data;
+};
+
+export const getPublishingQueue = async (status = null) => {
+  const params = status ? { status } : {};
+  const { data } = await api.get('/api/publishing/queue', { params });
+  return data;
+};
+
+export const approveQueueItem = async (itemId) => {
+  const { data } = await api.post(`/api/publishing/queue/${itemId}/approve`);
+  return data;
+};
+
+export const rejectQueueItem = async (itemId, reason = null) => {
+  const { data } = await api.post(`/api/publishing/queue/${itemId}/reject`, { reason });
+  return data;
+};
+
+export const publishNow = async (itemId) => {
+  const { data } = await api.post(`/api/publishing/queue/${itemId}/publish-now`);
+  return data;
+};
+
+export const getPublishingStats = async () => {
+  const { data } = await api.get('/api/publishing/stats');
+  return data;
+};
+
+export const getBlotatoAccounts = async () => {
+  const { data } = await api.get('/api/publishing/blotato-accounts');
+  return data;
+};

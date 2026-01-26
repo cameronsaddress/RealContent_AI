@@ -59,6 +59,32 @@ celery_app.conf.update(
             "schedule": crontab(minute="*/15"),
             "args": (None,),  # No specific ID = get next approved
         },
+
+        # === AUTO-MODE VIRAL CLIP FACTORY ===
+
+        # Check for new videos from auto-mode influencers (hourly)
+        "viral-auto-fetch-videos": {
+            "task": "tasks.viral.auto_fetch_influencer_videos",
+            "schedule": crontab(minute=0),  # Every hour at :00
+        },
+
+        # Auto-render pending clips (every 30 minutes)
+        "viral-auto-render-clips": {
+            "task": "tasks.viral.auto_render_pending_clips",
+            "schedule": crontab(minute="*/30"),  # Every 30 minutes
+        },
+
+        # Queue ready clips for publishing (every 2 hours)
+        "viral-auto-queue-publishing": {
+            "task": "tasks.viral.auto_queue_for_publishing",
+            "schedule": crontab(minute=15, hour="*/2"),  # Every 2 hours at :15
+        },
+
+        # Process publishing queue (every 15 minutes)
+        "viral-process-publishing-queue": {
+            "task": "tasks.viral.process_publishing_queue",
+            "schedule": crontab(minute="*/15"),  # Every 15 minutes
+        },
     },
 )
 

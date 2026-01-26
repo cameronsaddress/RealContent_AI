@@ -363,23 +363,24 @@ class ClipPersona(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True)  # e.g. "Trad West Bot"
     description = Column(Text)
-    
+
     # Analysis Configuration
     prompt_template = Column(Text, default="Identify the most viral moments...")
-    
+
     # Editing Configuration
     outro_style = Column(String, default="sunset_fade") # CapCut style preset
     font_style = Column(String, default="bold_impact")
     min_clip_duration = Column(Integer, default=30)
     max_clip_duration = Column(Integer, default=180)
-    
+
     # Publishing Configuration
     blotato_account_id = Column(String)  # ID for the specific Blotato account
-    
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     influencers = relationship("Influencer", back_populates="persona")
+    publishing_configs = relationship("PublishingConfig", back_populates="persona")
 
 
 class Influencer(Base):
@@ -391,14 +392,25 @@ class Influencer(Base):
     channel_id = Column(String)  # YouTube channel ID or Rumble username
     channel_url = Column(String)
     profile_image_url = Column(String)
-    
+
     persona_id = Column(Integer, ForeignKey("clip_personas.id"))
-    
+
+    # === AUTO-MODE SETTINGS ===
+    auto_mode_enabled = Column(Boolean, default=False)
+    auto_mode_enabled_at = Column(DateTime(timezone=True))  # CRITICAL: Only process videos published AFTER this timestamp
+    fetch_frequency_hours = Column(Integer, default=24)  # How often to check for new videos
+    last_fetch_at = Column(DateTime(timezone=True))  # Last successful fetch timestamp
+    max_videos_per_fetch = Column(Integer, default=5)  # Limit new videos per fetch cycle
+    auto_analyze_enabled = Column(Boolean, default=True)  # Auto-start analysis on new videos
+    auto_render_enabled = Column(Boolean, default=False)  # Auto-render all clips after analysis
+    auto_publish_enabled = Column(Boolean, default=False)  # Auto-publish ready clips
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     persona = relationship("ClipPersona", back_populates="influencers")
     videos = relationship("InfluencerVideo", back_populates="influencer", cascade="all, delete-orphan")
+    publishing_configs = relationship("PublishingConfig", back_populates="influencer")
 
 
 class InfluencerVideo(Base):
@@ -444,14 +456,15 @@ class ViralClip(Base):
     end_time = Column(Float)
     duration = Column(Float)
     climax_time = Column(Float)  # Peak intensity moment for B-roll montage trigger
-    
+
     # Content
     clip_type = Column(String)  # antagonistic, funny, controversial, inspirational
     virality_explanation = Column(Text)
     title = Column(String)
     description = Column(Text)
     hashtags = Column(JSONB)
-    
+    virality_score = Column(Float, default=0.5)  # Grok-assigned score (0-1) for publishing prioritization
+
     # Production
     edited_video_path = Column(Text)
     status = Column(String, default="pending")  # pending, rendering, ready, published, error
@@ -459,15 +472,18 @@ class ViralClip(Base):
     render_metadata = Column(JSONB)
     template_id = Column(Integer, ForeignKey("render_templates.id", ondelete="SET NULL"), nullable=True)
     recommended_template_id = Column(Integer, nullable=True)  # Grok's recommendation (before user override)
-    
+
     # Publishing
     blotato_post_id = Column(String)
     published_at = Column(DateTime(timezone=True))
-    
+    publishing_status = Column(String, default="unpublished")  # unpublished, queued, approved, published, skipped
+    skip_reason = Column(Text)  # Why clip was skipped for publishing
+
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     source_video = relationship("InfluencerVideo", back_populates="clips")
+    publishing_queue_items = relationship("PublishingQueueItem", back_populates="clip")
 
 
 class RenderTemplate(Base):
@@ -523,6 +539,90 @@ class BRollClip(Base):
     last_used_at = Column(DateTime(timezone=True))
 
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+# ==================== AUTO-MODE PUBLISHING ====================
+
+class PublishingConfig(Base):
+    """
+    Publishing schedule and platform configuration per influencer/persona.
+    Controls when and how clips are automatically published to social platforms.
+    """
+    __tablename__ = "publishing_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Ownership - either influencer-specific OR persona-wide default
+    influencer_id = Column(Integer, ForeignKey("influencers.id", ondelete="CASCADE"), nullable=True)
+    persona_id = Column(Integer, ForeignKey("clip_personas.id", ondelete="CASCADE"), nullable=True)
+
+    # Blotato Account Selection
+    blotato_account_id = Column(String(100), nullable=False)
+    blotato_account_name = Column(String(200))  # Display name for UI
+
+    # Platform Selection (which platforms to post to)
+    platforms = Column(JSONB, default=lambda: ["tiktok", "instagram_reels", "youtube_shorts"])
+
+    # Posting Schedule
+    enabled = Column(Boolean, default=False)
+    posts_per_day = Column(Integer, default=3)  # Max clips to publish per day
+    posting_hours = Column(JSONB, default=lambda: [9, 13, 18])  # Hours (UTC) to post at
+    posting_days = Column(JSONB, default=lambda: [0, 1, 2, 3, 4, 5, 6])  # Days of week (0=Monday)
+
+    # Content Rules
+    min_virality_score = Column(Float, default=0.0)  # Skip clips below threshold
+    clip_types_allowed = Column(JSONB, default=lambda: ["antagonistic", "controversial", "funny", "inspirational"])
+    require_manual_approval = Column(Boolean, default=True)  # Queue for approval vs auto-post
+
+    # Rate Limiting (best practices)
+    min_hours_between_posts = Column(Integer, default=4)  # Avoid spam detection
+    max_posts_per_platform_per_day = Column(Integer, default=2)
+
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    influencer = relationship("Influencer", back_populates="publishing_configs")
+    persona = relationship("ClipPersona", back_populates="publishing_configs")
+    queue_items = relationship("PublishingQueueItem", back_populates="config")
+
+
+class PublishingQueueItem(Base):
+    """
+    Queue of clips ready/scheduled for publishing.
+    Supports approval workflow and scheduled posting.
+    """
+    __tablename__ = "publishing_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clip_id = Column(Integer, ForeignKey("viral_clips.id", ondelete="CASCADE"), nullable=False)
+    config_id = Column(Integer, ForeignKey("publishing_configs.id", ondelete="CASCADE"), nullable=False)
+
+    # Scheduling
+    scheduled_time = Column(DateTime(timezone=True))  # When to publish (null = ASAP)
+    priority = Column(Integer, default=50)  # Higher = sooner (for manual bumps)
+
+    # Status
+    status = Column(String(50), default="pending")  # pending, approved, publishing, published, failed, skipped
+
+    # Platform targeting (subset of config.platforms for this specific post)
+    target_platforms = Column(JSONB, default=list)
+
+    # Results
+    blotato_post_ids = Column(JSONB, default=dict)  # {platform: post_id}
+    published_at = Column(DateTime(timezone=True))
+    error_message = Column(Text)
+
+    # Approval workflow
+    requires_approval = Column(Boolean, default=True)
+    approved_by = Column(String(100))  # User who approved
+    approved_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # Relationships
+    clip = relationship("ViralClip", back_populates="publishing_queue_items")
+    config = relationship("PublishingConfig", back_populates="queue_items")
 
 
 def get_db():

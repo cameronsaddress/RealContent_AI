@@ -3,7 +3,11 @@ import api, {
     getInfluencers, createInfluencer, fetchInfluencerVideos,
     analyzeVideo, getVideoDetails, getInfluencerVideos, getViralClips, API_URL,
     getBrollClips, uploadBrollFromYoutube, getBrollUploadStatus, retagBrollClips, deleteBrollClip,
-    getEffectsCatalog, updateClipEffects, getDownloadProgress
+    getEffectsCatalog, updateClipEffects, getDownloadProgress,
+    getInfluencerAutoMode, updateInfluencerAutoMode,
+    getPublishingStats, getPublishingQueue, getPublishingConfigs,
+    createPublishingConfig, updatePublishingConfig, deletePublishingConfig,
+    approveQueueItem, rejectQueueItem, publishNow, getBlotatoAccounts
 } from '../api';
 import './ViralManager.css'; // We'll assume standard styling or create it
 
@@ -40,6 +44,28 @@ const ViralManager = () => {
     const [brollTagging, setBrollTagging] = useState(false);
     const [brollFilter, setBrollFilter] = useState('all');
 
+    // For Auto-Mode
+    const [autoModeModalInfluencer, setAutoModeModalInfluencer] = useState(null);
+    const [autoModeSettings, setAutoModeSettings] = useState(null);
+    const [autoModeLoading, setAutoModeLoading] = useState(false);
+
+    // For Publishing
+    const [publishingStats, setPublishingStats] = useState(null);
+    const [publishingQueue, setPublishingQueue] = useState([]);
+    const [publishingConfigs, setPublishingConfigs] = useState([]);
+    const [queueFilter, setQueueFilter] = useState('all');
+    const [showConfigModal, setShowConfigModal] = useState(false);
+    const [editingConfig, setEditingConfig] = useState(null);
+    const [configForm, setConfigForm] = useState({
+        blotato_account_id: '',
+        platforms: ['tiktok'],
+        posts_per_day: 3,
+        posting_hours: [9, 12, 18],
+        days_active: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+        require_approval: true,
+        is_active: true
+    });
+
     // Download progress tracking
     const [downloadProgress, setDownloadProgress] = useState({}); // { videoId: { bytes, speed, fragment } }
 
@@ -48,7 +74,138 @@ const ViralManager = () => {
         loadClips();
         loadTemplates();
         loadBroll();
+        loadPublishingData();
     }, []);
+
+    const loadPublishingData = async () => {
+        try {
+            const [statsData, queueData, configsData] = await Promise.all([
+                getPublishingStats(),
+                getPublishingQueue(),
+                getPublishingConfigs()
+            ]);
+            setPublishingStats(statsData);
+            setPublishingQueue(queueData);
+            setPublishingConfigs(configsData);
+        } catch (e) {
+            console.error('Failed to load publishing data:', e);
+        }
+    };
+
+    const handleApproveQueueItem = async (itemId) => {
+        try {
+            await approveQueueItem(itemId);
+            loadPublishingData();
+        } catch (e) {
+            alert('Failed to approve: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    const handleRejectQueueItem = async (itemId) => {
+        const reason = window.prompt('Rejection reason (optional):');
+        try {
+            await rejectQueueItem(itemId, reason);
+            loadPublishingData();
+        } catch (e) {
+            alert('Failed to reject: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    const handlePublishNow = async (itemId) => {
+        if (!window.confirm('Publish this clip immediately?')) return;
+        try {
+            await publishNow(itemId);
+            loadPublishingData();
+        } catch (e) {
+            alert('Failed to publish: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    const openConfigModal = (config = null) => {
+        if (config) {
+            setEditingConfig(config);
+            setConfigForm({
+                blotato_account_id: config.blotato_account_id || '',
+                platforms: config.platforms || ['tiktok'],
+                posts_per_day: config.posts_per_day || 3,
+                posting_hours: config.posting_hours || [9, 12, 18],
+                days_active: config.days_active || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+                require_approval: config.require_approval !== false,
+                is_active: config.is_active !== false
+            });
+        } else {
+            setEditingConfig(null);
+            setConfigForm({
+                blotato_account_id: '',
+                platforms: ['tiktok'],
+                posts_per_day: 3,
+                posting_hours: [9, 12, 18],
+                days_active: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+                require_approval: true,
+                is_active: true
+            });
+        }
+        setShowConfigModal(true);
+    };
+
+    const savePublishingConfig = async () => {
+        try {
+            if (editingConfig) {
+                await updatePublishingConfig(editingConfig.id, configForm);
+            } else {
+                await createPublishingConfig(configForm);
+            }
+            setShowConfigModal(false);
+            loadPublishingData();
+        } catch (e) {
+            alert('Failed to save config: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    const handleDeleteConfig = async (configId) => {
+        if (!window.confirm('Delete this publishing configuration?')) return;
+        try {
+            await deletePublishingConfig(configId);
+            loadPublishingData();
+        } catch (e) {
+            alert('Failed to delete: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    const togglePlatform = (platform) => {
+        const platforms = configForm.platforms.includes(platform)
+            ? configForm.platforms.filter(p => p !== platform)
+            : [...configForm.platforms, platform];
+        setConfigForm({ ...configForm, platforms });
+    };
+
+    const toggleDay = (day) => {
+        const days = configForm.days_active.includes(day)
+            ? configForm.days_active.filter(d => d !== day)
+            : [...configForm.days_active, day];
+        setConfigForm({ ...configForm, days_active: days });
+    };
+
+    const updatePostingHours = (value) => {
+        const hours = value.split(',').map(h => parseInt(h.trim())).filter(h => !isNaN(h) && h >= 0 && h <= 23);
+        setConfigForm({ ...configForm, posting_hours: hours });
+    };
+
+    const filteredQueue = publishingQueue.filter(item => {
+        if (queueFilter === 'all') return true;
+        return item.status === queueFilter;
+    });
+
+    const formatPublishDate = (dateStr) => {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+    };
 
     // Poll download progress for videos in "downloading" state
     useEffect(() => {
@@ -145,6 +302,47 @@ const ViralManager = () => {
             loadBroll();
         } catch (e) {
             alert('Delete failed: ' + (e.response?.data?.detail || e.message));
+        }
+    };
+
+    // Auto-Mode Functions
+    const handleAutoModeToggle = async (influencer, e) => {
+        e.stopPropagation();
+        try {
+            const newState = !influencer.auto_mode_enabled;
+            await updateInfluencerAutoMode(influencer.id, { auto_mode_enabled: newState });
+            loadInfluencers();
+        } catch (err) {
+            alert('Failed to toggle auto-mode: ' + (err.response?.data?.detail || err.message));
+        }
+    };
+
+    const openAutoModeSettings = async (influencer, e) => {
+        e.stopPropagation();
+        setAutoModeLoading(true);
+        try {
+            const settings = await getInfluencerAutoMode(influencer.id);
+            setAutoModeSettings(settings);
+            setAutoModeModalInfluencer(influencer);
+        } catch (err) {
+            alert('Failed to load auto-mode settings: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setAutoModeLoading(false);
+        }
+    };
+
+    const saveAutoModeSettings = async () => {
+        if (!autoModeModalInfluencer || !autoModeSettings) return;
+        setAutoModeLoading(true);
+        try {
+            await updateInfluencerAutoMode(autoModeModalInfluencer.id, autoModeSettings);
+            setAutoModeModalInfluencer(null);
+            setAutoModeSettings(null);
+            loadInfluencers();
+        } catch (err) {
+            alert('Failed to save settings: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setAutoModeLoading(false);
         }
     };
 
@@ -495,19 +693,94 @@ const ViralManager = () => {
                     <button className={activeTab === 'videos' ? 'active' : ''} onClick={() => setActiveTab('videos')}>Videos</button>
                     <button className={activeTab === 'clips' ? 'active' : ''} onClick={() => setActiveTab('clips')}>Clips</button>
                     <button className={activeTab === 'broll' ? 'active' : ''} onClick={() => setActiveTab('broll')}>B-Roll</button>
+                    <button className={activeTab === 'publishing' ? 'active' : ''} onClick={() => setActiveTab('publishing')}>
+                        Publishing {publishingStats?.pending_approval > 0 && <span className="tab-badge">{publishingStats.pending_approval}</span>}
+                    </button>
                 </div>
             </div>
 
             <div className="content">
                 {activeTab === 'influencers' && (
                     <div className="influencers-panel">
-                        <button className="add-btn" onClick={() => setShowAddModal(true)}>+ Add Influencer</button>
-                        <div className="card-grid">
+                        <div className="influencer-grid">
+                            {/* Add Influencer Card */}
+                            <div className="add-influencer-card" onClick={() => setShowAddModal(true)}>
+                                <div className="add-icon">+</div>
+                                <span>Add Influencer</span>
+                            </div>
                             {influencers.map(inf => (
-                                <div key={inf.id} className="card influencer-card" onClick={() => handleSelectInfluencer(inf)}>
-                                    <h3>{inf.name}</h3>
-                                    <p className="platform-tag">{inf.platform}</p>
-                                    <p className="url">{inf.channel_url}</p>
+                                <div key={inf.id} className="influencer-card-v2" onClick={() => handleSelectInfluencer(inf)}>
+                                    {/* Banner/Thumbnail */}
+                                    <div className="inf-card-banner">
+                                        {inf.thumbnail_url ? (
+                                            <img src={inf.thumbnail_url} alt="" onError={(e) => e.target.style.display = 'none'} />
+                                        ) : (
+                                            <div className="inf-banner-placeholder">
+                                                <span>{inf.name.charAt(0).toUpperCase()}</span>
+                                            </div>
+                                        )}
+                                        <div className="inf-banner-overlay"></div>
+                                        {/* Auto-mode toggle in corner */}
+                                        <div className="inf-auto-toggle" onClick={(e) => e.stopPropagation()}>
+                                            <label className="toggle-switch-sm" title={inf.auto_mode_enabled ? 'Auto-mode ON' : 'Auto-mode OFF'}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={inf.auto_mode_enabled || false}
+                                                    onChange={(e) => handleAutoModeToggle(inf, e)}
+                                                />
+                                                <span className="slider-sm"></span>
+                                            </label>
+                                        </div>
+                                        {/* Platform badge */}
+                                        <span className={`inf-platform-badge ${inf.platform}`}>{inf.platform}</span>
+                                    </div>
+
+                                    {/* Card Content */}
+                                    <div className="inf-card-content">
+                                        <div className="inf-card-header">
+                                            <h3>{inf.name}</h3>
+                                            {inf.auto_mode_enabled && <span className="inf-auto-badge">AUTO</span>}
+                                        </div>
+
+                                        {/* Stats Row */}
+                                        <div className="inf-stats-row">
+                                            <div className="inf-stat">
+                                                <span className="inf-stat-value">{inf.video_count || 0}</span>
+                                                <span className="inf-stat-label">Videos</span>
+                                            </div>
+                                            <div className="inf-stat">
+                                                <span className="inf-stat-value">{inf.clip_count || 0}</span>
+                                                <span className="inf-stat-label">Clips</span>
+                                            </div>
+                                            <div className="inf-stat">
+                                                <span className="inf-stat-value ready">{inf.ready_clips || 0}</span>
+                                                <span className="inf-stat-label">Ready</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Last Activity */}
+                                        {inf.last_fetch_at && (
+                                            <div className="inf-last-activity">
+                                                Last fetched {new Date(inf.last_fetch_at).toLocaleDateString()}
+                                            </div>
+                                        )}
+
+                                        {/* Actions */}
+                                        <div className="inf-card-actions">
+                                            <button
+                                                className="inf-settings-btn"
+                                                onClick={(e) => openAutoModeSettings(inf, e)}
+                                            >
+                                                Settings
+                                            </button>
+                                            <button
+                                                className="inf-view-btn"
+                                                onClick={(e) => { e.stopPropagation(); handleSelectInfluencer(inf); }}
+                                            >
+                                                View Videos
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -876,6 +1149,137 @@ const ViralManager = () => {
                         )}
                     </div>
                 )}
+
+                {/* Publishing Tab */}
+                {activeTab === 'publishing' && (
+                    <div className="publishing-panel">
+                        {/* Stats Bar */}
+                        {publishingStats && (
+                            <div className="publishing-stats-bar">
+                                <div className="pub-stat-item">
+                                    <span className="pub-stat-value pending">{publishingStats.pending_approval || 0}</span>
+                                    <span className="pub-stat-label">Pending</span>
+                                </div>
+                                <div className="pub-stat-item">
+                                    <span className="pub-stat-value scheduled">{publishingStats.scheduled || 0}</span>
+                                    <span className="pub-stat-label">Scheduled</span>
+                                </div>
+                                <div className="pub-stat-item">
+                                    <span className="pub-stat-value published">{publishingStats.published_today || 0}</span>
+                                    <span className="pub-stat-label">Today</span>
+                                </div>
+                                <div className="pub-stat-item">
+                                    <span className="pub-stat-value failed">{publishingStats.failed_recent || 0}</span>
+                                    <span className="pub-stat-label">Failed</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Queue Section */}
+                        <div className="publishing-section">
+                            <div className="section-header">
+                                <h3>Publishing Queue</h3>
+                                <div className="section-controls">
+                                    <select value={queueFilter} onChange={(e) => setQueueFilter(e.target.value)}>
+                                        <option value="all">All Status</option>
+                                        <option value="pending_approval">Pending Approval</option>
+                                        <option value="approved">Approved</option>
+                                        <option value="scheduled">Scheduled</option>
+                                        <option value="published">Published</option>
+                                        <option value="failed">Failed</option>
+                                    </select>
+                                    <button onClick={loadPublishingData}>Refresh</button>
+                                </div>
+                            </div>
+
+                            {filteredQueue.length === 0 ? (
+                                <div className="empty-state">
+                                    <p>No items in the queue.</p>
+                                </div>
+                            ) : (
+                                <div className="queue-list">
+                                    {filteredQueue.map(item => (
+                                        <div key={item.id} className={`queue-item ${item.status}`}>
+                                            <div className="queue-item-thumb">
+                                                {item.clip?.edited_video_path && (
+                                                    <video
+                                                        src={`${API_URL}/api/viral/file/${item.clip.edited_video_path.split('/').pop()}`}
+                                                        muted
+                                                        onMouseEnter={e => e.target.play().catch(() => {})}
+                                                        onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }}
+                                                    />
+                                                )}
+                                            </div>
+                                            <div className="queue-item-info">
+                                                <h4>{item.clip?.title || `Clip #${item.clip_id}`}</h4>
+                                                <div className="queue-item-meta">
+                                                    <span className={`queue-status-badge ${item.status}`}>{item.status?.replace('_', ' ')}</span>
+                                                    <span className="queue-platforms">{item.platforms?.join(', ') || 'Not set'}</span>
+                                                    {item.scheduled_time && (
+                                                        <span className="queue-scheduled">{formatPublishDate(item.scheduled_time)}</span>
+                                                    )}
+                                                </div>
+                                                {item.rejection_reason && <p className="queue-rejection">Rejected: {item.rejection_reason}</p>}
+                                                {item.error_message && <p className="queue-error">{item.error_message}</p>}
+                                            </div>
+                                            <div className="queue-item-actions">
+                                                {item.status === 'pending_approval' && (
+                                                    <>
+                                                        <button className="approve-btn" onClick={() => handleApproveQueueItem(item.id)}>Approve</button>
+                                                        <button className="reject-btn" onClick={() => handleRejectQueueItem(item.id)}>Reject</button>
+                                                    </>
+                                                )}
+                                                {['approved', 'scheduled'].includes(item.status) && (
+                                                    <button className="publish-now-btn" onClick={() => handlePublishNow(item.id)}>Publish Now</button>
+                                                )}
+                                                {item.status === 'failed' && (
+                                                    <button className="retry-btn" onClick={() => handlePublishNow(item.id)}>Retry</button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Configurations Section */}
+                        <div className="publishing-section">
+                            <div className="section-header">
+                                <h3>Publishing Configurations</h3>
+                                <button className="add-btn" onClick={() => openConfigModal()}>+ Add Config</button>
+                            </div>
+
+                            {publishingConfigs.length === 0 ? (
+                                <div className="empty-state">
+                                    <p>No publishing configurations yet.</p>
+                                </div>
+                            ) : (
+                                <div className="configs-grid">
+                                    {publishingConfigs.map(config => (
+                                        <div key={config.id} className={`config-card ${config.is_active ? 'active' : 'inactive'}`}>
+                                            <div className="config-card-header">
+                                                <h4>{config.blotato_account_id || 'Unnamed'}</h4>
+                                                <span className={`config-status ${config.is_active ? 'active' : ''}`}>
+                                                    {config.is_active ? 'Active' : 'Paused'}
+                                                </span>
+                                            </div>
+                                            <div className="config-details">
+                                                <p><strong>Platforms:</strong> {config.platforms?.join(', ') || 'None'}</p>
+                                                <p><strong>Posts/Day:</strong> {config.posts_per_day}</p>
+                                                <p><strong>Hours:</strong> {config.posting_hours?.join(', ')}</p>
+                                                <p><strong>Approval:</strong> {config.require_approval ? 'Required' : 'Auto'}</p>
+                                            </div>
+                                            <div className="config-card-actions">
+                                                <button onClick={() => openConfigModal(config)}>Edit</button>
+                                                <button className="delete-btn" onClick={() => handleDeleteConfig(config.id)}>Delete</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div >
             {
                 showAddModal && (
@@ -930,6 +1334,210 @@ const ViralManager = () => {
                 )
             }
             <EffectsModal />
+
+            {/* Auto-Mode Settings Modal */}
+            {autoModeModalInfluencer && autoModeSettings && (
+                <div className="modal-overlay" onClick={() => { setAutoModeModalInfluencer(null); setAutoModeSettings(null); }}>
+                    <div className="modal auto-mode-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Auto-Mode Settings: {autoModeModalInfluencer.name}</h3>
+                            <button className="close-btn" onClick={() => { setAutoModeModalInfluencer(null); setAutoModeSettings(null); }}>×</button>
+                        </div>
+                        <div className="auto-mode-form">
+                            <div className="form-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={autoModeSettings.auto_mode_enabled || false}
+                                        onChange={(e) => setAutoModeSettings({ ...autoModeSettings, auto_mode_enabled: e.target.checked })}
+                                    />
+                                    Enable Auto-Mode
+                                </label>
+                                <p className="help-text">When enabled, automatically fetches new videos from this channel</p>
+                            </div>
+
+                            <div className="form-group">
+                                <label>Fetch Frequency (hours)</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    value={autoModeSettings.fetch_frequency_hours || 24}
+                                    onChange={(e) => setAutoModeSettings({ ...autoModeSettings, fetch_frequency_hours: parseInt(e.target.value) || 24 })}
+                                />
+                                <p className="help-text">How often to check for new videos (1-168 hours)</p>
+                            </div>
+
+                            <div className="form-group">
+                                <label>Max Videos Per Fetch</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="20"
+                                    value={autoModeSettings.max_videos_per_fetch || 5}
+                                    onChange={(e) => setAutoModeSettings({ ...autoModeSettings, max_videos_per_fetch: parseInt(e.target.value) || 5 })}
+                                />
+                                <p className="help-text">Maximum new videos to process per fetch cycle</p>
+                            </div>
+
+                            <div className="form-divider"></div>
+
+                            <div className="form-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={autoModeSettings.auto_analyze_enabled !== false}
+                                        onChange={(e) => setAutoModeSettings({ ...autoModeSettings, auto_analyze_enabled: e.target.checked })}
+                                    />
+                                    Auto-Analyze Videos
+                                </label>
+                                <p className="help-text">Automatically analyze new videos with Grok AI</p>
+                            </div>
+
+                            <div className="form-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={autoModeSettings.auto_render_enabled !== false}
+                                        onChange={(e) => setAutoModeSettings({ ...autoModeSettings, auto_render_enabled: e.target.checked })}
+                                    />
+                                    Auto-Render Clips
+                                </label>
+                                <p className="help-text">Automatically render identified viral clips</p>
+                            </div>
+
+                            <div className="form-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={autoModeSettings.auto_publish_enabled || false}
+                                        onChange={(e) => setAutoModeSettings({ ...autoModeSettings, auto_publish_enabled: e.target.checked })}
+                                    />
+                                    Auto-Queue for Publishing
+                                </label>
+                                <p className="help-text">Automatically add rendered clips to publishing queue</p>
+                            </div>
+
+                            {autoModeSettings.auto_mode_enabled_at && (
+                                <div className="auto-mode-info">
+                                    <p><strong>Enabled since:</strong> {new Date(autoModeSettings.auto_mode_enabled_at).toLocaleString()}</p>
+                                    <p className="help-text">Only videos published after this date will be processed</p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="modal-actions">
+                            <button className="cancel-btn" onClick={() => { setAutoModeModalInfluencer(null); setAutoModeSettings(null); }}>Cancel</button>
+                            <button className="save-btn" onClick={saveAutoModeSettings} disabled={autoModeLoading}>
+                                {autoModeLoading ? 'Saving...' : 'Save Settings'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Publishing Config Modal */}
+            {showConfigModal && (
+                <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
+                    <div className="modal config-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>{editingConfig ? 'Edit Configuration' : 'New Publishing Configuration'}</h3>
+                            <button className="close-btn" onClick={() => setShowConfigModal(false)}>×</button>
+                        </div>
+                        <div className="config-form">
+                            <div className="form-group">
+                                <label>Blotato Account ID</label>
+                                <input
+                                    type="text"
+                                    value={configForm.blotato_account_id}
+                                    onChange={e => setConfigForm({ ...configForm, blotato_account_id: e.target.value })}
+                                    placeholder="e.g., main_account"
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label>Platforms</label>
+                                <div className="platform-toggles">
+                                    {['tiktok', 'instagram', 'youtube', 'twitter', 'facebook'].map(platform => (
+                                        <button
+                                            key={platform}
+                                            type="button"
+                                            className={`platform-toggle ${configForm.platforms.includes(platform) ? 'active' : ''}`}
+                                            onClick={() => togglePlatform(platform)}
+                                        >
+                                            {platform}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="form-group">
+                                <label>Posts Per Day</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="20"
+                                    value={configForm.posts_per_day}
+                                    onChange={e => setConfigForm({ ...configForm, posts_per_day: parseInt(e.target.value) || 1 })}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label>Posting Hours (comma-separated, 0-23)</label>
+                                <input
+                                    type="text"
+                                    value={configForm.posting_hours.join(', ')}
+                                    onChange={e => updatePostingHours(e.target.value)}
+                                    placeholder="e.g., 9, 12, 18"
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label>Active Days</label>
+                                <div className="day-toggles">
+                                    {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => (
+                                        <button
+                                            key={day}
+                                            type="button"
+                                            className={`day-toggle ${configForm.days_active.includes(day) ? 'active' : ''}`}
+                                            onClick={() => toggleDay(day)}
+                                        >
+                                            {day.substring(0, 3)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="form-group checkbox-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={configForm.require_approval}
+                                        onChange={e => setConfigForm({ ...configForm, require_approval: e.target.checked })}
+                                    />
+                                    Require Manual Approval
+                                </label>
+                            </div>
+
+                            <div className="form-group checkbox-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={configForm.is_active}
+                                        onChange={e => setConfigForm({ ...configForm, is_active: e.target.checked })}
+                                    />
+                                    Configuration Active
+                                </label>
+                            </div>
+                        </div>
+                        <div className="modal-actions">
+                            <button className="cancel-btn" onClick={() => setShowConfigModal(false)}>Cancel</button>
+                            <button className="save-btn" onClick={savePublishingConfig}>
+                                {editingConfig ? 'Save Changes' : 'Create'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };

@@ -2051,139 +2051,98 @@ def generate_cold_open_hook(
     visual_hook_time: float,
     output_path: Path,
     hook_phrase: str = None,
-    hook_duration: float = 1.2,
+    hook_duration: float = 1.5,
     start_time: float = 0,
     font: str = "Impact"
 ) -> bool:
     """
-    Generate a cold open hook clip - a teaser frame with zoom punch to grab attention.
+    Generate a cold open hook clip - actual video footage of the most intense moment.
+
+    This extracts REAL VIDEO (not a static frame) centered on the hook moment,
+    with the speaker's voice and motion intact. Effects are applied to make it pop.
 
     Args:
         source_video: Path to the source video
-        visual_hook_time: Absolute timestamp in source for the hook frame
+        visual_hook_time: Absolute timestamp in source for the hook moment CENTER
         output_path: Where to save the hook clip
         hook_phrase: Optional text to overlay (e.g., "You're a LIAR")
-        hook_duration: Duration of the hook clip (default 1.2s)
+        hook_duration: Duration of the hook clip (default 1.5s)
         start_time: Clip start time (for relative timestamp calculation)
         font: Font to use for text overlay
 
     Returns:
         True if successful, False otherwise
     """
-    temp_dir = Path("/tmp")
-    uid = uuid.uuid4().hex[:8]
-    temp_frame = temp_dir / f"hook_frame_{uid}.png"
-
     try:
-        print(f"[ColdOpen] Generating hook at t={visual_hook_time}s, phrase='{hook_phrase or 'none'}'")
+        # Calculate extraction window - center on visual_hook_time
+        # Start slightly before the hook moment so viewer sees the buildup
+        extract_start = max(0, visual_hook_time - (hook_duration * 0.3))  # 30% before, 70% after
 
-        # 1. Extract the hook frame from source video
-        extract_cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(visual_hook_time),
-            "-i", source_video,
-            "-vframes", "1",
-            "-q:v", "2",
-            str(temp_frame)
+        print(f"[ColdOpen] Extracting {hook_duration}s video at t={extract_start:.1f}s (hook moment at {visual_hook_time}s)")
+        print(f"[ColdOpen] Hook phrase: '{hook_phrase or 'none'}'")
+
+        # Build video filter chain for the cold open
+        # - Scale to 9:16 vertical
+        # - Zoom punch effect (starts zoomed, settles)
+        # - High contrast + saturation for impact
+        # - White flash at start
+        # - Optional text overlay
+
+        video_filters = [
+            # Scale up slightly (1.08x) then crop to 9:16 - creates tight zoom effect
+            "scale=iw*1.08:ih*1.08",
+            "crop=1080:1920",
+            # White flash fade in at start
+            "fade=t=in:st=0:d=0.12:color=white",
+            # Fade out at end for smooth transition
+            f"fade=t=out:st={hook_duration - 0.15}:d=0.15",
+            # High contrast + saturation boost for impact
+            "eq=contrast=1.25:saturation=1.3:brightness=0.03",
         ]
-        result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=10)
-
-        if not temp_frame.exists():
-            print(f"[ColdOpen] Failed to extract frame: {result.stderr[:200] if result.stderr else 'no output'}")
-            return False
-
-        # 2. Build filter complex for hook video:
-        #    - Scale to 1080x1920
-        #    - Add zoom punch (1.0 -> 1.15 over duration)
-        #    - Add RGB split flash effect
-        #    - Add brightness flash (white flash at start)
-        #    - Optional: text overlay
-
-        filters = []
-
-        # Base: scale + crop to 9:16
-        filters.append("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920")
-
-        # Zoom punch: start zoomed in, zoom out slightly for impact
-        # This creates a "punch in" effect
-        filters.append(f"zoompan=z='1.15-0.15*on/({hook_duration}*30)':d={int(hook_duration*30)}:s=1080x1920:fps=30")
-
-        # RGB split glitch effect (subtle)
-        filters.append("split=3[r][g][b]")
-        filters.append("[r]lutrgb=g=0:b=0,crop=1080:1920:8:0[r1]")
-        filters.append("[g]lutrgb=r=0:b=0[g1]")
-        filters.append("[b]lutrgb=r=0:g=0,crop=1080:1920:-8:0[b1]")
-        filters.append("[r1][g1]blend=all_mode=screen[rg]")
-        filters.append("[rg][b1]blend=all_mode=screen")
-
-        # Brightness flash at start (fade from white)
-        filters.append(f"fade=t=in:st=0:d=0.15:color=white")
-
-        # High contrast + saturation boost
-        filters.append("eq=contrast=1.3:saturation=1.4:brightness=0.05")
-
-        filter_str = ",".join(filters[:3])  # Just scale, zoompan, and fade for now (simpler)
-
-        # Actually, let's simplify - zoompan from image is complex
-        # Just use a simple approach: create video from image with effects
-
-        # Simplified filter: scale, add motion, RGB shift, brightness flash
-        simple_filter = (
-            f"loop=loop={int(hook_duration*30)}:size=1:start=0,"
-            f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-            f"zoompan=z='1.12-0.12*(on/{int(hook_duration*30)})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(hook_duration*30)}:s=1080x1920:fps=30,"
-            f"fade=t=in:st=0:d=0.12:color=white,"
-            f"eq=contrast=1.25:saturation=1.3:brightness=0.03"
-        )
 
         # Add text overlay if hook_phrase is provided
-        if hook_phrase and len(hook_phrase) > 0:
+        if hook_phrase and len(hook_phrase.strip()) > 0:
             # Sanitize text for FFmpeg
-            safe_text = hook_phrase.upper().replace("'", "'\\''").replace(":", "\\:")
-            # Large bold text, center screen, with shadow/outline
+            safe_text = hook_phrase.upper().replace("'", "'\\''").replace(":", "\\:").replace('"', '\\"')
+            # Large bold text at bottom third, with glow effect
             text_filter = (
-                f",drawtext=text='{safe_text}':"
+                f"drawtext=text='{safe_text}':"
                 f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                f"fontsize=90:fontcolor=white:borderw=4:bordercolor=black:"
-                f"shadowx=3:shadowy=3:shadowcolor=black@0.7:"
-                f"x=(w-text_w)/2:y=(h-text_h)/2+100"
+                f"fontsize=72:fontcolor=white:borderw=5:bordercolor=black:"
+                f"shadowx=4:shadowy=4:shadowcolor=black@0.8:"
+                f"x=(w-text_w)/2:y=h*0.7"
             )
-            simple_filter += text_filter
+            video_filters.append(text_filter)
 
-        # 3. Generate the hook video
-        # Note: Input order matters - image first, then audio generator
+        filter_str = ",".join(video_filters)
+
+        # Extract actual video segment with audio
         hook_cmd = [
             "ffmpeg", "-y",
-            "-loop", "1", "-i", str(temp_frame),  # Image input (looped)
-            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",  # Silent audio input
+            "-ss", str(extract_start),
+            "-i", source_video,
             "-t", str(hook_duration),
-            "-vf", simple_filter,
-            "-c:v", "libx264", "-preset", "ultrafast",
+            "-vf", filter_str,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
             "-r", "30",
-            "-c:a", "aac", "-b:a", "128k",
-            "-map", "0:v", "-map", "1:a",  # Map video from input 0, audio from input 1
-            "-shortest",
             str(output_path)
         ]
 
-        result = subprocess.run(hook_cmd, capture_output=True, text=True, timeout=30)
+        print(f"[ColdOpen] Running FFmpeg extraction...")
+        result = subprocess.run(hook_cmd, capture_output=True, text=True, timeout=60)
 
-        # Cleanup temp frame
-        if temp_frame.exists():
-            temp_frame.unlink()
-
-        if output_path.exists() and output_path.stat().st_size > 1000:
-            print(f"[ColdOpen] Generated hook clip: {output_path} ({output_path.stat().st_size // 1024}KB)")
+        if output_path.exists() and output_path.stat().st_size > 10000:
+            info = get_video_info(str(output_path))
+            print(f"[ColdOpen] Generated hook clip: {output_path.name} ({info['duration']:.1f}s, {output_path.stat().st_size // 1024}KB)")
             return True
         else:
-            print(f"[ColdOpen] Hook generation failed: {result.stderr[-300:] if result.stderr else 'no output'}")
+            print(f"[ColdOpen] FFmpeg failed: {result.stderr[-500:] if result.stderr else 'no output'}")
             return False
 
     except Exception as e:
         print(f"[ColdOpen] Error generating hook: {e}")
-        if temp_frame.exists():
-            temp_frame.unlink()
         return False
 
 

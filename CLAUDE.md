@@ -588,6 +588,70 @@ Return ONLY valid JSON:
 
 ---
 
+## B-Roll Category System
+
+B-roll clips are matched to viral content using a semantic category system. Grok acts as a "movie director" and assigns B-roll insertions with specific categories.
+
+### Valid B-Roll Categories (28 total)
+
+Grok can ONLY use these category names. Any other category name will fail to match:
+
+| Group | Categories |
+|-------|------------|
+| **Destruction & Conflict** | `war`, `chaos`, `explosions`, `storms`, `fire` |
+| **Money & Success** | `money`, `luxury`, `wealth`, `city` |
+| **Fitness & Strength** | `gym`, `sports`, `boxing`, `strength` |
+| **Patriotic & Faith** | `patriotic`, `crowd`, `faith`, `cathedrals` |
+| **Animals & Nature** | `lions`, `eagles`, `wolves`, `nature` |
+| **Military Tech** | `jets`, `navy`, `helicopters` |
+| **Vehicles** | `cars`, `racing` |
+| **Other** | `history`, `people`, `victory`, `power` |
+
+### B-Roll Sources
+
+Each B-roll insertion can come from:
+- **`source: "local"`** - Matches from `assets/broll/` using category + filename prefixes
+- **`source: "youtube"`** - Grok provides search query, system fetches YouTube video and extracts face-free segments
+
+### B-Roll Selection Flow
+
+```
+1. Grok returns broll_insertions: [{time, category, source, visual}]
+2. For local sources:
+   a. Check AI-tagged metadata.json for category matches
+   b. Fallback: filename prefix matching (e.g., "warfare_*" for "war")
+3. For YouTube sources:
+   a. Fetch YouTube transcript for context
+   b. Second Grok call picks timestamps from transcript
+   c. Download and extract clips at selected timestamps
+4. Clips inserted into render pipeline
+```
+
+### AI Tagging System
+
+Local B-roll clips can be tagged using BLIP (captioning) + CLIP (classification):
+
+```bash
+# Run AI tagging on video-processor container
+docker exec -it SocialGen_video_processor python /app/scripts/tag_broll.py
+
+# Force re-tag all clips
+docker exec -it SocialGen_video_processor python /app/scripts/tag_broll.py --force
+```
+
+Output: `assets/broll/metadata.json` with categories, captions, and confidence scores.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `backend/services/clip_analyzer.py` | Grok prompt with B-roll category list |
+| `backend/services/pexels.py` | `category_to_prefix` fallback mapping |
+| `scripts/tag_broll.py` | AI tagging script (BLIP + CLIP) |
+| `assets/broll/metadata.json` | AI-generated clip metadata |
+
+---
+
 ## Video Processor Render Endpoint
 
 **File:** `video-downloader/main.py`
@@ -977,4 +1041,4 @@ docker exec -it SocialGen_postgres psql -U n8n -d content_pipeline \
 
 ---
 
-*Last updated: January 14, 2026 - Added complete Viral Factory documentation*
+*Last updated: January 26, 2026 - Added B-roll category system (28 categories, AI tagging)*

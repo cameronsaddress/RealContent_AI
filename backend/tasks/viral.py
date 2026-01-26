@@ -13,9 +13,15 @@ from typing import Dict, Any
 TRAD_TRIGGER_WORDS = ["god", "jesus", "christ", "church", "faith", "pray", "win", "fight", "war", "strength", "power", "glory", "honor", "tradition", "men", "women", "family", "nation", "west", "save", "revive", "build", "create", "beauty", "truth", "justice", "freedom", "liberty", "order", "chaos", "evil", "good", "money", "rich", "wealth", "hustle", "grind", "success", "victory", "champion", "king", "lord", "spirit", "holy", "bible", "cross", "love", "hate", "fear", "death", "life", "soul", "mind", "heart", "body", "blood", "sweat", "tears", "pain", "gain", "gym", "train", "work", "hard", "focus", "discipline"]
 
 from celery_app import celery_app
-from models import InfluencerVideo, ViralClip, SessionLocal, LLMSettings, RenderTemplate
+from models import (
+    InfluencerVideo, ViralClip, SessionLocal, LLMSettings, RenderTemplate,
+    Influencer, PublishingConfig, PublishingQueueItem
+)
 from services.clip_analyzer import ClipAnalyzerService
 import httpx
+from sqlalchemy import or_
+from datetime import timedelta
+import json as _json
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -1262,3 +1268,461 @@ def process_viral_clip_render(self, clip_id: int):
     finally:
         if db.is_active:
             db.close()
+
+
+# ==================== AUTO-MODE TASKS ====================
+# These tasks are scheduled via Celery Beat to automate the viral clip factory.
+
+@celery_app.task(name="tasks.viral.auto_fetch_influencer_videos")
+def auto_fetch_influencer_videos():
+    """
+    Celery Beat task - runs every hour.
+    Checks all influencers with auto_mode_enabled=True and fetches new videos
+    if fetch_frequency_hours has elapsed since last_fetch_at.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        fetched_count = 0
+
+        # Find influencers due for fetch
+        influencers = db.query(Influencer).filter(
+            Influencer.auto_mode_enabled == True
+        ).all()
+
+        for influencer in influencers:
+            # Check if fetch is due
+            if influencer.last_fetch_at:
+                hours_since_fetch = (now - influencer.last_fetch_at).total_seconds() / 3600
+                if hours_since_fetch < influencer.fetch_frequency_hours:
+                    logger.debug(f"[AutoFetch] Skipping {influencer.name} - last fetched {hours_since_fetch:.1f}h ago (interval: {influencer.fetch_frequency_hours}h)")
+                    continue
+
+            logger.info(f"[AutoFetch] Checking {influencer.name} for new videos...")
+
+            # Chain to download/analyze if auto settings enabled
+            fetch_and_process_new_videos.delay(
+                influencer_id=influencer.id,
+                max_videos=influencer.max_videos_per_fetch or 5,
+                auto_analyze=influencer.auto_analyze_enabled,
+                auto_render=influencer.auto_render_enabled
+            )
+
+            # Update last_fetch_at
+            influencer.last_fetch_at = now
+            db.commit()
+            fetched_count += 1
+
+        logger.info(f"[AutoFetch] Triggered fetch for {fetched_count} influencers")
+        return {"influencers_fetched": fetched_count}
+
+    except Exception as e:
+        logger.error(f"[AutoFetch] Error: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="tasks.viral.fetch_and_process_new_videos")
+def fetch_and_process_new_videos(influencer_id: int, max_videos: int, auto_analyze: bool, auto_render: bool):
+    """
+    Fetch latest videos from channel, then optionally trigger analysis pipeline.
+    CRITICAL: Only processes videos published AFTER auto_mode_enabled_at timestamp.
+    """
+    db = SessionLocal()
+    try:
+        influencer = db.query(Influencer).filter(Influencer.id == influencer_id).first()
+        if not influencer:
+            logger.error(f"[AutoFetch] Influencer {influencer_id} not found")
+            return {"error": "Influencer not found"}
+
+        # 1. Fetch video metadata from channel
+        try:
+            response = httpx.post(
+                f"{VIDEO_PROCESSOR_URL}/fetch-channel",
+                json={"channel_url": influencer.channel_url, "platform": influencer.platform.value},
+                timeout=120.0
+            )
+            if response.status_code != 200:
+                raise Exception(f"Fetch failed: {response.text}")
+            videos_data = response.json().get("videos", [])[:max_videos]
+        except Exception as e:
+            logger.error(f"[AutoFetch] Channel fetch error for {influencer.name}: {e}")
+            return {"error": str(e)}
+
+        # 2. Filter and create InfluencerVideo records for NEW videos only
+        new_video_ids = []
+        auto_mode_cutoff = influencer.auto_mode_enabled_at
+
+        for video_data in videos_data:
+            # Check if video already exists
+            existing = db.query(InfluencerVideo).filter_by(
+                platform_video_id=video_data.get("id")
+            ).first()
+
+            if existing:
+                continue
+
+            # Parse publication date
+            pub_date_str = video_data.get("publication_date") or video_data.get("upload_date")
+            pub_date = None
+            if pub_date_str:
+                try:
+                    # Try multiple formats
+                    for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%Y%m%d"]:
+                        try:
+                            pub_date = datetime.strptime(pub_date_str[:19], fmt)
+                            break
+                        except ValueError:
+                            continue
+                except Exception:
+                    pass
+
+            # CRITICAL: Only process videos published AFTER auto_mode_enabled_at
+            if auto_mode_cutoff and pub_date:
+                if pub_date < auto_mode_cutoff:
+                    logger.info(f"[AutoFetch] Skipping old video '{video_data.get('title', '')[:50]}' "
+                               f"(published {pub_date} < auto_mode enabled {auto_mode_cutoff})")
+                    continue
+
+            # Create new video record
+            video = InfluencerVideo(
+                influencer_id=influencer_id,
+                platform_video_id=video_data.get("id"),
+                title=video_data.get("title"),
+                url=video_data.get("url") or video_data.get("webpage_url"),
+                thumbnail_url=video_data.get("thumbnail"),
+                description=video_data.get("description"),
+                publication_date=pub_date,
+                duration=video_data.get("duration"),
+                view_count=video_data.get("view_count", 0),
+                status="pending"
+            )
+            db.add(video)
+            db.flush()
+            new_video_ids.append(video.id)
+            logger.info(f"[AutoFetch] New video: {video.title[:60]}...")
+
+        db.commit()
+
+        # 3. If auto_analyze enabled, start the pipeline for each new video
+        if auto_analyze and new_video_ids:
+            for video_id in new_video_ids:
+                # Chain: download -> transcribe -> analyze -> (optional) auto-render
+                logger.info(f"[AutoFetch] Auto-analyzing video {video_id}")
+                process_viral_video_download.delay(video_id)
+
+        logger.info(f"[AutoFetch] {influencer.name}: {len(new_video_ids)} new videos found")
+        return {"new_videos": len(new_video_ids), "video_ids": new_video_ids}
+
+    except Exception as e:
+        logger.error(f"[AutoFetch] Error processing {influencer_id}: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="tasks.viral.auto_render_pending_clips")
+def auto_render_pending_clips():
+    """
+    Celery Beat task - runs every 30 minutes.
+    Finds clips that are pending render from auto-mode influencers and queues them.
+    Respects GPU semaphore (existing logic handles queueing).
+    """
+    db = SessionLocal()
+    try:
+        # Find pending clips where influencer has auto_render_enabled
+        clips = db.query(ViralClip).join(
+            InfluencerVideo, ViralClip.source_video_id == InfluencerVideo.id
+        ).join(
+            Influencer, InfluencerVideo.influencer_id == Influencer.id
+        ).filter(
+            Influencer.auto_render_enabled == True,
+            ViralClip.status == "pending"
+        ).limit(10).all()  # Batch limit to prevent queue explosion
+
+        queued_count = 0
+        for clip in clips:
+            logger.info(f"[AutoRender] Queuing clip {clip.id}: {clip.title[:50]}...")
+            clip.status = "queued for rendering"
+            db.commit()
+            process_viral_clip_render.delay(clip.id)
+            queued_count += 1
+
+        if queued_count > 0:
+            logger.info(f"[AutoRender] Queued {queued_count} clips for rendering")
+        return {"queued": queued_count}
+
+    except Exception as e:
+        logger.error(f"[AutoRender] Error: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="tasks.viral.auto_queue_for_publishing")
+def auto_queue_for_publishing():
+    """
+    Celery Beat task - runs every hour.
+    Finds ready clips from auto-publish influencers and adds to publishing queue.
+    """
+    db = SessionLocal()
+    try:
+        # Find ready clips not yet queued
+        clips = db.query(ViralClip).join(
+            InfluencerVideo, ViralClip.source_video_id == InfluencerVideo.id
+        ).join(
+            Influencer, InfluencerVideo.influencer_id == Influencer.id
+        ).filter(
+            Influencer.auto_publish_enabled == True,
+            ViralClip.status == "ready",
+            ViralClip.publishing_status == "unpublished"
+        ).all()
+
+        queued_count = 0
+        for clip in clips:
+            # Find publishing config for this influencer/persona
+            config = db.query(PublishingConfig).filter(
+                or_(
+                    PublishingConfig.influencer_id == clip.source_video.influencer_id,
+                    PublishingConfig.persona_id == clip.source_video.influencer.persona_id
+                ),
+                PublishingConfig.enabled == True
+            ).first()
+
+            if not config:
+                logger.debug(f"[AutoPublish] No enabled config for clip {clip.id}")
+                continue
+
+            # Check virality threshold
+            if clip.virality_score and clip.virality_score < config.min_virality_score:
+                clip.publishing_status = "skipped"
+                clip.skip_reason = f"Virality score {clip.virality_score:.2f} below threshold {config.min_virality_score:.2f}"
+                db.commit()
+                continue
+
+            # Check clip type allowed
+            allowed_types = config.clip_types_allowed or []
+            if clip.clip_type and clip.clip_type not in allowed_types:
+                clip.publishing_status = "skipped"
+                clip.skip_reason = f"Clip type '{clip.clip_type}' not in allowed types"
+                db.commit()
+                continue
+
+            # Calculate next available posting slot
+            scheduled_time = _calculate_next_posting_slot(db, config)
+
+            # Add to queue
+            queue_item = PublishingQueueItem(
+                clip_id=clip.id,
+                config_id=config.id,
+                scheduled_time=scheduled_time,
+                target_platforms=config.platforms or [],
+                requires_approval=config.require_manual_approval,
+                status="pending" if config.require_manual_approval else "approved"
+            )
+            db.add(queue_item)
+
+            clip.publishing_status = "queued"
+            db.commit()
+            queued_count += 1
+            logger.info(f"[AutoPublish] Queued clip {clip.id} for {scheduled_time}")
+
+        if queued_count > 0:
+            logger.info(f"[AutoPublish] Queued {queued_count} clips for publishing")
+        return {"queued": queued_count}
+
+    except Exception as e:
+        logger.error(f"[AutoPublish] Error: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+def _calculate_next_posting_slot(db, config: PublishingConfig) -> datetime:
+    """
+    Find the next available posting time based on config rules and existing queue.
+    Implements best practices for engagement:
+    - Respects posting_hours (optimal times)
+    - Respects min_hours_between_posts (avoid spam)
+    - Respects posts_per_day limit
+    """
+    now = datetime.utcnow()
+
+    # Get recent posts for this config
+    recent_posts = db.query(PublishingQueueItem).filter(
+        PublishingQueueItem.config_id == config.id,
+        PublishingQueueItem.status.in_(["approved", "publishing", "published"]),
+        PublishingQueueItem.scheduled_time >= now - timedelta(days=1)
+    ).order_by(PublishingQueueItem.scheduled_time.desc()).all()
+
+    posting_hours = config.posting_hours or [9, 13, 18]
+    posting_days = config.posting_days or [0, 1, 2, 3, 4, 5, 6]
+    posts_per_day = config.posts_per_day or 3
+    min_hours_between = config.min_hours_between_posts or 4
+
+    # Find next valid slot
+    candidate = now
+    attempts = 0
+    max_attempts = 200  # Safety limit
+
+    while attempts < max_attempts:
+        attempts += 1
+
+        # Check if this day is allowed
+        if candidate.weekday() not in posting_days:
+            candidate = (candidate + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            continue
+
+        # Check posts_per_day limit
+        day_start = candidate.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        posts_on_day = len([p for p in recent_posts
+                          if p.scheduled_time and day_start <= p.scheduled_time < day_end])
+        if posts_on_day >= posts_per_day:
+            candidate = (candidate + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            continue
+
+        # Find next valid hour
+        for hour in sorted(posting_hours):
+            slot = candidate.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if slot <= now:
+                continue
+
+            # Check min_hours_between_posts
+            too_close = False
+            for post in recent_posts:
+                if post.scheduled_time:
+                    delta = abs((slot - post.scheduled_time).total_seconds())
+                    if delta < min_hours_between * 3600:
+                        too_close = True
+                        break
+
+            if not too_close:
+                return slot
+
+        # No valid hour today, try tomorrow
+        candidate = (candidate + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Safety: don't schedule more than 7 days out
+        if (candidate - now).days > 7:
+            return now + timedelta(hours=1)
+
+    # Fallback
+    return now + timedelta(hours=1)
+
+
+@celery_app.task(name="tasks.viral.process_publishing_queue")
+def process_publishing_queue():
+    """
+    Celery Beat task - runs every 15 minutes.
+    Publishes approved clips whose scheduled_time has arrived.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+
+        # Find items ready to publish
+        items = db.query(PublishingQueueItem).filter(
+            PublishingQueueItem.status == "approved",
+            PublishingQueueItem.scheduled_time <= now
+        ).order_by(PublishingQueueItem.priority.desc()).limit(5).all()
+
+        published_count = 0
+        for item in items:
+            logger.info(f"[PublishQueue] Publishing clip {item.clip_id}...")
+            publish_single_clip.delay(item.id)
+            published_count += 1
+
+        if published_count > 0:
+            logger.info(f"[PublishQueue] Started publishing {published_count} items")
+        return {"publishing": published_count}
+
+    except Exception as e:
+        logger.error(f"[PublishQueue] Error: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="tasks.viral.publish_single_clip", bind=True, max_retries=3)
+def publish_single_clip(self, queue_item_id: int):
+    """
+    Publish a single clip to all target platforms via Blotato.
+    """
+    db = SessionLocal()
+    try:
+        item = db.query(PublishingQueueItem).filter(PublishingQueueItem.id == queue_item_id).first()
+        if not item:
+            logger.error(f"[Publish] Queue item {queue_item_id} not found")
+            return {"error": "Queue item not found"}
+
+        clip = db.query(ViralClip).filter(ViralClip.id == item.clip_id).first()
+        config = db.query(PublishingConfig).filter(PublishingConfig.id == item.config_id).first()
+
+        if not clip or not config:
+            logger.error(f"[Publish] Clip or config not found for queue item {queue_item_id}")
+            return {"error": "Clip or config not found"}
+
+        item.status = "publishing"
+        db.commit()
+
+        # Prepare content
+        video_path = clip.edited_video_path
+        if video_path:
+            video_path = video_path.replace("/outputs/", "/app/assets/output/")
+
+        # Call Blotato API for each platform
+        # TODO: Integrate with actual Blotato/Publisher service
+        post_ids = {}
+        target_platforms = item.target_platforms or []
+
+        for platform in target_platforms:
+            try:
+                # Placeholder for Blotato integration
+                # result = publisher_service.publish(
+                #     account_id=config.blotato_account_id,
+                #     platform=platform,
+                #     video_path=video_path,
+                #     title=clip.title,
+                #     description=clip.description,
+                #     hashtags=clip.hashtags
+                # )
+                # post_ids[platform] = result.get("post_id")
+
+                # For now, log and mark as simulated
+                logger.info(f"[Publish] Would publish clip {clip.id} to {platform}")
+                post_ids[platform] = f"simulated_{platform}_{clip.id}"
+
+            except Exception as e:
+                logger.error(f"[Publish] Failed {platform}: {e}")
+                post_ids[platform] = f"error: {str(e)}"
+
+        # Update records
+        item.blotato_post_ids = post_ids
+        item.published_at = datetime.utcnow()
+        item.status = "published" if any("error" not in str(v) for v in post_ids.values()) else "failed"
+
+        clip.blotato_post_id = _json.dumps(post_ids)
+        clip.published_at = datetime.utcnow()
+        clip.publishing_status = "published"
+
+        db.commit()
+        logger.info(f"[Publish] Clip {clip.id} published: {post_ids}")
+        return {"clip_id": clip.id, "platforms": post_ids}
+
+    except Exception as e:
+        logger.error(f"[Publish] Error publishing queue item {queue_item_id}: {e}")
+        db.rollback()
+        try:
+            item = db.query(PublishingQueueItem).filter(PublishingQueueItem.id == queue_item_id).first()
+            if item:
+                item.status = "failed"
+                item.error_message = str(e)
+                db.commit()
+        except Exception:
+            pass
+        raise self.retry(exc=e, countdown=300)  # Retry in 5 minutes
+
+    finally:
+        db.close()

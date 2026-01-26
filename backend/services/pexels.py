@@ -533,22 +533,57 @@ class PexelsService:
                 # PRIORITY 2: Filename-based category matching
                 # Map Grok category names to filename prefixes in /broll/
                 category_to_prefix = {
-                    # New authentic influencer categories
-                    "money": ["money", "hustle", "trading", "cash", "stock"],
-                    "luxury": ["luxury", "supercar", "mansion", "yacht", "dubai"],
-                    "gym": ["gym", "bodybuilding", "workout", "fitness", "lifting"],
-                    "relationships": ["relationships", "dating", "podcast", "redpill"],
-                    "city": ["city", "urban", "nightlife", "skyline", "neon"],
-                    "crowd": ["crowd", "rally", "stadium", "concert", "protest"],
-                    "sports": ["sports", "ufc", "knockout", "football", "basketball", "boxing"],
+                    # DESTRUCTION & CONFLICT
+                    "war": ["warfare", "military", "ww2", "combat", "soldier", "battle", "tanks"],
+                    "chaos": ["chaos", "destruction", "disorder"],
+                    "explosions": ["explosions", "explosion", "blast", "detonate"],
+                    "storms": ["storms", "storm", "lightning", "thunder", "weather"],
+                    "fire": ["fire", "flames", "burning", "inferno"],
+
+                    # MONEY & SUCCESS
+                    "money": ["money", "hustle", "trading", "cash", "stock", "bills"],
+                    "luxury": ["luxury", "supercar", "mansion", "yacht", "dubai", "rich"],
+                    "wealth": ["wealth", "billionaire", "lavish", "opulent"],
+                    "city": ["city", "urban", "nightlife", "skyline", "neon", "metropolitan"],
+
+                    # FITNESS & STRENGTH
+                    "gym": ["gym", "bodybuilding", "workout", "fitness", "lifting", "exercise", "weightlifting"],
+                    "sports": ["sports", "ufc", "football", "basketball", "athletic", "competition"],
+                    "boxing": ["boxing", "knockout", "punch", "fight"],
+                    "strength": ["strength", "muscle", "powerful", "strong"],
+
+                    # PATRIOTIC & FAITH
+                    "patriotic": ["patriotic", "american", "usa", "flag", "america"],
+                    "crowd": ["crowd", "rally", "stadium", "concert", "protest", "masses"],
+                    "faith": ["faith", "church", "cross", "christian", "religion", "prayer"],
+                    "cathedrals": ["cathedrals", "cathedral", "gothic", "castles", "castle"],
+
+                    # ANIMALS & NATURE
+                    "lions": ["lions", "lion", "predator", "apex"],
+                    "eagles": ["eagles", "eagle", "hawk", "bird"],
+                    "wolves": ["wolves", "wolf", "pack"],
+                    "nature": ["nature", "mountains", "ocean", "landscape", "scenic"],
+
+                    # MILITARY TECH
+                    "jets": ["jets", "jet", "fighter", "aircraft", "aviation", "plane"],
+                    "navy": ["navy", "warship", "carrier", "battleship", "destroyer", "ship"],
+                    "helicopters": ["helicopters", "helicopter", "chopper", "heli"],
+
+                    # VEHICLES
+                    "cars": ["cars", "supercar", "automotive", "vehicle", "driving"],
+                    "racing": ["racing", "drift", "motorsport", "race", "speed"],
+
+                    # OTHER
+                    "history": ["history", "historical", "ww2", "archive", "rockets", "vintage"],
+                    "people": ["people", "men", "women", "person", "human", "relationships"],
                     "fashion": ["fashion", "runway", "streetwear", "designer"],
-                    "cars": ["cars", "supercar", "drift", "racing", "exhaust"],
+
+                    # Legacy mappings (for backwards compatibility)
                     "nature_power": ["nature_power", "volcano", "tsunami", "tornado", "avalanche"],
-                    # Legacy categories
-                    "war": ["warfare", "military", "ww2", "fighter", "helicopters", "navy", "tanks"],
-                    "faith": ["cathedrals", "castles", "patriotic", "church", "cross"],
-                    "chaos": ["fire", "explosions", "lightning", "storms", "destruction"],
-                    "history": ["ww2", "rockets", "patriotic", "archive"],
+                    "power": ["power", "dominance", "control", "authority", "money"],
+                    "victory": ["victory", "winning", "success", "celebrate", "champion"],
+                    "warfare": ["warfare", "military", "combat", "soldier"],  # alias for war
+                    "fighter_jets": ["fighter", "jets", "aircraft"],  # alias for jets
                 }
 
                 prefixes = category_to_prefix.get(category, [category])

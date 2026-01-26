@@ -1231,3 +1231,953 @@
   font-size: 0.7em;
   font-family: monospace;
 }
+
+/* ============================================
+   AUTO-MODE TOGGLE & SETTINGS
+   ============================================ */
+
+/* Influencer Card Header */
+.influencer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.influencer-header h3 {
+  margin: 0;
+  flex: 1;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch .slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #555;
+  transition: 0.3s;
+  border-radius: 22px;
+}
+
+.toggle-switch .slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked + .slider {
+  background-color: #28a745;
+}
+
+.toggle-switch input:checked + .slider:before {
+  transform: translateX(18px);
+}
+
+.toggle-switch input:focus + .slider {
+  box-shadow: 0 0 1px #28a745;
+}
+
+/* Auto-Mode Status */
+.auto-mode-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.auto-badge {
+  background: linear-gradient(135deg, #28a745, #20c997);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7em;
+  font-weight: 700;
+  letter-spacing: 1px;
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(40, 167, 69, 0.3); }
+  50% { box-shadow: 0 0 15px rgba(40, 167, 69, 0.6); }
+}
+
+.last-fetch {
+  font-size: 0.75em;
+  color: #888;
+}
+
+/* Settings Button */
+.influencer-card .settings-btn {
+  background: #333;
+  color: #aaa;
+  border: 1px solid #444;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  cursor: pointer;
+  margin-top: 10px;
+  width: 100%;
+  transition: all 0.2s;
+}
+
+.influencer-card .settings-btn:hover {
+  background: #444;
+  color: #fff;
+  border-color: #555;
+}
+
+/* Auto-Mode Settings Modal */
+.auto-mode-modal {
+  width: 450px;
+  max-width: 95vw;
+}
+
+.auto-mode-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auto-mode-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auto-mode-form .form-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #eee;
+  cursor: pointer;
+}
+
+.auto-mode-form .form-group label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.auto-mode-form .form-group input[type="number"] {
+  width: 100%;
+  padding: 10px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1em;
+}
+
+.auto-mode-form .form-group input[type="number"]:focus {
+  border-color: #28a745;
+  outline: none;
+}
+
+.auto-mode-form .help-text {
+  margin: 0;
+  font-size: 0.8em;
+  color: #888;
+  padding-left: 26px;
+}
+
+.form-divider {
+  border-top: 1px solid #444;
+  margin: 8px 0;
+}
+
+.auto-mode-info {
+  background: #1a3a1a;
+  border: 1px solid #28a745;
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.auto-mode-info p {
+  margin: 0;
+  color: #aaa;
+  font-size: 0.85em;
+}
+
+.auto-mode-info p strong {
+  color: #28a745;
+}
+
+.auto-mode-info .help-text {
+  padding-left: 0;
+  margin-top: 6px;
+}
+
+.modal-actions .cancel-btn {
+  background: transparent;
+  color: #aaa;
+  border: 1px solid #444;
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.modal-actions .cancel-btn:hover {
+  background: #333;
+  color: #fff;
+}
+
+/* ============================================
+   PUBLISHING TAB STYLES
+   ============================================ */
+
+/* Tab Badge */
+.tab-badge {
+  background: #dc3545;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.75em;
+  margin-left: 6px;
+}
+
+/* Publishing Panel */
+.publishing-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Stats Bar */
+.publishing-stats-bar {
+  display: flex;
+  gap: 15px;
+  padding: 15px 20px;
+  background: #1e1e1e;
+  border-radius: 10px;
+}
+
+.pub-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 80px;
+}
+
+.pub-stat-value {
+  font-size: 1.6em;
+  font-weight: 700;
+}
+
+.pub-stat-value.pending { color: #ffc107; }
+.pub-stat-value.scheduled { color: #17a2b8; }
+.pub-stat-value.published { color: #28a745; }
+.pub-stat-value.failed { color: #dc3545; }
+
+.pub-stat-label {
+  font-size: 0.75em;
+  color: #888;
+  margin-top: 4px;
+}
+
+/* Section */
+.publishing-section {
+  background: #1e1e1e;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.section-header h3 {
+  margin: 0;
+}
+
+.section-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.section-controls select {
+  background: #333;
+  color: #fff;
+  border: 1px solid #444;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.section-controls button {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.section-controls button:hover {
+  background: #0069d9;
+}
+
+/* Queue List */
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.queue-item {
+  display: flex;
+  gap: 15px;
+  padding: 15px;
+  background: #252525;
+  border-radius: 8px;
+  border-left: 4px solid #555;
+}
+
+.queue-item.pending_approval { border-left-color: #ffc107; }
+.queue-item.approved { border-left-color: #28a745; }
+.queue-item.scheduled { border-left-color: #17a2b8; }
+.queue-item.published { border-left-color: #6f42c1; }
+.queue-item.failed { border-left-color: #dc3545; }
+
+.queue-item-thumb {
+  width: 70px;
+  height: 124px;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.queue-item-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.queue-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-item-info h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.95em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.queue-status-badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.queue-status-badge.pending_approval { background: #ffc107; color: #000; }
+.queue-status-badge.approved { background: #28a745; color: #fff; }
+.queue-status-badge.scheduled { background: #17a2b8; color: #fff; }
+.queue-status-badge.published { background: #6f42c1; color: #fff; }
+.queue-status-badge.failed { background: #dc3545; color: #fff; }
+
+.queue-platforms {
+  color: #888;
+  font-size: 0.8em;
+}
+
+.queue-scheduled {
+  color: #17a2b8;
+  font-size: 0.8em;
+}
+
+.queue-rejection {
+  color: #dc3545;
+  font-size: 0.8em;
+  margin: 6px 0 0 0;
+}
+
+.queue-error {
+  color: #ff6b6b;
+  font-size: 0.75em;
+  margin: 6px 0 0 0;
+}
+
+.queue-item-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.queue-item-actions button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.8em;
+  min-width: 90px;
+}
+
+.queue-item-actions .approve-btn {
+  background: #28a745;
+  color: white;
+}
+
+.queue-item-actions .approve-btn:hover { background: #218838; }
+
+.queue-item-actions .reject-btn {
+  background: transparent;
+  color: #dc3545;
+  border: 1px solid #dc3545;
+}
+
+.queue-item-actions .reject-btn:hover {
+  background: #dc3545;
+  color: white;
+}
+
+.queue-item-actions .publish-now-btn {
+  background: #6f42c1;
+  color: white;
+}
+
+.queue-item-actions .publish-now-btn:hover { background: #5a32a3; }
+
+.queue-item-actions .retry-btn {
+  background: #fd7e14;
+  color: white;
+}
+
+.queue-item-actions .retry-btn:hover { background: #e06c00; }
+
+/* Configs Grid */
+.configs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 15px;
+}
+
+.config-card {
+  background: #252525;
+  border-radius: 8px;
+  padding: 15px;
+  border-left: 4px solid #28a745;
+}
+
+.config-card.inactive {
+  border-left-color: #6c757d;
+  opacity: 0.7;
+}
+
+.config-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.config-card-header h4 {
+  margin: 0;
+  font-size: 0.95em;
+}
+
+.config-status {
+  font-size: 0.7em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  background: #6c757d;
+  color: white;
+}
+
+.config-status.active {
+  background: #28a745;
+}
+
+.config-details {
+  font-size: 0.85em;
+}
+
+.config-details p {
+  margin: 4px 0;
+  color: #aaa;
+}
+
+.config-details strong {
+  color: #ccc;
+}
+
+.config-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.config-card-actions button {
+  flex: 1;
+  padding: 6px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.8em;
+  background: #333;
+  color: #fff;
+}
+
+.config-card-actions button:hover {
+  background: #444;
+}
+
+.config-card-actions .delete-btn {
+  background: transparent;
+  color: #dc3545;
+  border: 1px solid #dc3545;
+}
+
+.config-card-actions .delete-btn:hover {
+  background: #dc3545;
+  color: white;
+}
+
+/* Config Modal */
+.config-modal {
+  width: 450px;
+  max-width: 95vw;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.config-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-form .form-group > label {
+  color: #eee;
+  font-weight: 600;
+  font-size: 0.85em;
+}
+
+.config-form input[type="text"],
+.config-form input[type="number"] {
+  width: 100%;
+  padding: 10px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1em;
+}
+
+.config-form input:focus {
+  border-color: #007bff;
+  outline: none;
+}
+
+.platform-toggles,
+.day-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.platform-toggle,
+.day-toggle {
+  padding: 6px 12px;
+  border: 1px solid #444;
+  border-radius: 5px;
+  background: #333;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.8em;
+  text-transform: capitalize;
+  transition: all 0.2s;
+}
+
+.platform-toggle:hover,
+.day-toggle:hover {
+  background: #444;
+  color: #fff;
+}
+
+.platform-toggle.active,
+.day-toggle.active {
+  background: #007bff;
+  border-color: #007bff;
+  color: white;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #eee;
+}
+
+.checkbox-group input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+/* ==========================================
+   Professional Influencer Cards V2
+   ========================================== */
+
+.influencer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 24px;
+  padding: 8px 0;
+}
+
+.influencer-card-v2 {
+  background: linear-gradient(145deg, #1e1e1e, #252525);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  border: 1px solid #333;
+}
+
+.influencer-card-v2:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  border-color: #444;
+}
+
+/* Banner/Thumbnail Section */
+.inf-card-banner {
+  position: relative;
+  height: 140px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+}
+
+.inf-card-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.influencer-card-v2:hover .inf-card-banner img {
+  transform: scale(1.05);
+}
+
+.inf-banner-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #3a3a4a 0%, #2a2a3a 100%);
+}
+
+.inf-banner-placeholder span {
+  font-size: 48px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.3);
+  text-transform: uppercase;
+}
+
+.inf-banner-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(to top, rgba(30, 30, 30, 1), transparent);
+  pointer-events: none;
+}
+
+/* Auto-mode toggle on banner */
+.inf-auto-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 6px 8px;
+  border-radius: 20px;
+  backdrop-filter: blur(4px);
+}
+
+.toggle-switch-sm {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.toggle-switch-sm input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider-sm {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: #444;
+  transition: 0.3s;
+  border-radius: 20px;
+}
+
+.slider-sm:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #888;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.toggle-switch-sm input:checked + .slider-sm {
+  background-color: #28a745;
+}
+
+.toggle-switch-sm input:checked + .slider-sm:before {
+  transform: translateX(16px);
+  background-color: white;
+}
+
+/* Platform badge */
+.inf-platform-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(4px);
+}
+
+.inf-platform-badge.youtube {
+  background: rgba(255, 0, 0, 0.85);
+  color: white;
+}
+
+.inf-platform-badge.rumble {
+  background: rgba(133, 195, 27, 0.85);
+  color: #1a1a1a;
+}
+
+/* Card content section */
+.inf-card-content {
+  padding: 16px 20px 20px;
+}
+
+.inf-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.inf-card-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+  font-weight: 600;
+  color: #fff;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inf-auto-badge {
+  padding: 3px 8px;
+  background: linear-gradient(135deg, #28a745, #20c997);
+  color: white;
+  font-size: 0.65em;
+  font-weight: 700;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* Stats row */
+.inf-stats-row {
+  display: flex;
+  justify-content: space-between;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.inf-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+.inf-stat:not(:last-child) {
+  border-right: 1px solid #333;
+}
+
+.inf-stat-value {
+  font-size: 1.3em;
+  font-weight: 700;
+  color: #fff;
+}
+
+.inf-stat-value.ready {
+  color: #28a745;
+}
+
+.inf-stat-label {
+  font-size: 0.7em;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+/* Last activity */
+.inf-last-activity {
+  font-size: 0.75em;
+  color: #666;
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+/* Action buttons */
+.inf-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.inf-settings-btn,
+.inf-view-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inf-settings-btn {
+  background: #333;
+  color: #ccc;
+  border: 1px solid #444;
+}
+
+.inf-settings-btn:hover {
+  background: #444;
+  color: #fff;
+  border-color: #555;
+}
+
+.inf-view-btn {
+  background: linear-gradient(135deg, #007bff, #0056b3);
+  color: white;
+}
+
+.inf-view-btn:hover {
+  background: linear-gradient(135deg, #0088ff, #0066cc);
+  transform: scale(1.02);
+}
+
+/* Add influencer card */
+.add-influencer-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+  background: linear-gradient(145deg, #1a1a1a, #222);
+  border: 2px dashed #444;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.add-influencer-card:hover {
+  border-color: #007bff;
+  background: linear-gradient(145deg, #1e1e1e, #282828);
+}
+
+.add-influencer-card .add-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #333, #444);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  color: #888;
+  margin-bottom: 12px;
+  transition: all 0.3s ease;
+}
+
+.add-influencer-card:hover .add-icon {
+  background: linear-gradient(135deg, #007bff, #0056b3);
+  color: white;
+  transform: scale(1.1);
+}
+
+.add-influencer-card span:not(.add-icon) {
+  color: #888;
+  font-size: 0.95em;
+  font-weight: 500;
+}
