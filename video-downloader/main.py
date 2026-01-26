@@ -2051,19 +2051,19 @@ def generate_cold_open_hook(
     visual_hook_time: float,
     output_path: Path,
     hook_phrase: str = None,
-    hook_duration: float = 0.4,
+    hook_duration: float = 1.2,
     start_time: float = 0,
     font: str = "Impact"
 ) -> bool:
     """
-    Generate a cold open hook clip - a quick flash frame to grab attention in first 0.3s.
+    Generate a cold open hook clip - a teaser frame with zoom punch to grab attention.
 
     Args:
         source_video: Path to the source video
         visual_hook_time: Absolute timestamp in source for the hook frame
         output_path: Where to save the hook clip
         hook_phrase: Optional text to overlay (e.g., "You're a LIAR")
-        hook_duration: Duration of the hook clip (default 0.4s)
+        hook_duration: Duration of the hook clip (default 1.2s)
         start_time: Clip start time (for relative timestamp calculation)
         font: Font to use for text overlay
 
@@ -4786,7 +4786,7 @@ def render_viral_clip(request: RenderClipRequest):
             subprocess.run(cmd_outro_process, check=True)
 
             # 4.5 Cold Open Hook (RETENTION OPTIMIZATION)
-            # Generate a 0.4s flash frame to grab attention in first moments
+            # Generate a 1.2s cold open hook to grab attention in first moments
             temp_hook = temp_dir / f"temp_hook_{uid}.mp4"
             hook_generated = False
             if request.hook_enabled and request.visual_hook_time is not None:
@@ -4797,7 +4797,7 @@ def render_viral_clip(request: RenderClipRequest):
                         visual_hook_time=request.visual_hook_time,
                         output_path=temp_hook,
                         hook_phrase=request.hook_phrase,
-                        hook_duration=0.4,
+                        hook_duration=1.2,
                         start_time=request.start_time,
                         font=selected_font if 'selected_font' in dir() else "Impact"
                     )
@@ -4817,7 +4817,7 @@ def render_viral_clip(request: RenderClipRequest):
                             visual_hook_time=fallback_hook_time,
                             output_path=temp_hook,
                             hook_phrase=request.hook_phrase,
-                            hook_duration=0.4,
+                            hook_duration=1.2,
                             start_time=request.start_time
                         )
                         if hook_generated:
@@ -4902,7 +4902,7 @@ def render_viral_clip(request: RenderClipRequest):
                             visual_hook_time=hook_time,
                             output_path=temp_hook,
                             hook_phrase=request.hook_phrase,
-                            hook_duration=0.4,
+                            hook_duration=1.2,
                             start_time=request.start_time
                         )
                         if hook_generated:
