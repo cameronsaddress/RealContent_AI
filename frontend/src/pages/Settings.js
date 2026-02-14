@@ -1591,14 +1591,14 @@ export default function Settings() {
           font-style: italic;
         }
       `}</style>
-      {/* VIRAL FACTORY SETTINGS */}
+      {/* CONTENT DISCOVERY SETTINGS */}
       <div className="settings-section">
-        <h2>Viral Clip Factory</h2>
-        <p className="section-description">Configure the AI behavior for the Viral Clip Factory pipeline.</p>
+        <h2>Content Discovery</h2>
+        <p className="section-description">Configure the AI behavior for the Content Discovery pipeline.</p>
 
         <div className="settings-grid">
           <div className="setting-item">
-            <label>Viral Strategy (System Prompt)</label>
+            <label>Content Discovery Strategy (System Prompt)</label>
             <textarea
               value={llmPrompts.find(p => p.key === 'VIRAL_SYSTEM_PROMPT')?.value || ''}
               onChange={(e) => {
@@ -1646,7 +1646,7 @@ export default function Settings() {
                 });
               }}
               className="text-input"
-              placeholder="e.g. realDonaldTrump"
+              placeholder="e.g. @yourbrand"
             />
             <button
               onClick={() => saveLLMPrompt('VIRAL_CHANNEL_HANDLE', llmPrompts.find(p => p.key === 'VIRAL_CHANNEL_HANDLE')?.value)}
@@ -1725,10 +1725,10 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* VIRAL FONT LIBRARY */}
+      {/* CLIP FONT LIBRARY */}
       <div className="settings-section">
-        <h2>Viral Font Library</h2>
-        <p className="section-description">TikTok-style fonts for viral clip captions. Random font is selected for each clip.</p>
+        <h2>Clip Font Library</h2>
+        <p className="section-description">TikTok-style fonts for clip captions. Random font is selected for each clip.</p>
 
         {/* Google Fonts Download */}
         <div className="setting-item" style={{ marginBottom: '20px' }}>
@@ -1786,7 +1786,7 @@ export default function Settings() {
                     letterSpacing: '1px'
                   }}
                 >
-                  America First
+                  Sample Text
                 </div>
                 <button
                   onClick={() => handleDeleteFont(font.filename)}
@@ -1801,10 +1801,10 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* VIRAL MUSIC LIBRARY */}
+      {/* CLIP MUSIC LIBRARY */}
       <div className="settings-section">
-        <h2>Viral Music Library</h2>
-        <p className="section-description">Background music for viral clips (TradWest style). Files in /assets/music.</p>
+        <h2>Clip Music Library</h2>
+        <p className="section-description">Background music for clips. Files in /assets/music.</p>
 
         <div className="music-list">
           {musicFiles.length === 0 ? (

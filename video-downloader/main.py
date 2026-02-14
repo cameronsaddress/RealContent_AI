@@ -3,7 +3,7 @@ Video Processing Service for n8n - Hybird Version (Legacy + CapCut Upgrade)
 - Downloads videos from TikTok, Instagram, YouTube using yt-dlp
 - Processes videos with FFmpeg (GPU-accelerated on DGX Spark)
 - Combines avatar videos with background footage (Legacy/RealEstate)
-- Viral Clips: TradWest-style Grid, Pulse, Grading, Karaoke (New CapCut Style)
+- Content Clips: Grid, Pulse, Grading, Karaoke (TikTok Style)
 """
 
 import os
@@ -131,7 +131,7 @@ HARSH_TRIGGER_WORDS = [
     "moron", "fool", "fools", "liar", "liars", "traitor", "coward"
 ]
 # Alias for backwards compatibility
-TRAD_TRIGGER_WORDS = HARSH_TRIGGER_WORDS
+EFFECT_TRIGGER_WORDS = HARSH_TRIGGER_WORDS
 
 # CURSE WORDS - These get FULL intensity RGB glitch effect
 # Other trigger words get reduced (1/4 to 1/2) intensity randomly
@@ -148,7 +148,7 @@ COLOR_PRESETS = {
     "dark_cinematic": {"contrast": 1.2, "brightness": -0.05, "saturation": 0.9},
     "cyberpunk": {"contrast": 1.15, "brightness": 0.0, "saturation": 1.4, "tint": "cyan"},
     "clean_modern": {"contrast": 1.1, "brightness": 0.02, "saturation": 1.1},
-    "crusade_dark": {"contrast": 1.3, "brightness": -0.08, "saturation": 0.7, "tint": "gold"},
+    "warm_cinematic": {"contrast": 1.3, "brightness": -0.08, "saturation": 0.7, "tint": "gold"},
     "documentary": {"contrast": 1.1, "brightness": -0.03, "saturation": 0.85},
     "high_energy": {"contrast": 1.2, "brightness": 0.03, "saturation": 1.2},
     "bw": {"contrast": 1.15, "brightness": 0.03, "saturation": 0},
@@ -281,10 +281,15 @@ EFFECT_REGISTRY = {
 }
 
 # ============ FACE DETECTION FOR AUTO-CENTERING ============
-def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
+def detect_face_offset(video_path: str, target_width: int = 1080, prefer_rightmost: bool = False) -> int:
     """
     Detect face position in the first frame and calculate horizontal offset
     to center the speaker in the final vertical crop.
+
+    Args:
+        video_path: Path to the video file
+        target_width: Target crop width (default 1080 for 9:16)
+        prefer_rightmost: If True, select rightmost face instead of largest (for side-by-side interviews)
 
     Returns: horizontal pixel offset (positive = shift crop right, negative = shift left)
     """
@@ -320,12 +325,12 @@ def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
         # Convert to grayscale for detection
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Detect faces with multiple scale factors for better detection
+        # Detect faces with stricter parameters to reduce false positives
         faces = face_cascade.detectMultiScale(
             gray,
             scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(50, 50),
+            minNeighbors=6,  # Increased from 5 for fewer false positives
+            minSize=(80, 80),  # Increased from 50 for fewer false positives
             flags=cv2.CASCADE_SCALE_IMAGE
         )
 
@@ -333,25 +338,92 @@ def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
         os.remove(temp_frame)
 
         if len(faces) == 0:
-            print(f"[FaceDetect] No faces detected, using default center crop")
+            if prefer_rightmost:
+                # For right-side hosts (Alex Jones, etc), default to right-of-center when no face found
+                scale_factor = 1920 / frame_height
+                scaled_width = int(frame_width * scale_factor)
+                max_offset = (scaled_width - target_width) // 2
+                default_offset = int(max_offset * 0.6)  # Pan 60% right
+                print(f"[FaceDetect] No faces detected, prefer_rightmost=True, using right-of-center: {default_offset}px")
+                return default_offset
+            else:
+                print(f"[FaceDetect] No faces detected, using default center crop")
+                return 0
+
+        print(f"[FaceDetect] Found {len(faces)} raw face(s), prefer_rightmost={prefer_rightmost}")
+
+        # FILTER OUT FALSE POSITIVES
+        # Minimum face size: 8% of frame height (real faces in talk shows are at least this big)
+        min_face_size = int(frame_height * 0.08)
+        valid_faces = [f for f in faces if f[2] >= min_face_size and f[3] >= min_face_size]
+
+        if len(valid_faces) == 0:
+            print(f"[FaceDetect] No valid faces after size filter (min {min_face_size}px), using center crop")
             return 0
 
-        # Find the largest face (likely the main speaker)
-        largest_face = max(faces, key=lambda f: f[2] * f[3])  # w * h
-        x, y, w, h = largest_face
+        print(f"[FaceDetect] {len(valid_faces)} valid face(s) after size filter (min {min_face_size}px)")
+
+        # Find the largest face for comparison
+        largest_face = max(valid_faces, key=lambda f: f[2] * f[3])
+        largest_area = largest_face[2] * largest_face[3]
+
+        # Select face based on preference
+        if prefer_rightmost and len(valid_faces) > 1:
+            # For side-by-side interviews: pick rightmost face AMONG REASONABLY-SIZED FACES
+            # Only consider faces that are at least 30% the size of the largest face
+            # This prevents selecting tiny false positives at frame edges
+            size_threshold = largest_area * 0.30
+            candidate_faces = [f for f in valid_faces if f[2] * f[3] >= size_threshold]
+
+            if len(candidate_faces) == 0:
+                candidate_faces = valid_faces  # Fallback to all valid faces
+
+            selected_face = max(candidate_faces, key=lambda f: f[0] + f[2] // 2)
+            print(f"[FaceDetect] Selected rightmost face from {len(candidate_faces)} candidates")
+        elif prefer_rightmost and len(valid_faces) == 1:
+            # Only 1 face detected - check if it's suspiciously on the LEFT side
+            # For right-side hosts, a single face in left 1/3 is likely a false positive
+            face = valid_faces[0]
+            face_center_x = face[0] + face[2] // 2
+            left_third_boundary = frame_width // 3
+
+            if face_center_x < left_third_boundary:
+                # Suspicious - face is in left third but host should be on right
+                # Use right-of-center default instead of centering on likely false positive
+                scale_factor = 1920 / frame_height
+                scaled_width = int(frame_width * scale_factor)
+                max_offset = (scaled_width - target_width) // 2
+                default_offset = int(max_offset * 0.6)  # Pan 60% right
+                print(f"[FaceDetect] Single face in left third ({face_center_x}px < {left_third_boundary}px) with prefer_rightmost=True")
+                print(f"[FaceDetect] Treating as false positive, using right-of-center: {default_offset}px")
+                return default_offset
+            else:
+                selected_face = face
+                print(f"[FaceDetect] Selected single face (in right 2/3 of frame)")
+        else:
+            # Default: find the largest face (likely the main speaker)
+            selected_face = largest_face
+            print(f"[FaceDetect] Selected largest face")
+
+        x, y, w, h = selected_face
 
         # Calculate face center X position
         face_center_x = x + w // 2
         frame_center_x = frame_width // 2
 
-        # Calculate offset needed to center the face
+        # Calculate offset needed to center the face (in original coordinates)
         # Positive offset = face is right of center, need to shift crop right
         # Negative offset = face is left of center, need to shift crop left
-        offset = face_center_x - frame_center_x
+        offset_original = face_center_x - frame_center_x
+
+        # CRITICAL: Scale the offset to match post-scaling coordinates
+        # FFmpeg applies crop AFTER scale=-2:1920, so offset must be scaled proportionally
+        scale_factor = 1920 / frame_height
+        offset = int(offset_original * scale_factor)
 
         # Limit offset to prevent cropping outside frame bounds
         # After scaling to 1920 height, width is approximately frame_width * (1920/frame_height)
-        scaled_width = int(frame_width * (1920 / frame_height))
+        scaled_width = int(frame_width * scale_factor)
         max_offset = (scaled_width - target_width) // 2
 
         # Clamp offset to safe range (leave some margin)
@@ -359,7 +431,8 @@ def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
         offset = max(-max_offset + safe_margin, min(max_offset - safe_margin, offset))
 
         print(f"[FaceDetect] Face at ({face_center_x}, {y + h//2}), frame center at {frame_center_x}")
-        print(f"[FaceDetect] Calculated offset: {offset}px (max: ±{max_offset})")
+        print(f"[FaceDetect] Original offset: {offset_original}px, scale_factor: {scale_factor:.2f}")
+        print(f"[FaceDetect] Scaled offset: {offset}px (max: ±{max_offset})")
 
         return offset
 
@@ -371,10 +444,17 @@ def detect_face_offset(video_path: str, target_width: int = 1080) -> int:
         return 0
 
 
-def detect_face_crop_offset(video_path: str, seek_time: float = 0, target_width: int = 1080, target_height: int = 1920) -> int:
+def detect_face_crop_offset(video_path: str, seek_time: float = 0, target_width: int = 1080, target_height: int = 1920, prefer_rightmost: bool = False) -> int:
     """
     Detect face position at a specific timestamp and return horizontal crop offset.
     Used for B-Roll clips to center faces in the 9:16 crop.
+
+    Args:
+        video_path: Path to the video file
+        seek_time: Timestamp to extract frame from
+        target_width: Target crop width (default 1080)
+        target_height: Target crop height (default 1920)
+        prefer_rightmost: If True, select rightmost face instead of largest
 
     Returns: pixel offset for crop X position (0 = center crop)
     """
@@ -409,15 +489,29 @@ def detect_face_crop_offset(video_path: str, seek_time: float = 0, target_width:
         face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         face_cascade = cv2.CascadeClassifier(face_cascade_path)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(80, 80))
         os.remove(temp_frame)
 
         if len(faces) == 0:
             return 0
 
-        # Find largest face
-        largest = max(faces, key=lambda f: f[2] * f[3])
-        face_center_x = largest[0] + largest[2] // 2
+        # Filter out false positives - minimum 8% of frame height
+        min_face_size = int(frame_height * 0.08)
+        valid_faces = [f for f in faces if f[2] >= min_face_size and f[3] >= min_face_size]
+        if len(valid_faces) == 0:
+            return 0
+
+        # Select face based on preference
+        if prefer_rightmost and len(valid_faces) > 1:
+            # For side-by-side interviews: pick the rightmost face
+            largest_area = max(f[2] * f[3] for f in valid_faces)
+            candidates = [f for f in valid_faces if f[2] * f[3] >= largest_area * 0.30]
+            selected = max(candidates or valid_faces, key=lambda f: f[0] + f[2] // 2)
+        else:
+            # Default: find largest face
+            selected = max(valid_faces, key=lambda f: f[2] * f[3])
+
+        face_center_x = selected[0] + selected[2] // 2
 
         # Scale face center to the scaled dimensions
         face_center_scaled = int(face_center_x * scale_factor)
@@ -426,14 +520,87 @@ def detect_face_crop_offset(video_path: str, seek_time: float = 0, target_width:
         # Offset needed to center the face in the crop
         offset = face_center_scaled - frame_center_scaled
 
-        # Clamp to valid range
+        # Clamp to safe range (leave margin for shake effects)
         max_offset = (scaled_width - target_width) // 2
-        offset = max(-max_offset, min(max_offset, offset))
+        safe_margin = 50
+        offset = max(-max_offset + safe_margin, min(max_offset - safe_margin, offset))
 
         return offset
 
     except Exception:
         return 0
+
+
+def detect_face_offsets_multipoint(video_path: str, duration: float, interval: float = 5.0,
+                                   prefer_rightmost: bool = False, min_change: int = 80) -> list:
+    """
+    Sample face position at multiple timestamps throughout a clip.
+    Returns list of (time, offset) tuples for building dynamic crop expressions.
+
+    Args:
+        video_path: Path to the extracted clip
+        duration: Clip duration in seconds
+        interval: Seconds between samples (default 5s)
+        prefer_rightmost: If True, prefer rightmost face
+        min_change: Minimum offset change (px) to register a new position (hysteresis)
+
+    Returns: List of (timestamp, offset) tuples, e.g. [(0.0, 45), (5.0, 45), (10.0, -30)]
+    """
+    # First frame uses the robust detect_face_offset (has full false-positive filtering)
+    first_offset = detect_face_offset(video_path, prefer_rightmost=prefer_rightmost)
+    offsets = [(0.0, first_offset)]
+    current_offset = first_offset
+
+    # Sample at regular intervals
+    t = interval
+    while t < duration - 0.5:  # Stop 0.5s before end
+        sample_offset = detect_face_crop_offset(video_path, seek_time=t, prefer_rightmost=prefer_rightmost)
+
+        # If no face found (0), keep previous offset (speaker likely still there)
+        if sample_offset == 0 and current_offset != 0:
+            t += interval
+            continue
+
+        # Hysteresis: only register change if offset moved significantly
+        if abs(sample_offset - current_offset) >= min_change:
+            offsets.append((t, sample_offset))
+            current_offset = sample_offset
+            print(f"[FaceDetect Multi] t={t:.1f}s: offset changed to {sample_offset}px")
+
+        t += interval
+
+    print(f"[FaceDetect Multi] {len(offsets)} distinct offset(s) across {duration:.1f}s clip")
+    return offsets
+
+
+def build_dynamic_crop_offset_expr(offsets: list, duration: float) -> str:
+    """
+    Build an FFmpeg expression that switches crop offset at each sample point.
+
+    Args:
+        offsets: List of (timestamp, offset) tuples from detect_face_offsets_multipoint
+        duration: Total clip duration
+
+    Returns: FFmpeg expression string for use in crop filter
+    """
+    if not offsets:
+        return "0"
+
+    if len(offsets) == 1:
+        return str(offsets[0][1])
+
+    # Build expression: offset_0*between(t,t0,t1) + offset_1*between(t,t1,t2) + ...
+    parts = []
+    for i, (t, offset) in enumerate(offsets):
+        if i + 1 < len(offsets):
+            end_t = offsets[i + 1][0]
+        else:
+            end_t = duration + 1  # Extend past end
+        parts.append(f"({offset})*between(t,{t:.2f},{end_t:.2f})")
+
+    expr = "+".join(parts)
+    print(f"[FaceDetect Multi] Dynamic crop expression: {expr}")
+    return expr
 
 
 def find_face_free_segments(video_path: str, sample_interval: float = 2.0, min_segment_dur: float = 3.0) -> list:
@@ -564,7 +731,7 @@ def get_effect_chain(effect_settings: dict) -> dict:
         "grid_type": 4,
         # B-roll settings
         "broll_cut_interval": 0.5,
-        # Cross overlay (for Crusade template)
+        # Cross overlay (for themed template)
         "cross_overlay": False,
         # === NEW EFFECTS (Grok Director) ===
         # LUT color grading (overrides eq grade when set)
@@ -763,6 +930,7 @@ class CaptionRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     audio_path: str
     output_format: str = "srt"
+    language: Optional[str] = "en"  # Default to English to prevent language hallucination
 
 class FetchChannelRequest(BaseModel):
     url: str
@@ -805,7 +973,7 @@ class RenderClipRequest(BaseModel):
     start_time: float
     end_time: float
     transcript_segments: list[dict] = []
-    style_preset: str = "trad_west"
+    style_preset: str = "default"
     font: str = "random"  # "random" picks from VIRAL_FONTS, or specify exact font name
     output_filename: Optional[str] = None
     outro_path: Optional[str] = None
@@ -821,11 +989,11 @@ class RenderClipRequest(BaseModel):
     # === NEW: Grok Director effect fields ===
     caption_style: str = "standard"  # "standard"|"pop_scale"|"shake"|"blur_reveal"
     broll_transition_type: Optional[str] = None  # "pixelize"|"radial"|"dissolve"|"slideleft"
-    # === Cold Open Hook (retention optimization) ===
+    # === Cold Open Hook (retention optimization) - DISABLED ===
     hook_phrase: Optional[str] = None  # Text to flash at T=0 (e.g., "You're a LIAR")
     hook_timestamp: Optional[float] = None  # Absolute timestamp of hook phrase in source
     visual_hook_time: Optional[float] = None  # Timestamp for flash frame preview
-    hook_enabled: bool = True  # Enable/disable cold open hook
+    hook_enabled: bool = False  # DISABLED: not working as intended
     # === Emotional Arc (dynamic intensity) ===
     setup_end: Optional[float] = None  # Seconds into clip where setup ends (relative to clip start)
     escalation_peak: Optional[float] = None  # Seconds into clip where escalation peaks
@@ -840,6 +1008,8 @@ class RenderClipRequest(BaseModel):
     # === Caption Pacing ===
     rapid_fire_sections: Optional[List[dict]] = []  # [{"start": float, "end": float}] - faster caption reveal
     question_moments: Optional[List[float]] = []  # [float] - timestamps of rhetorical questions
+    # === Face Detection Preference ===
+    prefer_rightmost_face: bool = False  # For side-by-side interviews, center on rightmost face
 
 def report_status(webhook_url: str, status: str):
     if not webhook_url: return
@@ -851,7 +1021,10 @@ def report_status(webhook_url: str, status: str):
 
 
 # ============ LAZY LOADERS ============
+import threading
 whisper_model = None
+whisper_lock = threading.Lock()  # Prevent concurrent Whisper calls (causes tensor race conditions)
+
 def get_whisper_model():
     global whisper_model
     import whisper
@@ -862,11 +1035,16 @@ def get_whisper_model():
         whisper_model = whisper.load_model("medium", device=device)
     return whisper_model
 
-def safe_transcribe(audio_path: str, word_timestamps: bool = True):
+def safe_transcribe(audio_path: str, word_timestamps: bool = True, language: str = "en"):
     """
     Safely transcribe audio/video file.
     Extracts audio to WAV first for reliable transcription.
     Returns empty result if audio is invalid/silent.
+
+    Args:
+        audio_path: Path to audio/video file
+        word_timestamps: Whether to include word-level timestamps
+        language: Language code (default "en" to prevent hallucination)
     """
     import torch
     import tempfile
@@ -897,7 +1075,7 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
             temp_wav.name
         ]
 
-        result = subprocess.run(extract_cmd, capture_output=True, text=True)
+        result = subprocess.run(extract_cmd, capture_output=True, text=True, timeout=300)
         if result.returncode == 0 and os.path.exists(temp_wav.name):
             transcribe_path = temp_wav.name
             print(f"Extracted audio to WAV for transcription: {temp_wav.name}")
@@ -910,7 +1088,7 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
 
             # Check audio duration using ffprobe
             probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", temp_wav.name]
-            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
             if probe_result.returncode == 0:
                 try:
                     audio_duration = float(probe_result.stdout.strip())
@@ -924,8 +1102,15 @@ def safe_transcribe(audio_path: str, word_timestamps: bool = True):
             print(f"WAV extraction failed, using original: {result.stderr[:200] if result.stderr else 'unknown'}")
 
         # Transcribe the audio with error handling for problematic audio
+        # Use lock to prevent concurrent Whisper calls (causes tensor race conditions on GPU)
         try:
-            transcription = model.transcribe(transcribe_path, word_timestamps=word_timestamps)
+            with whisper_lock:
+                print(f"[Whisper] Starting transcription with language={language}")
+                transcription = model.transcribe(
+                    transcribe_path,
+                    word_timestamps=word_timestamps,
+                    language=language  # Force language to prevent hallucination
+                )
             return transcription
         except RuntimeError as e:
             error_msg = str(e).lower()
@@ -986,7 +1171,7 @@ def detect_beats(audio_path: str, max_duration: float = None) -> list:
             *duration_args,
             "-ac", "1", "-ar", "22050",  # Mono, 22kHz for faster processing
             tmp_wav
-        ], capture_output=True, check=True)
+        ], capture_output=True, check=True, timeout=300)
 
         # Load audio with scipy
         from scipy.io import wavfile
@@ -1064,7 +1249,7 @@ def detect_onset_peaks(audio_path: str, max_duration: float = None) -> list:
             *duration_args,
             "-ac", "1", "-ar", "22050",
             tmp_wav
-        ], capture_output=True, check=True)
+        ], capture_output=True, check=True, timeout=300)
 
         from scipy.io import wavfile
         sample_rate, audio_data = wavfile.read(tmp_wav)
@@ -1112,19 +1297,50 @@ def detect_onset_peaks(audio_path: str, max_duration: float = None) -> list:
 
 # ============ HELPER FUNCTIONS (LEGACY & NEW) ============
 
+# Cache for GPU encoder detection to avoid repeated subprocess calls
+_gpu_encoder_cache: tuple[str, list] | None = None
+
 def get_gpu_encoder() -> tuple[str, list]:
+    global _gpu_encoder_cache
+    if _gpu_encoder_cache is not None:
+        return _gpu_encoder_cache
+
     try:
         result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, timeout=10)
         if "h264_nvenc" in result.stdout:
-            # Tuned for high quality speed
-            return "h264_nvenc", ["-preset", "p4", "-tune", "hq", "-b:v", "5M"]
-    except:
+            # Tuned for high quality with VBR mode
+            # -rc:v vbr = Variable bitrate for better quality distribution
+            # -cq 23 = Constant quality target (like CRF but for NVENC)
+            # -profile:v high = H.264 High profile for better compression
+            _gpu_encoder_cache = ("h264_nvenc", [
+                "-preset", "p4", "-tune", "hq",
+                "-rc:v", "vbr", "-cq", "23",
+                "-profile:v", "high", "-b:v", "5M", "-maxrate", "8M"
+            ])
+            return _gpu_encoder_cache
+    except Exception:
         pass
-    return "libx264", ["-preset", "fast", "-crf", "23", "-b:v", "5M"]
+    _gpu_encoder_cache = ("libx264", ["-preset", "fast", "-crf", "23", "-profile:v", "high", "-b:v", "5M"])
+    return _gpu_encoder_cache
+
+def parse_frame_rate(rate_str: str) -> float:
+    """Safely parse frame rate fraction string like '30/1' or '30000/1001'."""
+    if not rate_str:
+        return 30.0
+    try:
+        if '/' in rate_str:
+            num, denom = rate_str.split('/')
+            num, denom = int(num), int(denom)
+            if denom == 0:
+                return 30.0
+            return num / denom
+        return float(rate_str)
+    except (ValueError, ZeroDivisionError):
+        return 30.0
 
 def get_video_info(path: str) -> dict:
     cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         # Fallback empty
         return {"duration": 0, "size": 0, "width": 0, "height": 0}
@@ -1135,7 +1351,7 @@ def get_video_info(path: str) -> dict:
         "duration": float(data.get("format", {}).get("duration", 0)),
         "width": int(video_stream.get("width", 0)),
         "height": int(video_stream.get("height", 0)),
-        "fps": eval(video_stream.get("r_frame_rate", "30/1")) if video_stream.get("r_frame_rate") else 30,
+        "fps": parse_frame_rate(video_stream.get("r_frame_rate", "30/1")),
         "codec": video_stream.get("codec_name", "unknown"),
         "size": int(data.get("format", {}).get("size", 0))
     }
@@ -1147,7 +1363,7 @@ def probe_av_durations(path: str, label: str = "") -> tuple:
     Returns (video_dur, audio_dur, drift).
     """
     cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         print(f"  SYNC DEBUG [{label}]: ffprobe failed")
         return (0, 0, 0)
@@ -1245,7 +1461,7 @@ def apply_chromatic_aberration(video_path: str, output_path: str, trigger_window
     """
     if not trigger_windows:
         # No triggers, just copy the file
-        subprocess.run(["cp", video_path, output_path], check=True)
+        subprocess.run(["cp", video_path, output_path], check=True, timeout=60)
         return
 
     print(f"Applying chromatic aberration to {len(trigger_windows)} trigger windows...")
@@ -1555,7 +1771,7 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
         probe = subprocess.run([
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", str(input_path)
-        ], capture_output=True, text=True)
+        ], capture_output=True, text=True, timeout=30)
         clip_duration = float(probe.stdout.strip())
     except:
         print("[SpeedRamp] Failed to probe clip duration, skipping")
@@ -1638,7 +1854,7 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
                     str(seg_path)
                 ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             if result.returncode != 0 or not seg_path.exists():
                 print(f"[SpeedRamp] Segment {i} failed: {result.stderr[-200:] if result.stderr else 'unknown'}")
                 # Cleanup and abort
@@ -1661,7 +1877,7 @@ def apply_speed_ramps(input_path: Path, output_path: Path, speed_ramps: list, en
             "-video_track_timescale", "15360",
             str(output_path)
         ]
-        result = subprocess.run(cmd_concat, capture_output=True, text=True)
+        result = subprocess.run(cmd_concat, capture_output=True, text=True, timeout=600)
 
         # Cleanup
         concat_file.unlink()
@@ -1774,7 +1990,7 @@ def generate_broll_montage(
                 probe = subprocess.run([
                     "ffprobe", "-v", "error", "-show_entries", "format=duration",
                     "-of", "default=noprint_wrappers=1:nokey=1", broll_clip
-                ], capture_output=True, text=True)
+                ], capture_output=True, text=True, timeout=30)
                 clip_dur = float(probe.stdout.strip()) if probe.stdout.strip() else 10.0
             except:
                 clip_dur = 10.0
@@ -1803,7 +2019,7 @@ def generate_broll_montage(
                 str(segment_path)
             ]
 
-            result = subprocess.run(cmd_segment, capture_output=True, text=True)
+            result = subprocess.run(cmd_segment, capture_output=True, text=True, timeout=300)
             if result.returncode == 0 and segment_path.exists() and segment_path.stat().st_size > 1000:
                 temp_segments.append(segment_path)
                 actual_duration += segment_duration
@@ -1841,7 +2057,7 @@ def generate_broll_montage(
                     probe = subprocess.run([
                         "ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=noprint_wrappers=1:nokey=1", str(seg)
-                    ], capture_output=True, text=True)
+                    ], capture_output=True, text=True, timeout=30)
                     seg_durations.append(float(probe.stdout.strip()))
                 except:
                     seg_durations.append(cut_interval)
@@ -1888,7 +2104,7 @@ def generate_broll_montage(
                 str(output_path)
             ]
 
-            result = subprocess.run(cmd_xfade, capture_output=True, text=True)
+            result = subprocess.run(cmd_xfade, capture_output=True, text=True, timeout=600)
             if result.returncode != 0:
                 print(f"B-Roll Montage: xfade failed, falling back to concat: {result.stderr[-200:] if result.stderr else ''}")
                 use_xfade = False  # Fall through to concat below
@@ -1910,7 +2126,7 @@ def generate_broll_montage(
             ]
 
             print(f"B-Roll Montage: Concatenating {len(temp_segments)} segments (no transitions)")
-            subprocess.run(cmd_concat, check=True)
+            subprocess.run(cmd_concat, check=True, timeout=300)
             concat_list_path.unlink()
 
         # Clean up temp segments
@@ -1986,10 +2202,10 @@ def generate_broll_montage(
                     str(temp_with_ass)
                 ]
                 print(f"B-Roll Montage: Burning ASS captions")
-                result = subprocess.run(cmd_ass, capture_output=True, text=True)
+                result = subprocess.run(cmd_ass, capture_output=True, text=True, timeout=600)
                 if result.returncode == 0 and temp_with_ass.exists():
                     # Replace output with captioned version
-                    subprocess.run(["mv", str(temp_with_ass), str(output_path)], check=True)
+                    subprocess.run(["mv", str(temp_with_ass), str(output_path)], check=True, timeout=30)
                     print(f"B-Roll Montage: Captions burned successfully")
                 else:
                     print(f"B-Roll Montage: ASS burn failed: {result.stderr[:200] if result.stderr else 'unknown'}")
@@ -2015,7 +2231,7 @@ def generate_broll_montage(
                 temp_chroma = temp_dir / f"broll_chroma_{uuid.uuid4().hex[:8]}.mp4"
                 try:
                     apply_chromatic_aberration(str(output_path), str(temp_chroma), rgb_windows, max_shift=25)
-                    subprocess.run(["mv", str(temp_chroma), str(output_path)], check=True)
+                    subprocess.run(["mv", str(temp_chroma), str(output_path)], check=True, timeout=30)
                     print(f"B-Roll Montage: RGB glitch applied ({len(rgb_windows)} pulses)")
                 except Exception as e:
                     print(f"B-Roll Montage: RGB glitch failed, continuing: {e}")
@@ -2026,7 +2242,7 @@ def generate_broll_montage(
             temp_vintage = temp_dir / f"broll_vintage_{uuid.uuid4().hex[:8]}.mp4"
             try:
                 apply_vintage_vhs_effects(str(output_path), str(temp_vintage), duration, rgb_trigger_windows=rgb_windows)
-                subprocess.run(["mv", str(temp_vintage), str(output_path)], check=True)
+                subprocess.run(["mv", str(temp_vintage), str(output_path)], check=True, timeout=30)
                 print(f"B-Roll Montage: VHS effects applied")
             except Exception as e:
                 print(f"B-Roll Montage: VHS effects failed, continuing: {e}")
@@ -2089,9 +2305,11 @@ def generate_cold_open_hook(
         # - Optional text overlay
 
         video_filters = [
-            # Scale up slightly (1.08x) then crop to 9:16 - creates tight zoom effect
+            # Scale to fill 1920 height, then zoom slightly and crop to 9:16
+            "scale=-2:1920",
             "scale=iw*1.08:ih*1.08",
             "crop=1080:1920",
+            "format=yuv420p",
             # White flash fade in at start
             "fade=t=in:st=0:d=0.12:color=white",
             # Fade out at end for smooth transition
@@ -2581,7 +2799,7 @@ def apply_letterbox(video_path: str, output_path: str, ratio: float = 2.35):
         "-c:a", "copy",
         output_path
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, timeout=600)
     print(f"Applied letterbox (ratio {ratio}, bars {bar_h}px)")
 
 
@@ -2600,7 +2818,7 @@ def apply_vignette_effect(video_path: str, output_path: str, intensity: float = 
         "-c:a", "copy",
         output_path
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, timeout=600)
     print(f"Applied vignette (intensity {intensity})")
 
 
@@ -2694,7 +2912,7 @@ def apply_velocity_effect(video_path: str, output_path: str, trigger_times: list
     # For now, velocity effect is simulated via the aggressive pulse zoom
     # and flash frames which give the perception of speed change
     print(f"Velocity effect: {len(trigger_times)} trigger points (simulated via pulse/flash)")
-    subprocess.run(["cp", video_path, output_path], check=True)
+    subprocess.run(["cp", video_path, output_path], check=True, timeout=60)
 
 
 def apply_whip_pan_transition(frame: np.ndarray, t: float, transition_times: list,
@@ -2819,7 +3037,7 @@ def apply_combined_template_effects(video_path: str, output_path: str, effect_co
             frame[:bar_h, :, :] = 0  # Top bar
             frame[-bar_h:, :, :] = 0  # Bottom bar
 
-        # 7. CROSS OVERLAY (for Crusade template)
+        # 7. CROSS OVERLAY (for themed template)
         if cross_overlay:
             # Add subtle cross watermark in corner (gold color)
             cross_size = 60
@@ -3036,38 +3254,63 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             else:
                 return f"{{\\k{dur_cs}}}{w_text} "
 
+    # MAX_WORDS_PER_LINE: Limit to 2 lines on screen (~6 words per line = 12 words max)
+    MAX_WORDS_PER_SEGMENT = 12
+
+    def split_segment_into_chunks(seg, max_words=MAX_WORDS_PER_SEGMENT):
+        """Split a segment into smaller chunks to limit lines on screen."""
+        words = seg.get('words', [])
+        if not words or len(words) <= max_words:
+            return [seg]
+
+        chunks = []
+        for i in range(0, len(words), max_words):
+            chunk_words = words[i:i + max_words]
+            if chunk_words:
+                chunks.append({
+                    'start': chunk_words[0]['start'],
+                    'end': chunk_words[-1]['end'],
+                    'text': ' '.join(w['word'] for w in chunk_words),
+                    'words': chunk_words
+                })
+        return chunks
+
     for seg in segments:
-        s_start, s_end = seg['start'], seg['end']
-        words = seg.get('words', [{'start': s_start, 'end': s_end, 'word': seg['text']}])
-        if not words: continue
+        # Split long segments to limit to 2 lines on screen
+        seg_chunks = split_segment_into_chunks(seg)
 
-        karaoke = ""
-        current_time = s_start
+        for chunk in seg_chunks:
+            s_start, s_end = chunk['start'], chunk['end']
+            words = chunk.get('words', [{'start': s_start, 'end': s_end, 'word': chunk['text']}])
+            if not words: continue
 
-        for w in words:
-            w_start, w_end, w_text = w['start'], w['end'], w['word'].strip()
+            karaoke = ""
+            current_time = s_start
 
-            # Check for gap between current position and this word's start
-            gap = w_start - current_time
-            if gap > 0.05:
-                gap_cs = int(gap * 100)
-                karaoke += f"{{\\k{gap_cs}}}"
+            for w in words:
+                w_start, w_end, w_text = w['start'], w['end'], w['word'].strip()
 
-            # Duration of this word in centiseconds
-            dur_cs = int((w_end - w_start) * 100)
-            if dur_cs < 1: dur_cs = 1
+                # Check for gap between current position and this word's start
+                gap = w_start - current_time
+                if gap > 0.05:
+                    gap_cs = int(gap * 100)
+                    karaoke += f"{{\\k{gap_cs}}}"
 
-            is_trigger = is_trigger_word(w_start, w_end, w_text)
-            is_quotable = is_quotable_word(w_start, w_end)
-            is_question = is_question_word(w_start, w_end)
-            karaoke += build_word_fx(w_text, dur_cs, is_trigger, caption_style, is_quotable, is_question)
+                # Duration of this word in centiseconds
+                dur_cs = int((w_end - w_start) * 100)
+                if dur_cs < 1: dur_cs = 1
 
-            current_time = w_end
+                is_trigger = is_trigger_word(w_start, w_end, w_text)
+                is_quotable = is_quotable_word(w_start, w_end)
+                is_question = is_question_word(w_start, w_end)
+                karaoke += build_word_fx(w_text, dur_cs, is_trigger, caption_style, is_quotable, is_question)
 
-        # Line-level blur for blur_reveal style
-        line_blur = "\\blur2" if caption_style != "blur_reveal" else ""
-        line_entry = f"Dialogue: 0,{fmt_time(s_start)},{fmt_time(s_end)},Karaoke,,0,0,0,,{{{line_blur}}}{karaoke}"
-        events.append(line_entry)
+                current_time = w_end
+
+            # Line-level blur for blur_reveal style
+            line_blur = "\\blur2" if caption_style != "blur_reveal" else ""
+            line_entry = f"Dialogue: 0,{fmt_time(s_start)},{fmt_time(s_end)},Karaoke,,0,0,0,,{{{line_blur}}}{karaoke}"
+            events.append(line_entry)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(header + "\n".join(events))
@@ -3212,6 +3455,21 @@ BLOCKED_CHANNELS = {
     "maddow", "the daily show", "last week tonight",
     "late show", "jimmy kimmel", "seth meyers", "colbert",
     "trevor noah", "john oliver",
+    # Local TV news stations (studio talking heads, not raw footage)
+    "fox 9", "fox9", "fox 9 minneapolis",
+    "kare 11", "kare11", "wcco", "kstp",
+    "abc7", "abc 7", "abc7 chicago", "abc7 los angeles", "abc 7 news",
+    "nbc 5", "nbc5", "cbs chicago", "wgn",
+    "newsnation", "newsy", "spectrum news",
+    "fox 5", "fox5", "fox 10", "fox10", "fox 11", "fox11",
+    "fox 13", "fox13", "fox 26", "fox26", "fox 29", "fox29",
+    "fox 32", "fox32", "fox 35", "fox35", "fox 4", "fox4",
+    "ktla", "kpix", "khou", "wfaa", "wfla", "wpvi",
+    # Wire services and international news (studio-heavy)
+    "reuters", "ap archive", "afp",
+    "guardian news", "the telegraph", "sky news",
+    "al jazeera", "france 24", "dw news",
+    "euronews", "abc news australia", "9 news australia",
 }
 
 
@@ -3352,9 +3610,8 @@ async def fetch_youtube_transcript(request: FetchTranscriptRequest):
                 search_cmd, capture_output=True, text=True, timeout=30
             )
 
-            video_url = None
-            video_title = ""
-            video_channel = ""
+            # Collect up to 3 non-blocked candidate videos
+            candidates = []
             for line in (search_result.stdout or "").strip().split("\n"):
                 if not line.strip():
                     continue
@@ -3368,39 +3625,87 @@ async def fetch_youtube_transcript(request: FetchTranscriptRequest):
                     if is_blocked:
                         print(f"Transcript fetch: SKIPPING blocked '{channel}'")
                         continue
-                    video_url = f"https://www.youtube.com/watch?v={meta.get('id', '')}"
-                    video_title = meta.get("title", "")
-                    video_channel = meta.get("channel") or meta.get("uploader") or ""
-                    break
+                    candidates.append({
+                        "url": f"https://www.youtube.com/watch?v={meta.get('id', '')}",
+                        "title": meta.get("title", ""),
+                        "channel": meta.get("channel") or meta.get("uploader") or "",
+                        "id": meta.get("id", ""),
+                    })
+                    if len(candidates) >= 3:
+                        break
                 except json.JSONDecodeError:
                     continue
 
-            if not video_url:
+            if not candidates:
                 return {"error": "No suitable video found", "transcript": []}
 
-            # Step 2: Download video + subtitles
-            print(f"Transcript fetch: Downloading '{video_title}' from '{video_channel}'")
-            dl_cmd = [
-                "yt-dlp", video_url,
-                "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-                "--merge-output-format", "mp4",
-                "-o", str(temp_video),
-                "--no-playlist", "--no-warnings",
-                "--socket-timeout", "30", "--retries", "2",
-                "--write-auto-subs", "--sub-format", "vtt", "--sub-langs", "en",
-            ]
-            subprocess.run(dl_cmd, capture_output=True, text=True, timeout=180)
+            # Try each candidate until we find one with sufficient face-free segments
+            video_url = None
+            video_title = ""
+            video_channel = ""
+            MIN_FACE_FREE_SEGMENTS = 2  # Require at least 2 face-free segments
 
-            if not temp_video.exists():
-                alt = Path(str(temp_video) + ".mp4")
-                if alt.exists():
-                    alt.rename(temp_video)
-                else:
-                    video_files = list(temp_dir.glob("*.mp4")) + list(temp_dir.glob("*.mkv"))
-                    if video_files:
-                        video_files[0].rename(temp_video)
+            for i, candidate in enumerate(candidates):
+                # Clean up any existing video before downloading new one
+                if temp_video.exists():
+                    temp_video.unlink()
+                # Also clean up any subtitle files
+                for vtt in temp_dir.glob("*.vtt"):
+                    vtt.unlink()
+
+                print(f"Transcript fetch: Trying candidate {i+1}/{len(candidates)}: '{candidate['title'][:60]}' from '{candidate['channel']}'")
+                dl_cmd = [
+                    "yt-dlp", candidate["url"],
+                    "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+                    "--merge-output-format", "mp4",
+                    "-o", str(temp_video),
+                    "--no-playlist", "--no-warnings",
+                    "--socket-timeout", "30", "--retries", "2",
+                    "--write-auto-subs", "--sub-format", "vtt", "--sub-langs", "en",
+                ]
+                subprocess.run(dl_cmd, capture_output=True, text=True, timeout=180)
+
+                # Check if download succeeded
+                if not temp_video.exists():
+                    alt = Path(str(temp_video) + ".mp4")
+                    if alt.exists():
+                        alt.rename(temp_video)
                     else:
-                        return {"error": "Download failed", "transcript": []}
+                        video_files = list(temp_dir.glob("*.mp4")) + list(temp_dir.glob("*.mkv"))
+                        if video_files:
+                            video_files[0].rename(temp_video)
+
+                if not temp_video.exists() or temp_video.stat().st_size < 10000:
+                    print(f"Transcript fetch: Download failed for candidate {i+1}, trying next")
+                    continue
+
+                # Check face-free segments for this video
+                face_free_check = find_face_free_segments(str(temp_video), sample_interval=2.0, min_segment_dur=3.0)
+                face_free_count = len(face_free_check)
+
+                if face_free_count >= MIN_FACE_FREE_SEGMENTS:
+                    video_url = candidate["url"]
+                    video_title = candidate["title"]
+                    video_channel = candidate["channel"]
+                    print(f"Transcript fetch: SELECTED candidate {i+1} with {face_free_count} face-free segments")
+                    break
+                else:
+                    print(f"Transcript fetch: Candidate {i+1} has only {face_free_count} face-free segments (need {MIN_FACE_FREE_SEGMENTS}), trying next")
+
+                    # If this is the last candidate, use it anyway as fallback
+                    if i == len(candidates) - 1:
+                        video_url = candidate["url"]
+                        video_title = candidate["title"]
+                        video_channel = candidate["channel"]
+                        print(f"Transcript fetch: Using candidate {i+1} as fallback (no better options)")
+                    # If first candidate, keep it as backup in case all fail
+                    elif i == 0:
+                        video_url = candidate["url"]
+                        video_title = candidate["title"]
+                        video_channel = candidate["channel"]
+
+            if not video_url:
+                return {"error": "Download failed for all candidates", "transcript": []}
         else:
             video_title = "cached"
             video_channel = "cached"
@@ -3709,7 +4014,11 @@ async def transcribe_whisper(request: TranscribeRequest):
     try:
         if not os.path.exists(request.audio_path):
              raise HTTPException(status_code=404, detail=f"File not found")
-        result = safe_transcribe(request.audio_path, word_timestamps=True)
+        result = safe_transcribe(
+            request.audio_path,
+            word_timestamps=True,
+            language=request.language or "en"  # Default to English
+        )
         if request.output_format == "json": return result
         return {"text": result["text"], "segments": result["segments"]}
     except Exception as e:
@@ -3725,17 +4034,29 @@ async def fetch_channel_videos(request: FetchChannelRequest):
         ["--impersonate", "safari"], # Direct + Safari (Fallback)
     ]
 
+    # Normalize URL - handle @handles without full URL
+    url = request.url
+    if url.startswith("@"):
+        # Bare handle like @CliffeKnechtle777 - prepend YouTube base URL
+        url = f"https://www.youtube.com/{url}/videos"
+        print(f"Normalized bare handle to: {url}")
+    elif not url.startswith("http"):
+        # Some other format without protocol - assume YouTube
+        url = f"https://www.youtube.com/{url}"
+        print(f"Normalized URL to: {url}")
+
     last_error = None
-    
+
     for strategy in strategies:
         try:
-            cmd = ["yt-dlp", "--dump-json", "--playlist-end", str(request.limit), "--no-warnings", request.url]
+            cmd = ["yt-dlp", "--dump-json", "--playlist-end", str(request.limit), "--no-warnings", url]
             cmd.extend(strategy)
-            
+
             print(f"Fetch strategy: {strategy} for {request.url}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)  # Increased timeout
             
-            if result.returncode == 0 and result.stdout.strip():
+            # Try to parse output even if return code is non-zero (yt-dlp sometimes returns errors but still has data)
+            if result.stdout.strip():
                 videos = []
                 for line in result.stdout.strip().split('\n'):
                     if line:
@@ -3759,11 +4080,15 @@ async def fetch_channel_videos(request: FetchChannelRequest):
                                 "upload_date": data.get("upload_date"),
                                 "view_count": data.get("view_count"),
                             })
-                        except: pass
+                        except Exception as parse_err:
+                            print(f"  Parse error for line: {parse_err}")
+                            pass
                 if videos:
-                     return {"success": True, "videos": videos}
-            else:
-                 last_error = f"Return {result.returncode}: {result.stderr}"
+                    print(f"  Success: {len(videos)} videos fetched")
+                    return {"success": True, "videos": videos}
+
+            last_error = f"Return {result.returncode}: {result.stderr[:500] if result.stderr else 'no stderr'}"
+            print(f"  Strategy failed: {last_error}")
                  
         except Exception as e:
             last_error = str(e)
@@ -3812,24 +4137,37 @@ def render_viral_clip(request: RenderClipRequest):
         cleanup_files.append(temp_extracted)
 
         report_status(request.status_webhook_url, "Processing: Extracting Clip")
+        # Double-seek: fast input seek to ~2s before target, then precise output seek
+        # This avoids keyframe-induced A/V desync from pure input seeking
+        pre_seek = max(0, request.start_time - 2.0)
+        output_seek = request.start_time - pre_seek
         cmd_extract = [
             "ffmpeg", "-y", "-threads", "0",
-            "-ss", str(request.start_time),  # INPUT seeking = fast (seeks to keyframe)
+            "-ss", str(pre_seek),             # Fast input seek to ~2s before target
             "-i", request.video_path,
+            "-ss", str(output_seek),           # Precise output seek for remaining offset
             "-t", str(duration),
             "-c:v", "h264_nvenc", "-preset", "p1",
             "-c:a", "aac",
-            "-avoid_negative_ts", "make_zero",  # Fix PTS issues from input seeking
+            "-async", "1",                     # Force A/V sync alignment
             str(temp_extracted)
         ]
         print(f"DEBUG EXTRACT CMD: {' '.join(cmd_extract)}")
-        subprocess.run(cmd_extract, check=True)
+        subprocess.run(cmd_extract, check=True, timeout=600)
 
-        # 2.5. FACE DETECTION FOR AUTO-CENTERING
-        # Detect face position in first frame to calculate crop offset
+        # 2.5. MULTI-POINT FACE DETECTION FOR AUTO-CENTERING
+        # Sample face position at multiple timestamps to track speaker movement
         report_status(request.status_webhook_url, "Processing: Face Detection")
-        face_offset = detect_face_offset(str(temp_extracted))
-        print(f"[FaceDetect] Using crop offset: {face_offset}px (0 = center)")
+        face_offsets = detect_face_offsets_multipoint(
+            str(temp_extracted), duration,
+            interval=5.0,
+            prefer_rightmost=request.prefer_rightmost_face
+        )
+        # Build dynamic expression for FFmpeg crop filter
+        face_offset_expr = build_dynamic_crop_offset_expr(face_offsets, duration)
+        # Keep single offset for legacy/fallback uses
+        face_offset = face_offsets[0][1] if face_offsets else 0
+        print(f"[FaceDetect] Multi-point: {len(face_offsets)} sample(s), first offset: {face_offset}px")
 
         # 3. PER-CLIP TRANSCRIPTION - Fresh Whisper for perfect sync
         # This eliminates timestamp drift from long-video transcription
@@ -3867,7 +4205,7 @@ def render_viral_clip(request: RenderClipRequest):
                     fresh_segments.append(adj_seg)
             print(f"[Whisper] Fallback: {len(fresh_segments)} segments after time adjustment")
 
-        # Build fresh trigger words from TRAD_TRIGGER_WORDS list
+        # Build fresh trigger words from EFFECT_TRIGGER_WORDS list
         fresh_trigger_words = []
         for seg in fresh_segments:
             words = seg.get("words", [])
@@ -3880,7 +4218,7 @@ def render_viral_clip(request: RenderClipRequest):
                 w_text = re.sub(r"'s$|'s$", "", w_text)  # Remove possessive (both quote types)
                 w_text = w_text.strip()
 
-                if w_text in TRAD_TRIGGER_WORDS:
+                if w_text in EFFECT_TRIGGER_WORDS:
                     print(f"  TRIGGER HIT: '{w_text}' (raw: '{raw_word.strip()}') at {word_obj.get('start', 0):.2f}s")
                     fresh_trigger_words.append({
                         "start": word_obj["start"],
@@ -4105,7 +4443,8 @@ def render_viral_clip(request: RenderClipRequest):
         vhs_grain = f"noise=alls={grain_intensity}:allf=t+u" if vhs_grain_enabled else ""
 
         # === CAMERA SHAKE: offset crop position with sine waves ===
-        crop_x_offset = face_offset if face_offset != 0 else 0
+        # Use dynamic face offset expression (multi-point) or static fallback
+        crop_x_offset = face_offset_expr if face_offset_expr != "0" else "0"
         shake_x_expr = ""
         shake_y_expr = ""
         if effect_config.get("camera_shake"):
@@ -4184,15 +4523,15 @@ def render_viral_clip(request: RenderClipRequest):
         #           [LUT/eq grade] → [audio_sat] → [retro_glow] → [temporal_trail] → [wave] → [vhs_grain] → ass → hwupload
         vhs_grain_stage = f"{vhs_grain}," if vhs_grain else ""
 
-        # Crop expression with optional shake
-        crop_x = f"(iw-1080)/2+{crop_x_offset}{shake_x_expr}"
+        # Crop expression with dynamic face offset + optional shake
+        crop_x = f"(iw-1080)/2+({crop_x_offset}){shake_x_expr}"
         crop_y = f"(ih-1920)/2{shake_y_expr}"
 
         filter_complex_effects = (
             f"[0:v]hwdownload,format=nv12,format=yuv420p,"
             f"scale=-2:1920,"
             f"scale={zoom_expr}:eval=frame,"
-            f"crop=1080:1920:{crop_x}:{crop_y},"
+            f"crop=w=1080:h=1920:x='{crop_x}':y='{crop_y}',"
             f"{grade_filter},"
             f"{audio_sat_stage}"
             f"{retro_glow_stage}"
@@ -4217,7 +4556,7 @@ def render_viral_clip(request: RenderClipRequest):
         
         print(f"DEBUG MEGA CMD: {' '.join(cmd_mega)}")
         report_status(request.status_webhook_url, "Processing: GPU FX")
-        subprocess.run(cmd_mega, check=True)
+        subprocess.run(cmd_mega, check=True, timeout=1800)
 
         # DEBUG: Check AV sync after mega-filter
         probe_av_durations(str(temp_main), "after mega-filter")
@@ -4277,7 +4616,7 @@ def render_viral_clip(request: RenderClipRequest):
             print(f"RGB glitch shift: {rgb_shift}px (template config)")
             apply_chromatic_aberration(str(temp_main), str(temp_chroma), trigger_windows, max_shift=rgb_shift)
             # Replace temp_main with chromatic version
-            subprocess.run(["mv", str(temp_chroma), str(temp_main)], check=True)
+            subprocess.run(["mv", str(temp_chroma), str(temp_main)], check=True, timeout=30)
             print(f"Applied {len(trigger_windows)} RGB glitch pulses (4 intro + {len(trigger_windows)-4} keywords)")
             # DEBUG: Check AV sync after chromatic aberration
             probe_av_durations(str(temp_main), "after chroma/RGB")
@@ -4294,7 +4633,7 @@ def render_viral_clip(request: RenderClipRequest):
             try:
                 apply_vintage_vhs_effects(str(temp_main), str(temp_vintage), duration, rgb_trigger_windows=trigger_windows)
                 # Replace temp_main with vintage effects version
-                subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True)
+                subprocess.run(["mv", str(temp_vintage), str(temp_main)], check=True, timeout=30)
                 # DEBUG: Check AV sync after VHS effects
                 probe_av_durations(str(temp_main), "after VHS")
             except Exception as e:
@@ -4322,7 +4661,7 @@ def render_viral_clip(request: RenderClipRequest):
                     fresh_trigger_words, duration
                 )
                 # Replace temp_main with template effects version
-                subprocess.run(["mv", str(temp_template), str(temp_main)], check=True)
+                subprocess.run(["mv", str(temp_template), str(temp_main)], check=True, timeout=30)
             except Exception as e:
                 print(f"WARNING: Template effects failed, continuing without: {e}")
                 effect_failures.append("template_fx")
@@ -4338,7 +4677,7 @@ def render_viral_clip(request: RenderClipRequest):
             cleanup_files.append(temp_datamosh)
             try:
                 if apply_datamosh_effect(str(temp_main), str(temp_datamosh), datamosh_segs, duration):
-                    subprocess.run(["mv", str(temp_datamosh), str(temp_main)], check=True)
+                    subprocess.run(["mv", str(temp_datamosh), str(temp_main)], check=True, timeout=30)
                 elif temp_datamosh.exists():
                     temp_datamosh.unlink()
             except Exception as e:
@@ -4352,7 +4691,7 @@ def render_viral_clip(request: RenderClipRequest):
             cleanup_files.append(temp_psort)
             try:
                 if apply_pixel_sort_effect(str(temp_main), str(temp_psort), pixel_sort_segs, duration):
-                    subprocess.run(["mv", str(temp_psort), str(temp_main)], check=True)
+                    subprocess.run(["mv", str(temp_psort), str(temp_main)], check=True, timeout=30)
                 elif temp_psort.exists():
                     temp_psort.unlink()
             except Exception as e:
@@ -4372,8 +4711,8 @@ def render_viral_clip(request: RenderClipRequest):
                 "-t", str(duration),
                 "-c:v", "copy", "-c:a", "copy",
                 str(temp_trimmed)
-            ], check=True)
-            subprocess.run(["mv", str(temp_trimmed), str(temp_main)], check=True)
+            ], check=True, timeout=120)
+            subprocess.run(["mv", str(temp_trimmed), str(temp_main)], check=True, timeout=30)
             print(f"Duration enforced: {duration:.1f}s")
 
         # 3.7. B-ROLL INTERCUT (flash B-Roll at trigger words, speaker stays visible)
@@ -4492,7 +4831,7 @@ def render_viral_clip(request: RenderClipRequest):
                             "-vn", "-c:a", "aac",
                             "-t", f"{duration:.3f}",
                             str(temp_full_audio)
-                        ], check=True)
+                        ], check=True, timeout=300)
 
                         # 2. Build video segments: [speaker] [broll flash] [speaker] ...
                         video_segments = []
@@ -4504,17 +4843,17 @@ def render_viral_clip(request: RenderClipRequest):
                                 return
                             seg_path = temp_dir / f"ic_spk_{len(video_segments):03d}_{uid}.mp4"
                             cleanup_files.append(seg_path)
-                            # Re-encode for frame-accurate cuts (no keyframe alignment issues)
+                            # Output seeking (-ss after -i) for frame-accurate cuts
                             subprocess.run([
                                 "ffmpeg", "-y",
-                                "-ss", f"{start:.3f}",
                                 "-i", str(temp_main),
+                                "-ss", f"{start:.3f}",
                                 "-t", f"{end - start:.3f}",
                                 "-an",
                                 "-c:v", encoder_local, *gpu_opts_local,
                                 "-video_track_timescale", "15360",
                                 str(seg_path)
-                            ], check=True)
+                            ], check=True, timeout=120)
                             if seg_path.exists() and seg_path.stat().st_size > 500:
                                 video_segments.append(seg_path)
 
@@ -4525,7 +4864,7 @@ def render_viral_clip(request: RenderClipRequest):
                                     "ffprobe", "-v", "error",
                                     "-show_entries", "format=duration",
                                     "-of", "default=noprint_wrappers=1:nokey=1", str(seg_path)
-                                ], capture_output=True, text=True)
+                                ], capture_output=True, text=True, timeout=30)
                                 return float(p.stdout.strip()) if p.stdout.strip() else None
                             except:
                                 return None
@@ -4533,7 +4872,14 @@ def render_viral_clip(request: RenderClipRequest):
                         def extract_broll_flash(flash_dur, fallback_time=None):
                             """Extract and process a short B-Roll flash clip.
                             Returns actual encoded duration (float), or 0.0 if failed.
-                            If failed and fallback_time is provided, extracts speaker video instead."""
+                            If failed and fallback_time is provided, extracts speaker video instead.
+
+                            Now applies matching effects from main clip:
+                            - VHS grain (from effect_config, not hardcoded)
+                            - Subtle pulse zoom (1.0 to 1.08 over duration)
+                            - RGB chromatic aberration (half intensity of main)
+                            - Template effects (letterbox, vignette)
+                            """
                             nonlocal broll_index
                             if broll_index >= len(request.broll_paths):
                                 if fallback_time is not None:
@@ -4550,7 +4896,7 @@ def render_viral_clip(request: RenderClipRequest):
                                     "ffprobe", "-v", "error",
                                     "-show_entries", "format=duration",
                                     "-of", "default=noprint_wrappers=1:nokey=1", broll_clip
-                                ], capture_output=True, text=True)
+                                ], capture_output=True, text=True, timeout=30)
                                 clip_dur = float(probe.stdout.strip()) if probe.stdout.strip() else 10.0
                             except:
                                 clip_dur = 10.0
@@ -4564,22 +4910,60 @@ def render_viral_clip(request: RenderClipRequest):
                             # Build crop expression with face offset
                             crop_x = f"(iw-1080)/2+{face_x_offset}" if face_x_offset != 0 else "(iw-1080)/2"
 
+                            # === BUILD EFFECTS FILTER CHAIN (matching main clip) ===
+                            filter_parts = []
+
+                            # 1. FPS standardization
+                            filter_parts.append("fps=30")
+
+                            # 2. Scale with subtle pulse zoom (1.0 to 1.08 over flash duration)
+                            # This gives B-roll kinetic energy matching the main clip
+                            zoom_expr = f"1.0+0.08*(t/{flash_dur:.3f})"
+                            filter_parts.append(f"scale='trunc(1080*({zoom_expr})/2)*2':'trunc(1920*({zoom_expr})/2)*2':force_original_aspect_ratio=increase")
+
+                            # 3. Center crop (with face detection offset)
+                            filter_parts.append(f"crop=1080:1920:{crop_x}:(ih-1920)/2")
+
+                            # 4. Color grading (same as main clip)
+                            filter_parts.append(grade_filter)
+
+                            # 5. RGB chromatic aberration (half intensity of main clip for subtlety)
+                            broll_rgb_shift = min(4, effect_config.get("rgb_max_shift", 8) // 2)
+                            if broll_rgb_shift > 0 and effect_config.get("rgb_max_shift", 0) > 0:
+                                filter_parts.append(f"rgbashift=rh={broll_rgb_shift}:rv=0:gh=0:gv=0:bh=-{broll_rgb_shift}:bv=0")
+
+                            # 6. VHS grain (from effect_config, not hardcoded 15)
+                            if vhs_grain_enabled and grain_intensity > 0:
+                                filter_parts.append(f"noise=alls={grain_intensity}:allf=t+u")
+
+                            # 7. Template effects: letterbox
+                            if effect_config.get("letterbox"):
+                                lb_ratio = effect_config.get("letterbox_ratio", 2.35)
+                                bar_h = int((1920 - (1080 / lb_ratio)) / 2)
+                                if bar_h > 0:
+                                    filter_parts.append(f"drawbox=x=0:y=0:w=iw:h={bar_h}:c=black:t=fill,drawbox=x=0:y=ih-{bar_h}:w=iw:h={bar_h}:c=black:t=fill")
+
+                            # 8. Template effects: vignette
+                            if effect_config.get("vignette"):
+                                vig_int = effect_config.get("vignette_intensity", 0.3)
+                                # angle = PI/2 - intensity * PI/4 (more intensity = tighter vignette)
+                                vig_angle = f"{3.14159/2 - vig_int * 3.14159/4:.4f}"
+                                filter_parts.append(f"vignette=angle={vig_angle}:mode=forward")
+
+                            full_filter = ",".join(filter_parts)
+                            print(f"B-Roll Flash #{broll_index}: filters=[{full_filter}] vhs={vhs_grain_enabled} grain={grain_intensity}")
+
                             result = subprocess.run([
                                 "ffmpeg", "-y",
                                 "-ss", f"{rand_start:.3f}",
                                 "-i", broll_clip,
                                 "-t", f"{flash_dur:.3f}",
-                                "-vf",
-                                f"fps=30,"
-                                f"scale=1080:1920:force_original_aspect_ratio=increase,"
-                                f"crop=1080:1920:{crop_x}:(ih-1920)/2,"
-                                f"{grade_filter},"
-                                f"noise=alls=15:allf=t+u",
+                                "-vf", full_filter,
                                 "-c:v", encoder_local, *gpu_opts_local,
                                 "-video_track_timescale", "15360",
                                 "-an",
                                 str(seg_path)
-                            ], capture_output=True, text=True)
+                            ], capture_output=True, text=True, timeout=120)
                             if seg_path.exists() and seg_path.stat().st_size > 500:
                                 video_segments.append(seg_path)
                                 actual_dur = probe_segment_duration(seg_path)
@@ -4650,14 +5034,14 @@ def render_viral_clip(request: RenderClipRequest):
                                 "-c:v", "copy",
                                 "-an",
                                 str(temp_intercut_video)
-                            ], check=True)
+                            ], check=True, timeout=300)
 
                             # 4. Merge intercut video + continuous audio
                             # Probe video duration to detect drift from segment re-encoding
                             probe_vid = subprocess.run([
                                 "ffprobe", "-v", "error", "-show_entries", "format=duration",
                                 "-of", "default=noprint_wrappers=1:nokey=1", str(temp_intercut_video)
-                            ], capture_output=True, text=True)
+                            ], capture_output=True, text=True, timeout=30)
                             intercut_vid_dur = float(probe_vid.stdout.strip()) if probe_vid.stdout.strip() else duration
 
                             # Safety net: trim audio to match video duration (no tempo stretch)
@@ -4682,10 +5066,10 @@ def render_viral_clip(request: RenderClipRequest):
                                 "-shortest",
                                 str(temp_merged)
                             ]
-                            subprocess.run(merge_cmd, check=True)
+                            subprocess.run(merge_cmd, check=True, timeout=300)
 
                             # Replace temp_main
-                            subprocess.run(["mv", str(temp_merged), str(temp_main)], check=True)
+                            subprocess.run(["mv", str(temp_merged), str(temp_main)], check=True, timeout=30)
                             print(f"B-Roll Intercut: Done - {len(insertion_points)} flashes + reaction burst, speaker audio continuous")
                         else:
                             print(f"B-Roll Intercut: Not enough segments ({len(video_segments)}), skipping")
@@ -4711,11 +5095,11 @@ def render_viral_clip(request: RenderClipRequest):
         if total_dur > 5:
             outro_start = total_dur - 2
             cmd_outro_extract = [
-                "ffmpeg", "-y", "-threads", "0", 
+                "ffmpeg", "-y", "-threads", "0",
                 "-ss", str(outro_start), "-i", str(temp_main), "-t", "2",
                 "-c:v", "copy", "-c:a", "copy", str(temp_outro)
             ]
-            subprocess.run(cmd_outro_extract, check=True)
+            subprocess.run(cmd_outro_extract, check=True, timeout=120)
 
             # High-Speed Grid 
             grid_filter = (
@@ -4733,7 +5117,7 @@ def render_viral_clip(request: RenderClipRequest):
                 "[row1][row2][row3]vstack=3,scale=1080:1920"
             )
             
-            handle = request.channel_handle or "TRAD_WEST"
+            handle = request.channel_handle or "REALCONTENT"
             
             cmd_outro_process = [
                 "ffmpeg", "-y", "-threads", "0",
@@ -4742,7 +5126,7 @@ def render_viral_clip(request: RenderClipRequest):
                 "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
                 str(temp_grid)
             ]
-            subprocess.run(cmd_outro_process, check=True)
+            subprocess.run(cmd_outro_process, check=True, timeout=300)
 
             # 4.5 Cold Open Hook (RETENTION OPTIMIZATION)
             # Generate a 1.2s cold open hook to grab attention in first moments
@@ -4808,7 +5192,7 @@ def render_viral_clip(request: RenderClipRequest):
             # 5. Concat (RAM Disk)
             report_status(request.status_webhook_url, "Processing: Merging")
             temp_main_trim = temp_dir / f"temp_trim_{uid}.mp4"
-            subprocess.run(["ffmpeg", "-y", "-threads", "0", "-i", str(temp_main), "-t", str(total_dur - 2), "-c", "copy", str(temp_main_trim)], check=True)
+            subprocess.run(["ffmpeg", "-y", "-threads", "0", "-i", str(temp_main), "-t", str(total_dur - 2), "-c", "copy", str(temp_main_trim)], check=True, timeout=120)
             cleanup_files.append(temp_main_trim)
 
             # Build concat list: [hook] + [title_card] + main + outro
@@ -4824,26 +5208,34 @@ def render_viral_clip(request: RenderClipRequest):
             for cf in concat_files:
                 probe_av_durations(str(cf), f"  {cf.name}")
 
-            # Use FFmpeg concat filter instead of concat demuxer
-            # The concat filter properly normalizes timestamps across inputs
-            num_inputs = len(concat_files)
-            input_args = []
-            for cf in concat_files:
-                input_args.extend(["-i", str(cf)])
+            # Normalize all concat inputs to consistent format, then use concat demuxer
+            normalized_files = []
+            for i, cf in enumerate(concat_files):
+                norm_path = temp_dir / f"norm_{i}_{uid}.mp4"
+                cleanup_files.append(norm_path)
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", str(cf),
+                    "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=30",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+                    str(norm_path)
+                ], check=True, timeout=300)
+                normalized_files.append(norm_path)
 
-            # Build concat filter: [0:v][0:a][1:v][1:a]...[n:v][n:a]concat=n=N:v=1:a=1[outv][outa]
-            filter_inputs = "".join([f"[{i}:v][{i}:a]" for i in range(num_inputs)])
-            concat_filter = f"{filter_inputs}concat=n={num_inputs}:v=1:a=1[outv][outa]"
+            # Concat demuxer with pre-normalized inputs
+            concat_list_path = temp_dir / f"concat_final_{uid}.txt"
+            cleanup_files.append(concat_list_path)
+            with open(concat_list_path, "w") as f:
+                for nf in normalized_files:
+                    f.write(f"file '{nf}'\n")
 
             subprocess.run([
-                "ffmpeg", "-y", "-threads", "0",
-                *input_args,
-                "-filter_complex", concat_filter,
-                "-map", "[outv]", "-map", "[outa]",
-                "-c:v", "libx264", "-preset", "ultrafast",  # Re-encode video for filter output
-                "-c:a", "aac", "-b:a", "192k",
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list_path),
+                "-c", "copy",
                 str(output_path)
-            ], check=True)
+            ], check=True, timeout=300)
 
             # Debug: probe final output for AV durations
             probe_av_durations(str(output_path), "final output")
@@ -4915,9 +5307,9 @@ def render_viral_clip(request: RenderClipRequest):
                     "-c:v", "libx264", "-preset", "ultrafast",
                     "-c:a", "aac", "-b:a", "192k",
                     str(output_path)
-                ], check=True)
+                ], check=True, timeout=600)
             else:
-                subprocess.run(["cp", str(temp_main), str(output_path)], check=True)
+                subprocess.run(["cp", str(temp_main), str(output_path)], check=True, timeout=60)
 
         # 6. BGM Mix (Final Pass) with AUTO VOLUME DETECTION
         if bgm_path:
@@ -4945,8 +5337,8 @@ def render_viral_clip(request: RenderClipRequest):
             import math
             base_volume = math.pow(10, db_adjustment / 20)
 
-            # Clamp to reasonable range (0.1 to 1.5)
-            base_volume = max(0.1, min(1.5, base_volume))
+            # Clamp to reasonable range (0.1 to 1.0) - cap at 1.0 to prevent clipping
+            base_volume = max(0.1, min(1.0, base_volume))
 
             print(f"  Target music: {target_music_db:.1f} dB -> adjustment: {db_adjustment:.1f} dB -> volume: {base_volume:.2f}")
 
@@ -4958,8 +5350,8 @@ def render_viral_clip(request: RenderClipRequest):
 
             print(f"  BGM volume: {base_volume:.2f} -> {end_volume:.2f} (ramp at {ramp_start:.1f}s)")
 
-            # Mix BGM with voice and normalize to -14 LUFS (social media standard)
-            # This ensures output volume matches other TikTok/Instagram videos
+            # Mix BGM with voice and normalize to -16 LUFS (TikTok/Reels standard)
+            # -16 LUFS is the broadcast standard and matches TikTok/Reels recommendations
             final_mix = temp_dir / f"final_mix_{uid}.mp4"
             cmd_mix = [
                 "ffmpeg", "-y", "-threads", "0",
@@ -4967,12 +5359,12 @@ def render_viral_clip(request: RenderClipRequest):
                 "-i", str(bgm_path),
                 "-filter_complex",
                 f"[1:a]volume=eval=frame:volume={vol_expr},aloop=loop=-1:size=2147483647[bgm];"
-                f"[0:a][bgm]amix=inputs=2:duration=first,loudnorm=I=-14:TP=-1:LRA=11",
+                f"[0:a][bgm]amix=inputs=2:duration=first,loudnorm=I=-16:TP=-1:LRA=11",
                 "-map", "0:v", "-c:v", "copy", "-c:a", "aac", str(final_mix)
             ]
-            subprocess.run(cmd_mix, check=True)
-            print(f"Audio normalized to -14 LUFS (social media standard)")
-            subprocess.run(["cp", str(final_mix), str(output_path)], check=True)
+            subprocess.run(cmd_mix, check=True, timeout=600)
+            print(f"Audio normalized to -16 LUFS (TikTok/Reels standard)")
+            subprocess.run(["cp", str(final_mix), str(output_path)], check=True, timeout=60)
             cleanup_files.append(final_mix)
 
         info = get_video_info(str(output_path))
@@ -5053,7 +5445,7 @@ def delete_font(filename: str):
     try:
         font_path.unlink()
         # Refresh font cache
-        subprocess.run(["fc-cache", "-fv"], capture_output=True)
+        subprocess.run(["fc-cache", "-fv"], capture_output=True, timeout=60)
         return {"success": True, "deleted": filename}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
@@ -5111,7 +5503,7 @@ async def download_google_font(req: GoogleFontRequest):
             raise HTTPException(status_code=404, detail=f"Font '{font_name}' download failed")
 
         # Refresh font cache
-        subprocess.run(["fc-cache", "-fv"], capture_output=True)
+        subprocess.run(["fc-cache", "-fv"], capture_output=True, timeout=60)
 
         return {"success": True, "font": font_name, "files": [f"{clean_name}.ttf"]}
 

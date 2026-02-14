@@ -119,7 +119,7 @@ def process_item(identifier: str, category: str, name: str) -> int:
     # Get duration
     try:
         result = subprocess.run([
-            "docker", "exec", "SocialGen_video_processor",
+            "docker", "exec", "RealContentAI_video_processor",
             "ffprobe", "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -138,7 +138,7 @@ def process_item(identifier: str, category: str, name: str) -> int:
 
         try:
             result = subprocess.run([
-                "docker", "exec", "SocialGen_video_processor",
+                "docker", "exec", "RealContentAI_video_processor",
                 "ffmpeg", "-y",
                 "-ss", str(t),
                 "-i", f"{CONTAINER_BROLL_DIR}/{temp_source_name}",

@@ -1,6 +1,6 @@
 """
-Publishing API Router - Queue management and Blotato integration.
-Handles publishing schedules, approval workflows, and clip distribution.
+Publishing API Router - Queue management and distribution integration.
+Handles publishing schedules, approval workflows, and content distribution.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -32,7 +32,7 @@ class PublishingConfigCreate(BaseModel):
     posting_hours: List[int] = [9, 13, 18]
     posting_days: List[int] = [0, 1, 2, 3, 4, 5, 6]
     min_virality_score: float = 0.0
-    clip_types_allowed: List[str] = ["antagonistic", "controversial", "funny", "inspirational"]
+    clip_types_allowed: List[str] = ["educational", "market_update", "property_tour", "testimonial"]
     require_manual_approval: bool = True
     min_hours_between_posts: int = 4
     max_posts_per_platform_per_day: int = 2
@@ -336,8 +336,8 @@ async def list_blotato_accounts():
     # TODO: Implement actual Blotato API call to list accounts
     # For now, return mock data for UI development
     return [
-        {"id": "acc_tradwest", "name": "TradWest Bot", "platforms": ["tiktok", "instagram"]},
-        {"id": "acc_clipfactory", "name": "Clip Factory", "platforms": ["tiktok", "youtube", "instagram"]},
+        {"id": "acc_realcontent", "name": "RealContent AI", "platforms": ["tiktok", "instagram"]},
+        {"id": "acc_realestate", "name": "Real Estate Hub", "platforms": ["tiktok", "youtube", "instagram"]},
     ]
 
 

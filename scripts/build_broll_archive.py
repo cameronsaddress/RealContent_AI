@@ -116,7 +116,7 @@ def get_video_duration(video_path: Path) -> int:
         subprocess.run(["cp", str(video_path), str(temp_path)], timeout=60)
 
         result = subprocess.run([
-            "docker", "exec", "SocialGen_video_processor",
+            "docker", "exec", "RealContentAI_video_processor",
             "ffprobe", "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -148,7 +148,7 @@ def cut_clip_docker(source_path: Path, timestamp: float, output_name: str, durat
             subprocess.run(["cp", str(source_path), str(temp_source_path)], timeout=60)
 
         cmd = [
-            "docker", "exec", "SocialGen_video_processor",
+            "docker", "exec", "RealContentAI_video_processor",
             "ffmpeg", "-y",
             "-ss", str(timestamp),
             "-i", f"{CONTAINER_BROLL_DIR}/{temp_source}",
@@ -218,7 +218,7 @@ def process_archive_item(identifier: str, category: str, name: str, start: int =
 
         try:
             cmd = [
-                "docker", "exec", "SocialGen_video_processor",
+                "docker", "exec", "RealContentAI_video_processor",
                 "ffmpeg", "-y",
                 "-ss", str(t),
                 "-i", f"{CONTAINER_BROLL_DIR}/{temp_source_name}",

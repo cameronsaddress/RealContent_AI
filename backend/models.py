@@ -68,7 +68,7 @@ class ContentIdea(Base):
     viral_score = Column(Integer)
     suggested_hook = Column(Text)
     why_viral = Column(Text)  # LLM analysis of why it went viral
-    status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending)
+    status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending, index=True)
     error_message = Column(Text)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -92,7 +92,7 @@ class Script(Base):
     __tablename__ = "scripts"
 
     id = Column(Integer, primary_key=True, index=True)
-    content_idea_id = Column(Integer, ForeignKey("content_ideas.id", ondelete="CASCADE"))
+    content_idea_id = Column(Integer, ForeignKey("content_ideas.id", ondelete="CASCADE"), index=True)
     hook = Column(Text)
     body = Column(Text)
     cta = Column(Text)
@@ -106,7 +106,7 @@ class Script(Base):
     x_text = Column(Text)
     facebook_text = Column(Text)
     threads_text = Column(Text)
-    status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending)
+    status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending, index=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -118,7 +118,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id = Column(Integer, primary_key=True, index=True)
-    script_id = Column(Integer, ForeignKey("scripts.id", ondelete="CASCADE"))
+    script_id = Column(Integer, ForeignKey("scripts.id", ondelete="CASCADE"), index=True)
     voiceover_path = Column(Text)
     voiceover_duration = Column(Float)
     srt_path = Column(Text)
@@ -128,7 +128,7 @@ class Asset(Base):
     background_video_path = Column(Text)
     combined_video_path = Column(Text)
     final_video_path = Column(Text)
-    status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending)
+    status = Column(SQLEnum(ContentStatus, name="content_status", create_type=False), default=ContentStatus.pending, index=True)
     error_message = Column(Text)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -141,7 +141,7 @@ class Published(Base):
     __tablename__ = "published"
 
     id = Column(Integer, primary_key=True, index=True)
-    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"))
+    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), index=True)
     tiktok_url = Column(Text)
     tiktok_id = Column(Text)
     ig_url = Column(Text)
@@ -169,7 +169,7 @@ class Analytics(Base):
     __tablename__ = "analytics"
 
     id = Column(Integer, primary_key=True, index=True)
-    published_id = Column(Integer, ForeignKey("published.id", ondelete="CASCADE"))
+    published_id = Column(Integer, ForeignKey("published.id", ondelete="CASCADE"), index=True)
     platform = Column(SQLEnum(PlatformType, name="platform_type", create_type=False))
     views = Column(Integer, default=0)
     likes = Column(Integer, default=0)
@@ -185,7 +185,7 @@ class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    content_idea_id = Column(Integer, ForeignKey("content_ideas.id"))
+    content_idea_id = Column(Integer, ForeignKey("content_ideas.id", ondelete="CASCADE"), index=True)
     workflow_name = Column(Text)
     status = Column(Text)
     started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -208,7 +208,7 @@ class ScrapeRun(Base):
     niche = Column(Text)
     hashtags = Column(JSONB)
     platforms = Column(JSONB)
-    status = Column(SQLEnum(ScrapeRunStatus, name="scrape_run_status", create_type=False), default=ScrapeRunStatus.pending)
+    status = Column(SQLEnum(ScrapeRunStatus, name="scrape_run_status", create_type=False), default=ScrapeRunStatus.pending, index=True)
     results_count = Column(Integer, default=0)
     results_data = Column(JSONB)
     error_message = Column(Text)
@@ -355,13 +355,13 @@ class InfluencerPlatformType(str, enum.Enum):
 
 class ClipPersona(Base):
     """
-    Persona settings for the Viral Clip Factory.
-    Defines the editing style, Grok prompting strategy, and publishing targets.
+    Persona settings for the Content Discovery Pipeline.
+    Defines the editing style, LLM prompting strategy, and publishing targets.
     """
     __tablename__ = "clip_personas"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True)  # e.g. "Trad West Bot"
+    name = Column(String, unique=True)  # e.g. "RealContent AI"
     description = Column(Text)
 
     # Analysis Configuration
@@ -393,7 +393,7 @@ class Influencer(Base):
     channel_url = Column(String)
     profile_image_url = Column(String)
 
-    persona_id = Column(Integer, ForeignKey("clip_personas.id"))
+    persona_id = Column(Integer, ForeignKey("clip_personas.id", ondelete="SET NULL"), index=True)
 
     # === AUTO-MODE SETTINGS ===
     auto_mode_enabled = Column(Boolean, default=False)
@@ -404,6 +404,8 @@ class Influencer(Base):
     auto_analyze_enabled = Column(Boolean, default=True)  # Auto-start analysis on new videos
     auto_render_enabled = Column(Boolean, default=False)  # Auto-render all clips after analysis
     auto_publish_enabled = Column(Boolean, default=False)  # Auto-publish ready clips
+    # === FACE DETECTION PREFERENCE ===
+    prefer_rightmost_face = Column(Boolean, default=False)  # For side-by-side interviews, center on rightmost face
 
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -417,7 +419,7 @@ class InfluencerVideo(Base):
     __tablename__ = "influencer_videos"
 
     id = Column(Integer, primary_key=True, index=True)
-    influencer_id = Column(Integer, ForeignKey("influencers.id", ondelete="CASCADE"))
+    influencer_id = Column(Integer, ForeignKey("influencers.id", ondelete="CASCADE"), index=True)
     
     platform_video_id = Column(String)
     title = Column(String)
@@ -434,7 +436,7 @@ class InfluencerVideo(Base):
     transcript_json = Column(JSONB)  # Whisper word-level output
     analysis_json = Column(JSONB)  # Grok analysis results
 
-    status = Column(String, default="pending")  # pending, downloaded, transcribed, analyzed, error
+    status = Column(String, default="pending", index=True)  # pending, downloaded, transcribed, analyzed, error
     error_message = Column(Text)
     processing_started_at = Column(DateTime(timezone=True))  # For progress tracking
     
@@ -449,7 +451,7 @@ class ViralClip(Base):
     __tablename__ = "viral_clips"
 
     id = Column(Integer, primary_key=True, index=True)
-    source_video_id = Column(Integer, ForeignKey("influencer_videos.id", ondelete="CASCADE"))
+    source_video_id = Column(Integer, ForeignKey("influencer_videos.id", ondelete="CASCADE"), index=True)
 
     # Timing
     start_time = Column(Float)
@@ -458,7 +460,7 @@ class ViralClip(Base):
     climax_time = Column(Float)  # Peak intensity moment for B-roll montage trigger
 
     # Content
-    clip_type = Column(String)  # antagonistic, funny, controversial, inspirational
+    clip_type = Column(String)  # educational, market_update, property_tour, testimonial
     virality_explanation = Column(Text)
     title = Column(String)
     description = Column(Text)
@@ -467,16 +469,16 @@ class ViralClip(Base):
 
     # Production
     edited_video_path = Column(Text)
-    status = Column(String, default="pending")  # pending, rendering, ready, published, error
+    status = Column(String, default="pending", index=True)  # pending, rendering, ready, published, error
     error_message = Column(Text)
     render_metadata = Column(JSONB)
-    template_id = Column(Integer, ForeignKey("render_templates.id", ondelete="SET NULL"), nullable=True)
+    template_id = Column(Integer, ForeignKey("render_templates.id", ondelete="SET NULL"), nullable=True, index=True)
     recommended_template_id = Column(Integer, nullable=True)  # Grok's recommendation (before user override)
 
     # Publishing
     blotato_post_id = Column(String)
     published_at = Column(DateTime(timezone=True))
-    publishing_status = Column(String, default="unpublished")  # unpublished, queued, approved, published, skipped
+    publishing_status = Column(String, default="unpublished", index=True)  # unpublished, queued, approved, published, skipped
     skip_reason = Column(Text)  # Why clip was skipped for publishing
 
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -494,18 +496,18 @@ class RenderTemplate(Base):
     __tablename__ = "render_templates"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)  # e.g., "Crusader", "Military", "Gym Bro"
+    name = Column(String, unique=True, nullable=False)  # e.g., "Modern Luxury", "Neighborhood Tour", "Market Update"
     description = Column(Text)  # Description for UI and Grok context
 
     # B-roll configuration
-    broll_categories = Column(JSONB, default=list)  # ["crusades", "warfare", "fighter_jets"]
+    broll_categories = Column(JSONB, default=list)  # ["luxury_homes", "neighborhoods", "architecture"]
     broll_enabled = Column(Boolean, default=True)
 
     # Visual effects settings
     effect_settings = Column(JSONB, default=dict)  # {"pulse_intensity": 0.5, "grain_intensity": 15, etc.}
 
     # Keywords for Grok matching (helps Grok choose the right template)
-    keywords = Column(JSONB, default=list)  # ["christian", "faith", "crusade", "holy war"]
+    keywords = Column(JSONB, default=list)  # ["luxury", "market", "property", "investment"]
 
     # Template ordering/priority
     is_default = Column(Boolean, default=False)  # One template should be default
@@ -526,7 +528,7 @@ class BRollClip(Base):
 
     # Search metadata
     search_query = Column(String)
-    category = Column(String, index=True)  # warfare, crusades, fighter_jets, etc.
+    category = Column(String, index=True)  # luxury_homes, neighborhoods, architecture, etc.
 
     # File info
     local_path = Column(Text)  # /app/assets/broll/{id}.mp4
@@ -553,8 +555,8 @@ class PublishingConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # Ownership - either influencer-specific OR persona-wide default
-    influencer_id = Column(Integer, ForeignKey("influencers.id", ondelete="CASCADE"), nullable=True)
-    persona_id = Column(Integer, ForeignKey("clip_personas.id", ondelete="CASCADE"), nullable=True)
+    influencer_id = Column(Integer, ForeignKey("influencers.id", ondelete="CASCADE"), nullable=True, index=True)
+    persona_id = Column(Integer, ForeignKey("clip_personas.id", ondelete="CASCADE"), nullable=True, index=True)
 
     # Blotato Account Selection
     blotato_account_id = Column(String(100), nullable=False)
@@ -571,7 +573,7 @@ class PublishingConfig(Base):
 
     # Content Rules
     min_virality_score = Column(Float, default=0.0)  # Skip clips below threshold
-    clip_types_allowed = Column(JSONB, default=lambda: ["antagonistic", "controversial", "funny", "inspirational"])
+    clip_types_allowed = Column(JSONB, default=lambda: ["educational", "market_update", "property_tour", "testimonial"])
     require_manual_approval = Column(Boolean, default=True)  # Queue for approval vs auto-post
 
     # Rate Limiting (best practices)
@@ -595,15 +597,15 @@ class PublishingQueueItem(Base):
     __tablename__ = "publishing_queue"
 
     id = Column(Integer, primary_key=True, index=True)
-    clip_id = Column(Integer, ForeignKey("viral_clips.id", ondelete="CASCADE"), nullable=False)
-    config_id = Column(Integer, ForeignKey("publishing_configs.id", ondelete="CASCADE"), nullable=False)
+    clip_id = Column(Integer, ForeignKey("viral_clips.id", ondelete="CASCADE"), nullable=False, index=True)
+    config_id = Column(Integer, ForeignKey("publishing_configs.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Scheduling
     scheduled_time = Column(DateTime(timezone=True))  # When to publish (null = ASAP)
     priority = Column(Integer, default=50)  # Higher = sooner (for manual bumps)
 
     # Status
-    status = Column(String(50), default="pending")  # pending, approved, publishing, published, failed, skipped
+    status = Column(String(50), default="pending", index=True)  # pending, approved, publishing, published, failed, skipped
 
     # Platform targeting (subset of config.platforms for this specific post)
     target_platforms = Column(JSONB, default=list)

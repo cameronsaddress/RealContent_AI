@@ -14,11 +14,17 @@ __pycache__/
 .Python
 backend/.venv/
 backend/venv/
+.venv/
 
 # Generated assets
 assets/videos/
 assets/audio/
 assets/temp/
+assets/music/
+assets/output/
+assets/avatar/
+assets/broll/
+assets/captions/
 
 # IDE
 .vscode/
@@ -33,5 +39,30 @@ Thumbs.db
 # Docker
 *.log
 
-assets/music/
-assets/output/
+# Claude / AI config (may contain project-specific settings)
+.claude/
+CLAUDE.md
+.mcp.json
+
+# Large media files
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+*.part
+*.ytdl
+
+# Planning docs (internal)
+MASTERPLAN.md
+IMPLEMENTATION_PLAN*.md
+IMPLEMENTATION_TASKS.md
+MIGRATION.md
+todo.md
+
+# Debug scripts
+check_*.py
+force_*.py
+clear_*.py
+reset_*.py
+readme.md

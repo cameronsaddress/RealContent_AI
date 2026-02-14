@@ -16,7 +16,7 @@ Usage:
     python scripts/tag_broll.py --input /path/to/clips
 
     # Run on video-processor container (recommended - has GPU)
-    docker exec -it SocialGen_video_processor python /app/scripts/tag_broll.py
+    docker exec -it RealContentAI_video_processor python /app/scripts/tag_broll.py
 
 Requirements (installed in video-processor container):
     pip install transformers torch pillow

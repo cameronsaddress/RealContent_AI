@@ -304,6 +304,11 @@ export const createInfluencer = async (influencer) => {
   return data;
 };
 
+export const deleteInfluencer = async (id) => {
+  const { data } = await api.delete(`/api/viral/influencers/${id}`);
+  return data;
+};
+
 export const fetchInfluencerVideos = async (id) => {
   const { data } = await api.post(`/api/viral/influencers/${id}/fetch`);
   return data;
@@ -334,9 +339,20 @@ export const getViralClips = async () => {
   return data;
 };
 
+export const publishClipNow = async (clipId, platforms = null) => {
+  const body = platforms ? { platforms } : {};
+  const { data } = await api.post(`/api/viral/viral-clips/${clipId}/publish`, body);
+  return data;
+};
+
+export const getPublishingConfigsForInfluencer = async (influencerId) => {
+  const { data } = await api.get(`/api/viral/publishing-configs/${influencerId}`);
+  return data;
+};
+
 export default api;
 
-// Viral Factory
+// Content Discovery
 export const getViralMusic = async () => {
   const { data } = await api.get('/api/viral/music');
   return data;
@@ -359,8 +375,12 @@ export const downloadGoogleFont = async (fontName) => {
 };
 
 // B-Roll Management
-export const getBrollClips = async () => {
-  const { data } = await api.get('/api/viral/broll');
+export const getBrollClips = async (limit = 50, offset = 0, category = null) => {
+  const params = new URLSearchParams({ limit, offset });
+  if (category && category !== 'all') {
+    params.append('category', category);
+  }
+  const { data } = await api.get(`/api/viral/broll?${params.toString()}`);
   return data;
 };
 

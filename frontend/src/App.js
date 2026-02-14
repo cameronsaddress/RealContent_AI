@@ -33,7 +33,7 @@ function App() {
             <NavLink to="/scraper">Scraper</NavLink>
           </li>
           <li>
-            <NavLink to="/viral">Viral Factory</NavLink>
+            <NavLink to="/viral">Content Discovery</NavLink>
           </li>
           <li>
             <NavLink to="/ideas">Content Ideas</NavLink>

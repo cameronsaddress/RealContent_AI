@@ -1,6 +1,6 @@
 """
 Clip Analyzer Service
-Uses Grok to analyze video transcripts and identify viral moments based on persona.
+Uses LLM to analyze video transcripts and identify high-engagement moments based on persona.
 """
 import json
 import logging
@@ -24,54 +24,54 @@ CHUNK_THRESHOLD = int(GROK_CONTEXT_LIMIT * 0.75)  # 1.5M tokens - trigger chunki
 # Creative descriptions help Grok choose effects based on content energy and mood
 EFFECT_CATALOG = """
 === COLOR GRADES (choose ONE per clip) ===
-- "kodak_warm": Warm golden cinema - for wisdom, monologues, profound moments
-- "teal_orange": Hollywood blockbuster teal/orange - for confrontation, drama, intensity
-- "film_noir": Deep shadows, high contrast - for dark topics, conspiracy, threats
-- "bleach_bypass": Desaturated silvery grit - for war, violence, raw conflict
-- "cross_process": Surreal color shifts - for absurd humor, weird takes
-- "golden_hour": Warm amber glow - for inspirational, hopeful, uplifting
-- "cold_chrome": Steel blue metallic - for tech, power plays, authority
-- "vintage_tobacco": Aged warm desaturated - for nostalgia, retro references
-- "vibrant": Enhanced saturation (default) - for high energy, general use
-- "bw": Full black & white - for profound statements, dramatic weight
+- "kodak_warm": Warm golden cinema - for wisdom, expert advice, market insights
+- "teal_orange": Hollywood blockbuster teal/orange - for high-energy property reveals, dramatic transformations
+- "film_noir": Deep shadows, high contrast - for luxury properties, evening showcases
+- "bleach_bypass": Desaturated silvery grit - for renovation before/after, raw market analysis
+- "cross_process": Surreal color shifts - for creative property showcases, unique listings
+- "golden_hour": Warm amber glow - for aspirational lifestyle, dream home reveals
+- "cold_chrome": Steel blue metallic - for data-driven analysis, market reports, tech-forward
+- "vintage_tobacco": Aged warm desaturated - for historic properties, classic architecture
+- "vibrant": Enhanced saturation (default) - for general property tours, high energy content
+- "bw": Full black & white - for dramatic statements, key market predictions
 
 === MOTION EFFECTS (can combine, but limit to 2 max) ===
 - camera_shake: Handheld documentary feel (intensity 2-15px, frequency 1-4Hz)
-  USE FOR: raw emotion, angry rants, chaotic energy
+  USE FOR: exciting property reveals, market breaking news, high energy moments
   MAX 3 ramps per clip, each at critical word timestamps
 - temporal_trail: Ghosting/afterimage streaks in short bursts
-  USE FOR: dreamy sequences, philosophical tangents, altered states
+  USE FOR: dreamy property transitions, aspirational lifestyle content
 
 === GLITCH EFFECTS (use sparingly - max 1 per clip) ===
 - retro_glow: Soft neon bloom glow (intensity 0.2-0.5)
-  USE FOR: epic revelations, "based" moments, glory
+  USE FOR: highlight moments, key statistics, impressive numbers
 - wave_displacement: Melting wave distortion in brief bursts (2-3 bursts max, 1s each)
-  USE FOR: mind-bending takes, reality-breaking statements
+  USE FOR: surprising market data, unexpected price reveals
 - heavy_vhs: Extra VHS tracking noise (intensity 1.0-1.5)
-  USE FOR: nostalgic references, "back in my day" content
+  USE FOR: throwback comparisons, historical market references
 
 === CAPTION STYLES (choose ONE per clip) ===
 - "standard": Default karaoke with trigger word scale (general use)
-- "pop_scale": Bouncy overshoot scale on every word (high energy, hype)
-- "shake": Vibrating text on triggers (aggressive, confrontational)
-- "blur_reveal": Words sharpen from blur (cinematic, mysterious)
+- "pop_scale": Bouncy overshoot scale on every word (high energy, exciting reveals)
+- "shake": Vibrating text on triggers (urgent market updates, breaking news)
+- "blur_reveal": Words sharpen from blur (cinematic property tours, luxury reveals)
 
 === AUDIO REACTIVE (boolean flags) ===
 - beat_sync: Amplified zoom pulses on music beats (true/false)
   USE FOR: high energy clips with rhythmic delivery
 - audio_saturation: Color intensifies on loud moments (true/false)
-  USE FOR: passionate speeches, yelling, emphasis
+  USE FOR: passionate market commentary, enthusiastic property reveals
 
 === B-ROLL TRANSITIONS (choose ONE for clips with B-roll) ===
-- "pixelize": Pixel dissolve between cuts (glitch aesthetic)
+- "pixelize": Pixel dissolve between cuts (modern aesthetic)
 - "radial": Circular wipe (dramatic reveal)
-- "dissolve": Smooth cross-fade (cinematic, calm)
+- "dissolve": Smooth cross-fade (cinematic, elegant)
 - "slideleft": Slide transition (fast-paced, news style)
-- "fadeblack": Fade through black (serious, weighty)
+- "fadeblack": Fade through black (premium, luxury feel)
 
 === PULSE INTENSITY ===
-- pulse_intensity: 0.1 (subtle) to 0.4 (aggressive zoom punches on triggers)
-  Default 0.25, increase for confrontational/aggressive clips
+- pulse_intensity: 0.1 (subtle) to 0.4 (strong zoom punches on key terms)
+  Default 0.25, increase for exciting reveals and breaking data
 
 === VHS GRAIN ===
 - vhs_intensity: 0.5 (light film grain) to 1.5 (heavy VHS noise)
@@ -79,19 +79,19 @@ EFFECT_CATALOG = """
 
 === RARE EFFECTS (use VERY SPARINGLY - max 1-2 clips per entire video) ===
 - datamosh_segments: Frame-melting I-frame removal glitch [{start, end}] max 3 segments, max 2s each
-  USE FOR: most shocking/unhinged moments, reality-breaking statements, "everything is fake"
-  WARNING: Expensive effect. Only use on the MOST viral-worthy clip in the video.
+  USE FOR: most dramatic price reveals, shocking market shifts
+  WARNING: Expensive effect. Only use on the MOST impactful clip in the video.
 - pixel_sort_segments: Glitch art pixel sorting by brightness [{start, end}] max 3 segments, max 2s each
-  USE FOR: surreal/psychedelic moments, existential dread, "simulation theory" takes
+  USE FOR: data visualization moments, dramatic stat reveals
   WARNING: Expensive effect. Only use on the MOST visually impactful clip.
 
 === BGM MOOD (choose ONE per clip) ===
 Background music sets the EMOTIONAL TONE. Match the mood to the clip's energy and content.
-- "dark": Ominous, heavy, threatening - for conspiracy, warnings, dark revelations, evil enemies
-- "triumphant": Epic, victorious, ascending - for based takes, wins, inspirational peaks, glory
-- "aggressive": Hard-hitting, confrontational, intense - for rants, battles, call-outs, anger
-- "melancholic": Somber, reflective, bittersweet - for laments, losses, emotional moments, sad truths
-- "hype": High energy, pump-up, exciting - for funny moments, absurd takes, chaos, memes
+- "dark": Serious, urgent - for market warnings, rate hikes, cautionary advice
+- "triumphant": Epic, victorious, ascending - for dream home reveals, success stories, market wins
+- "aggressive": High-energy, intense - for competitive markets, bidding wars, urgent opportunities
+- "melancholic": Somber, reflective, bittersweet - for market downturns, lessons learned, buyer challenges
+- "hype": High energy, pump-up, exciting - for new listings, open houses, exciting neighborhoods
 """
 
 # Known effect keys for validation
@@ -105,7 +105,7 @@ VALID_EFFECT_KEYS = {
 class ViralSegment(BaseModel):
     start_time: float
     end_time: float
-    clip_type: str # antagonistic, funny, controversial, inspirational
+    clip_type: str # educational, market_update, property_tour, testimonial
     virality_explanation: str
     suggested_caption: str
     hashtags: List[str]
@@ -246,18 +246,34 @@ class ClipAnalyzerService(BaseService):
 
                 # Extract hybrid B-roll insertions (new system)
                 broll_insertions = clip_data.get("broll_insertions", [])
+                # MUST match the 30 categories in assets/broll/metadata.json
                 valid_local_categories = [
-                    "warfare", "navy", "fighter_jets", "patriotic", "ww2",
-                    "cathedrals", "castles", "faith",
-                    "explosions", "nature_power", "storms", "lions", "eagles", "wolves",
-                    "money", "luxury", "cars", "gym", "city",
-                    "crowd", "sports", "boxing", "fashion",
-                    # Legacy aliases
-                    "war", "chaos", "history"
+                    # Property & Architecture
+                    "property", "kitchen", "interior", "exterior", "renovation",
+                    # Lifestyle & Neighborhood
+                    "neighborhood", "city", "nature", "luxury", "community",
+                    # Business & Success
+                    "money", "wealth", "office", "handshake", "celebration",
+                    # People & Social
+                    "family", "crowd", "people", "testimonial",
+                    # Data & Market
+                    "charts", "data", "growth", "construction",
+                    # Scenic
+                    "aerial", "sunset", "waterfront", "downtown",
+                    # Vehicles & Transport
+                    "cars", "moving",
+                    # Other
+                    "history", "victory", "power"
                 ]
+                # Legacy aliases - map old category names to new ones
                 category_aliases = {
-                    "war": "warfare", "chaos": "explosions", "history": "ww2",
-                    "military": "warfare", "jets": "fighter_jets"
+                    "house": "property",
+                    "home": "property",
+                    "building": "construction",
+                    "skyline": "downtown",
+                    "ocean": "waterfront",
+                    "yard": "exterior",
+                    "remodel": "renovation"
                 }
                 validated_insertions = []
                 local_categories_used = set()
@@ -449,6 +465,8 @@ class ClipAnalyzerService(BaseService):
                         "director_effects": director_effects,
                         "topic_broll": topic_broll if topic_broll else [],
                         "topic_broll_keywords": topic_broll_keywords if topic_broll_keywords else [],
+                        # Platform recommendation from Grok (tiktok or reels - NOT youtube_shorts)
+                        "recommended_platform": clip_data.get("recommended_platform", "tiktok"),
                         # Cold open hook for retention
                         "hook_phrase": hook_phrase if hook_phrase else None,
                         "hook_timestamp": hook_timestamp,
@@ -519,181 +537,146 @@ AVAILABLE TEMPLATES (read descriptions carefully - each creates a VERY different
 
 TEMPLATE SELECTION RULES:
 - MATCH the template to the clip's EMOTIONAL ENERGY and CONTENT TYPE
-- Religious/faith content → Crusade Core Phonk (ID 7)
-- Conspiracy/system/tech topics → Glitch Storm (ID 5)
-- Profound quotes/wisdom → Kinetic Quote (ID 6)
-- Lists/multiple points → Grid Recap (ID 8)
-- Serious/thoughtful monologues → Documentary Dark (ID 9) or Black & White (ID 2)
-- High energy/hype moments → Velocity Beast (ID 3) or Whip Flash (ID 10)
-- Epic announcements/revelations → Trailer Drop (ID 4)
-- General controversy/rants → Maximum Impact (ID 1)
+- Market analysis/data → Glitch Storm (ID 5) or Documentary Dark (ID 9)
+- Expert quotes/advice → Kinetic Quote (ID 6)
+- Multi-point tips/lists → Grid Recap (ID 8)
+- Serious market commentary → Documentary Dark (ID 9) or Black & White (ID 2)
+- High energy property reveals → Velocity Beast (ID 3) or Whip Flash (ID 10)
+- Major announcements/reveals → Trailer Drop (ID 4)
+- General market updates → Maximum Impact (ID 1)
 
 DO NOT default to Maximum Impact for everything - use the variety of templates based on content."""
 
-        # Local thematic B-Roll categories (for abstract/emotional content)
-        # IMPORTANT: These are the 28 categories that exist in our local library
+        # Local thematic B-Roll categories
         local_broll_descriptions = """
-=== LOCAL THEMATIC B-ROLL (for ABSTRACT/EMOTIONAL content) ===
-Use these when the speaker discusses THEMES, IDEAS, or EMOTIONS - NOT specific events.
+=== LOCAL THEMATIC B-ROLL (for thematic/mood content) ===
+Use these when the speaker discusses THEMES, IDEAS, or CONCEPTS — NOT specific events.
 
 ⚠️ CRITICAL: You MUST ONLY use these category names. Any other category name will FAIL:
-  war, chaos, explosions, storms, fire,
-  money, luxury, wealth, city,
-  gym, sports, boxing, strength,
-  patriotic, crowd, faith, cathedrals,
-  lions, eagles, wolves, nature,
-  jets, navy, helicopters,
-  cars, racing,
-  history, people
+  property, kitchen, interior, exterior, renovation,
+  neighborhood, city, nature, luxury, community,
+  money, wealth, office, handshake, celebration,
+  family, crowd, people, testimonial,
+  charts, data, growth, construction,
+  aerial, sunset, waterfront, downtown,
+  cars, moving,
+  history, victory, power
 
-CATEGORY DESCRIPTIONS (what footage is actually available):
+CATEGORY DESCRIPTIONS:
 
-=== DESTRUCTION & CONFLICT (324+ clips) ===
-"war" - Military combat, soldiers, battlefield, warfare footage (324 clips)
-   USE FOR: "at war", military topics, combat references, soldiers
+=== PROPERTY & ARCHITECTURE ===
+"property" - House exteriors, curb appeal, property walk-ups
+   USE FOR: property references, "this home", real estate listings
 
-"chaos" - Dark/intense footage, disorder, destruction
-   USE FOR: disorder, violence, society breaking down
+"kitchen" - Modern kitchens, countertops, appliances, cooking spaces
+   USE FOR: kitchen references, renovations, upgrades
 
-"explosions" - Explosions, blasts, detonations, destruction (18 clips)
-   USE FOR: "exploded", "blew up", dramatic destruction, impact
+"interior" - Living rooms, bedrooms, interior design, staging
+   USE FOR: interior tours, design tips, staging advice
 
-"storms" - Storms, lightning, thunder, dramatic weather (30 clips)
-   USE FOR: "storm is coming", dramatic tension, turbulence
+"exterior" - Backyards, patios, landscaping, outdoor spaces
+   USE FOR: outdoor living, curb appeal, yard references
 
-"fire" - Flames, fire, burning (30 clips)
-   USE FOR: "burning", "on fire", hellfire, destruction
+"renovation" - Before/after, construction work, remodeling
+   USE FOR: flips, renovations, fixer-uppers, DIY
 
-=== MONEY & SUCCESS (550+ clips) ===
-"money" - Cash counting, money stacks, bills, hustle (323 clips)
-   USE FOR: cash, money, payments, financial topics, "show me the money"
+=== LIFESTYLE & NEIGHBORHOOD ===
+"neighborhood" - Suburban streets, walkable areas, community scenes
+   USE FOR: neighborhood reviews, location scouting, community
 
-"luxury" - Supercars, mansions, yachts, high-end lifestyle (228 clips)
-   USE FOR: "living large", rich lifestyle, expensive things
+"city" - Urban skylines, downtown, metropolitan scenes
+   USE FOR: urban living, city life, downtown areas
 
-"wealth" - Billionaire lifestyle, opulence, success symbols
-   USE FOR: "wealthy", "rich", millionaire/billionaire topics
+"nature" - Mountains, landscapes, scenic outdoor footage
+   USE FOR: scenic areas, nature views, outdoor amenities
 
-"city" - Urban skylines, nightlife, metropolitan scenes (244 clips)
-   USE FOR: city life, urban culture, metropolitan topics
+"luxury" - High-end properties, premium finishes, luxury lifestyle
+   USE FOR: luxury listings, premium market, upscale living
 
-=== FITNESS & STRENGTH (375+ clips) ===
-"gym" - Weightlifting, bodybuilding, workout footage (292 clips)
-   USE FOR: "hit the gym", fitness, grinding, discipline, working out
+"community" - Parks, schools, local businesses, community events
+   USE FOR: community features, family-friendly areas
 
-"sports" - UFC, football, basketball, athletic competition (252 clips)
-   USE FOR: sports references, competition, athletic feats
+=== BUSINESS & SUCCESS ===
+"money" - Financial imagery, investments, currency
+   USE FOR: investment topics, ROI, financial advice
 
-"boxing" - Boxing, fighting, combat sports (31 clips)
-   USE FOR: "fight", boxing references, punches, knockout
+"wealth" - Success symbols, prosperity, achievement
+   USE FOR: wealth building, financial freedom through real estate
 
-"strength" - Muscles, physical power displays
-   USE FOR: physical strength, power, masculinity
+"office" - Professional settings, meetings, workspaces
+   USE FOR: agent life, office tours, professional settings
 
-=== PATRIOTIC & FAITH (180+ clips) ===
-"patriotic" - American flags, USA imagery, national symbols (106 clips)
-   USE FOR: "America First", USA, patriotism, "our country"
+"handshake" - Deals closing, agreements, partnerships
+   USE FOR: closing deals, partnerships, agreements
 
-"crowd" - Rallies, protests, masses of people (183 clips)
-   USE FOR: "the people", masses, movements, crowd energy
+"celebration" - Celebrations, keys handover, moving day joy
+   USE FOR: closing day, new homeowners, success stories
 
-"faith" - Crosses, churches, religious ceremonies
-   USE FOR: God, Christ, Christianity, religious themes
+=== PEOPLE & SOCIAL ===
+"family" - Families, couples, children in home settings
+   USE FOR: family homes, first-time buyers, growing families
 
-"cathedrals" - Gothic cathedrals, grand church architecture (70 clips)
-   USE FOR: "build cathedrals", Western civilization, tradition
+"crowd" - Open houses, events, groups of people
+   USE FOR: open houses, community events, busy markets
 
-=== ANIMALS & NATURE (505+ clips) ===
-"lions" - Lions, apex predators (30 clips)
-   USE FOR: "be a lion", dominance, king, predator metaphors
+"people" - General people footage, social interactions
+   USE FOR: buyer/seller stories, community, demographics
 
-"eagles" - Eagles, birds of prey (30 clips)
-   USE FOR: "soaring", America (bald eagle), freedom, vision
+"testimonial" - Happy clients, reviews, success stories
+   USE FOR: client testimonials, reviews, social proof
 
-"wolves" - Wolves, wolf packs (30 clips)
-   USE FOR: "lone wolf", pack mentality, hunting
+=== DATA & MARKET ===
+"charts" - Graphs, charts, data visualizations
+   USE FOR: market data, statistics, trends
 
-"nature" - Mountains, landscapes, oceans, scenic footage (385 clips)
-   USE FOR: nature references, beautiful scenery, outdoors
+"data" - Numbers, analytics, market reports
+   USE FOR: market analysis, pricing data, inventory stats
 
-=== MILITARY TECH (90+ clips) ===
-"jets" - Fighter jets, military aircraft (30 clips)
-   USE FOR: "jets", air power, military might, aviation
+"growth" - Growth imagery, upward trends, progress
+   USE FOR: market growth, appreciation, rising values
 
-"navy" - Warships, aircraft carriers, naval power (30 clips)
-   USE FOR: "navy", naval power, sea warfare
+"construction" - New construction, building sites, development
+   USE FOR: new builds, development, construction updates
 
-"helicopters" - Military helicopters (30 clips)
-   USE FOR: helicopter references, air support
+=== SCENIC ===
+"aerial" - Drone footage, bird's eye views, aerial shots
+   USE FOR: neighborhood overviews, property aerials
 
-=== VEHICLES (218+ clips) ===
-"cars" - Supercars, sports cars, automotive (178 clips)
-   USE FOR: car references, driving, automotive topics
+"sunset" - Golden hour, sunsets, beautiful lighting
+   USE FOR: aspirational content, lifestyle, beauty
 
-"racing" - Racing, drifting, motorsports (40 clips)
-   USE FOR: "racing", speed, competition, motorsports
+"waterfront" - Lakes, ocean, waterfront properties, beaches
+   USE FOR: waterfront listings, lake/ocean views
 
-=== OTHER ===
-"history" - Historical footage, archive clips, WW2 (60+ clips)
-   USE FOR: "throughout history", historical references, past events
-
-"people" - Men, women, social interactions
-   USE FOR: discussions about people in general, humanity
+"downtown" - Downtown areas, commercial districts, urban core
+   USE FOR: urban properties, walkability, mixed-use
 
 === WHEN TO USE LOCAL B-ROLL ===
-✓ "We're at war" / "This is a battle" → war
-✓ "Society is falling apart" / "Everything is chaos" → chaos
-✓ "It all exploded" / "Blew up" / destruction → explosions
-✓ "A storm is coming" / turbulence → storms
-✓ "Burning down" / "On fire" → fire
-✓ "Show me the money" / "Cash" / payments → money
-✓ "Living large" / expensive / rich lifestyle → luxury
-✓ "The city" / urban / metropolitan → city
-✓ "Hit the gym" / "Work out" / fitness → gym
-✓ "Sports" / competition / athletics → sports
-✓ "Knockout" / "Fight" / boxing → boxing
-✓ "Be strong" / muscles → strength
-✓ "America First" / "USA" / patriotism → patriotic
-✓ "The people" / "The masses" / rallies → crowd
-✓ "God" / "Christ is King" / "Pray" → faith
-✓ "Build cathedrals" / Western civilization → cathedrals
-✓ "Be a lion" / "King" / apex predator → lions
-✓ "Soaring" / "Freedom" / eagle → eagles
-✓ "Lone wolf" / "Pack" / hunting → wolves
-✓ "Nature" / "Mountains" / scenery → nature
-✓ "Fighter jets" / "Air power" → jets
-✓ "Navy" / "Warships" → navy
-✓ "Helicopters" / air support → helicopters
-✓ "Cars" / driving / automotive → cars
-✓ "Racing" / speed / motorsports → racing
-✓ "Throughout history" / "Our ancestors" → history
+✓ "This property" / "Beautiful home" → property
+✓ "Look at this kitchen" / "Granite counters" → kitchen
+✓ "The neighborhood" / "Great schools" → neighborhood
+✓ "Market is hot" / "Prices rising" → growth
+✓ "Investment opportunity" / "ROI" → money
+✓ "Luxury living" / "High-end" → luxury
+✓ "New construction" / "Just built" → construction
+✓ "Closing day" / "Got the keys" → celebration
+✓ "Family home" / "Growing family" → family
+✓ "Downtown living" / "Walk to everything" → downtown
 
 === WHEN TO USE YOUTUBE (NOT local) ===
-✗ "The ICE shooting in Newark..." → YouTube: search for actual bodycam footage
-✗ "Did you see what Trump said at Iowa?" → YouTube: search for rally footage
-✗ "AOC just said on the House floor..." → YouTube: search for C-SPAN clip
-✗ "This court case in Texas..." → YouTube: search for courtroom footage
-✗ Any SPECIFIC event with VIDEO EVIDENCE → YouTube
-✗ "Some random lady" / "This woman" / specific person → YouTube: search for that person/event
-✗ Specific news footage, incidents, statements → YouTube
+✗ Specific property tours or listings → YouTube
+✗ Specific market reports from news outlets → YouTube
+✗ Named developments or communities → YouTube
+✗ Specific builder or agent content → YouTube
 
 The rule is simple:
-- ABSTRACT THEMES/EMOTIONS (war, chaos, money, gym, lions, etc.) → LOCAL thematic footage
-- SPECIFIC EVENTS, PEOPLE, OR INCIDENTS (news, specific person, speeches) → YOUTUBE actual footage
-
-⚠️ VALID LOCAL CATEGORIES:
-  war, chaos, explosions, storms, fire,
-  money, luxury, wealth, city,
-  gym, sports, boxing, strength,
-  patriotic, crowd, faith, cathedrals,
-  lions, eagles, wolves, nature,
-  jets, navy, helicopters,
-  cars, racing, history, people"""
+- ABSTRACT THEMES (property, luxury, growth, community, etc.) → LOCAL thematic footage
+- SPECIFIC PROPERTIES, EVENTS, OR LOCATIONS → YOUTUBE actual footage"""
 
         return f"""
 {system_instructions}
 {chunk_context}
-Your goal is to identify the MOST viral segments from this video transcript to repurpose for TikTok/Reels/Shorts.
+Your goal is to identify the MOST engaging segments from this video transcript to repurpose for TikTok/Reels/Shorts.
 
 Video Title: {video.title}
 Duration: {video.duration}s
@@ -702,30 +685,19 @@ TRANSCRIPT SEGMENTS (with timestamps):
 {json.dumps(segments, indent=None)}
 
 TASK:
-Identify up to 20 distinct clips (prioritizing quality and viral potential) that fit one of these types:
-- OUTRAGEOUS / CONTROVERSIAL (Priority #1 - Hot Takes, "Cancelled" moments)
-- Antagonistic / Conflict (High emotion battles)
-- Funny / Memeable (Out of context or hilarious)
-- Inspirational / "Based" (Strong monologues)
+Identify up to 20 distinct clips (prioritizing quality and engagement potential) that fit one of these types:
+- MARKET INSIGHTS (Priority #1 - Data-driven analysis, predictions, hot takes on market trends)
+- Educational / How-To (Expert advice, tips, actionable strategies)
+- Property Showcase (Compelling property reveals, before/after transformations)
+- Testimonial / Success Story (Client wins, inspiring real estate journeys)
 
-FOCUS ON THE MOST CONTROVERSIAL AND SHOCKING MOMENTS. DO NOT HOLD BACK.
+FOCUS ON THE MOST ENGAGING AND SHAREABLE MOMENTS. PRIORITIZE VALUE AND INSIGHT.
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  MANDATORY FIELDS - YOU MUST INCLUDE ALL OF THESE FOR EVERY CLIP OR FAIL    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 The following fields are REQUIRED for EVERY clip. Missing ANY of these = INVALID clip.
-
-0. COLD OPEN HOOK (MANDATORY): The first 0.5 seconds determine if viewers keep watching.
-   Identify:
-   - "hook_phrase": The single most SHOCKING/ATTENTION-GRABBING phrase in the clip (even if mid-sentence)
-     This will be flashed at T=0.0 before the clip starts. Pick something that makes viewers think "WAIT WHAT?"
-     Examples: "You're all going to DIE", "This is WAR", "They're coming for your CHILDREN", "I don't give a F***"
-   - "hook_timestamp": The ABSOLUTE timestamp where this phrase occurs in the source video
-   - "visual_hook_time": A timestamp showing the most visually intense moment (for a 0.3s flash frame preview)
-     This should be a moment with dramatic facial expression, gesture, or B-roll visual
-
-   ⚠️ REQUIRED OUTPUT: "hook": {{"hook_phrase": "...", "hook_timestamp": X.X, "visual_hook_time": Y.Y}}
 
 1. TRIGGER WORDS (MANDATORY): 5-10 high-intensity SINGLE WORDS for visual pulse effects (e.g., WAR, DIE, TRUMP, MONEY, LIAR, WIN, FIGHT, DESTROY, GOD, DEATH). Provide their exact start/end timestamps.
 
@@ -809,25 +781,55 @@ The following fields are REQUIRED for EVERY clip. Missing ANY of these = INVALID
 
 {local_broll_descriptions}
 
+   ╔══════════════════════════════════════════════════════════════════════════════╗
+   ║  CRITICAL: WHEN TO USE YOUTUBE vs LOCAL                                      ║
+   ╚══════════════════════════════════════════════════════════════════════════════╝
+
+   USE YOUTUBE (source: "youtube") FOR:
+   ✓ ANY SPECIFIC PROPERTY or LISTING mentioned
+   ✓ ANY SPECIFIC MARKET or LOCATION discussed
+   ✓ ANY CURRENT NEWS or RECENT EVENTS (2024-2026)
+   ✓ ANY CATEGORY NOT IN OUR LOCAL CATEGORIES
+   ✓ When you need ACTUAL FOOTAGE of something they're discussing
+   ✓ Property tours, market reports, neighborhood reviews, etc.
+
+   USE LOCAL (source: "local") FOR:
+   ✓ ABSTRACT THEMES: war, chaos, power, victory, strength, etc.
+   ✓ EMOTIONAL MOMENTS: faith, crowd, nature
+   ✓ METAPHORS: "be a lion" → lions, "soaring" → eagles
+   ✓ Generic imagery to match mood/energy
+
+   ⚠️ IF YOU'RE UNSURE OR THE CATEGORY DOESN'T EXIST → USE YOUTUBE
+   Our system will fetch YouTube videos, transcribe them, and extract the best clips.
+
    For each insertion, specify:
    - "time": seconds into the clip (relative to clip START, not video start)
    - "source": "local" or "youtube"
-   - For "local": include "category" - MUST be one of: people, strength, power, victory, wealth, history, war, chaos, faith
-   - For "youtube": include "query" (specific search query for that moment)
+   - For "local": include "category" - MUST be one of the 30 valid categories above
+   - For "youtube": include "query" (specific search query - be DETAILED, include year if recent)
    - "visual": brief description of what should be shown
 
-   Example broll_insertions for a clip about American military response to an attack:
+   Example broll_insertions for a clip about a hot housing market:
    [
-     {{"time": 5, "source": "youtube", "query": "terror attack news footage 2025", "visual": "News coverage of the attack"}},
-     {{"time": 12, "source": "local", "category": "war", "visual": "Military combat footage"}},
-     {{"time": 18, "source": "local", "category": "power", "visual": "Displays of dominance"}},
-     {{"time": 24, "source": "youtube", "query": "Pentagon press conference response", "visual": "Military officials responding"}},
-     {{"time": 30, "source": "local", "category": "victory", "visual": "Success/winning imagery"}}
+     {{"time": 5, "source": "youtube", "query": "housing market update 2025 analysis", "visual": "Market data presentation"}},
+     {{"time": 12, "source": "local", "category": "property", "visual": "Beautiful home exterior"}},
+     {{"time": 18, "source": "local", "category": "growth", "visual": "Upward trend imagery"}},
+     {{"time": 24, "source": "youtube", "query": "open house walkthrough tour 2025", "visual": "Busy open house"}},
+     {{"time": 30, "source": "local", "category": "celebration", "visual": "Keys handover moment"}}
+   ]
+
+   Example for a clip discussing luxury waterfront properties:
+   [
+     {{"time": 3, "source": "youtube", "query": "luxury waterfront home tour 2025", "visual": "Waterfront property aerial"}},
+     {{"time": 10, "source": "local", "category": "waterfront", "visual": "Ocean/lake views"}},
+     {{"time": 18, "source": "local", "category": "interior", "visual": "Luxury interior design"}},
+     {{"time": 25, "source": "local", "category": "luxury", "visual": "Premium finishes and amenities"}},
+     {{"time": 32, "source": "local", "category": "sunset", "visual": "Golden hour property view"}}
    ]
 
    IMPORTANT: Mix sources naturally based on what the speaker is saying at each moment.
-   When they reference a SPECIFIC EVENT → YouTube
-   When they speak about THEMES/VALUES/EMOTIONS → Local
+   - Specific events/people/news → YOUTUBE (with detailed search query + year)
+   - Abstract themes/emotions → LOCAL (from our 30 categories)
 
 4. TOPIC B-ROLL QUERIES (for YouTube video discovery): Provide 1-3 search queries to find relevant YouTube videos.
    IMPORTANT: Read the transcript BEFORE the clip start time to understand the FULL CONTEXT.
@@ -865,18 +867,18 @@ The following fields are REQUIRED for EVERY clip. Missing ANY of these = INVALID
    - Order by importance (most specific/unique first)
 
    Examples:
-   - Speaker discussed a church invasion (context: he mentioned St. Paul's, activists, FACE Act):
-     queries: ["St Pauls church protesters footage 2025", "church invasion caught on camera 2025"]
-     keywords: ["St Paul", "church", "FACE Act", "protesters", "invaders", "congregation", "activists"]
-   - Speaker discussed Trump rally (context: mentioned Iowa, crowd size, media reaction):
-     queries: ["Trump Iowa rally footage full crowd 2025", "Trump rally live stream Iowa"]
-     keywords: ["Trump", "Iowa", "rally", "crowd", "supporters", "thousands"]
-   - Speaker discussed crypto crash (context: mentioned Bitcoin, SEC, Gensler):
-     queries: ["bitcoin crash live trading 2025", "SEC crypto hearing footage Gensler"]
-     keywords: ["bitcoin", "SEC", "Gensler", "crypto", "regulation", "crash", "market"]
-   - Speaker discussed police shooting (context: mentioned bodycam, suspect, officer):
-     queries: ["police bodycam footage shooting 2025", "officer involved shooting raw video"]
-     keywords: ["bodycam", "officer", "suspect", "shooting", "footage"]
+   - Speaker discussed a housing market crash (context: mentioned inventory surge, rate hikes):
+     queries: ["housing market crash analysis 2025", "real estate inventory surge footage"]
+     keywords: ["housing", "market", "inventory", "rates", "crash", "correction", "buyers"]
+   - Speaker discussed a luxury property (context: mentioned waterfront, custom build, $2M):
+     queries: ["luxury waterfront home tour 2025", "custom built mansion walkthrough"]
+     keywords: ["waterfront", "luxury", "custom", "million", "property", "tour"]
+   - Speaker discussed mortgage rates (context: mentioned Fed, 30-year fixed, refinancing):
+     queries: ["mortgage rate update 2025 analysis", "fed interest rate decision housing"]
+     keywords: ["mortgage", "rates", "Fed", "refinance", "fixed", "housing", "market"]
+   - Speaker discussed first-time buyers (context: mentioned down payment, FHA, market entry):
+     queries: ["first time home buyer tips 2025", "FHA loan guide new buyers"]
+     keywords: ["first-time", "buyer", "FHA", "down payment", "pre-approval", "closing"]
 
 {template_section}
 
@@ -886,14 +888,14 @@ The following fields are REQUIRED for EVERY clip. Missing ANY of these = INVALID
 {EFFECT_CATALOG}
 
 EFFECTS SELECTION PHILOSOPHY:
-- AGGRESSIVE clips (rants, confrontation): camera_shake + heavy_vhs + shake captions + high pulse + bgm_mood:"aggressive"
-- INSPIRATIONAL clips (wisdom, hope): golden_hour/kodak_warm + retro_glow + pop_scale captions + bgm_mood:"triumphant"
-- CONSPIRACY/DARK clips: film_noir + wave_displacement + blur_reveal + low vhs + bgm_mood:"dark"
-- FUNNY/ABSURD clips: cross_process + pop_scale captions + high pulse + bgm_mood:"hype"
-- EPIC/REVELATION clips: teal_orange + retro_glow + beat_sync + high pulse + bgm_mood:"triumphant"
-- SAD/LAMENTING clips: kodak_warm/bleach_bypass + blur_reveal + bgm_mood:"melancholic"
-- Use temporal_trail sparingly for dreamlike/philosophical tangents
-- wave_displacement should be RARE - only for truly mind-bending moments
+- MARKET URGENCY clips (rate changes, hot markets): camera_shake + shake captions + high pulse + bgm_mood:"aggressive"
+- INSPIRATIONAL clips (success stories, dream homes): golden_hour/kodak_warm + retro_glow + pop_scale captions + bgm_mood:"triumphant"
+- DATA/ANALYSIS clips (market reports, predictions): cold_chrome + blur_reveal + low vhs + bgm_mood:"dark"
+- FUN/ENGAGING clips (open houses, neighborhood tours): cross_process + pop_scale captions + high pulse + bgm_mood:"hype"
+- PROPERTY REVEALS (luxury listings, transformations): teal_orange + retro_glow + beat_sync + high pulse + bgm_mood:"triumphant"
+- CAUTIONARY clips (market warnings, common mistakes): kodak_warm/bleach_bypass + blur_reveal + bgm_mood:"melancholic"
+- Use temporal_trail sparingly for aspirational lifestyle content
+- wave_displacement should be RARE - only for truly surprising market data
 - DO NOT over-stack effects. 2-3 effects per clip is ideal. Max 4.
 
 ⚠️ bgm_mood IS REQUIRED IN EFFECTS - MUST be one of: "dark", "aggressive", "triumphant", "melancholic", "hype"
@@ -907,16 +909,33 @@ CRITICAL DURATION CONSTRAINTS (MUST FOLLOW):
 - Ensure the start and end times cut cleanly (complete sentences)
 - Specific instructions: {persona.prompt_template}
 
+5. PLATFORM SELECTION: For each clip, recommend the BEST platform between TikTok and Reels.
+   ⚠️ DO NOT recommend YouTube Shorts - only "tiktok" or "reels".
+
+   Platform guidelines:
+   - "tiktok": Best for clips 24-38 seconds, high energy content, rapid market updates,
+     trending real estate topics, data-driven hot takes, relatable buyer/seller content
+   - "reels": Best for clips 7-30 seconds, polished property showcases, lifestyle/aspirational,
+     expert advice clips, clean visuals, broader audience appeal, educational content
+
+   Consider:
+   - TikTok favors raw authenticity - quick tips and market takes perform well
+   - Reels favors polished, aspirational content - luxury showcases and expert advice win
+   - Market urgency clips -> TikTok
+   - Expert advice / educational clips -> Reels (or TikTok if high energy delivery)
+   - Property reveals / before-after -> Reels
+   - Data-driven market commentary -> TikTok (algorithm rewards engagement)
+
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  FINAL CHECKLIST - EVERY CLIP MUST HAVE ALL OF THESE FIELDS                 ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  ✓ hook (hook_phrase, hook_timestamp, visual_hook_time)                      ║
 ║  ✓ emotional_arc (setup_end, escalation_peak, quotable_line)                 ║
 ║  ✓ key_pauses (array of pause objects with start, end, type)                 ║
 ║  ✓ rapid_fire_sections (array of time ranges)                                ║
 ║  ✓ question_moments (array of timestamps)                                    ║
 ║  ✓ effects.bgm_mood (one of: dark, aggressive, triumphant, melancholic, hype)║
 ║  ✓ trigger_words, broll_insertions, climax_time, template_id                 ║
+║  ✓ recommended_platform ("tiktok" or "reels" - NOT youtube_shorts)           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 Return ONLY valid JSON in this format:
@@ -927,16 +946,12 @@ Return ONLY valid JSON in this format:
       "end": 55.2,
       "climax_time": 30.0,
       "template_id": 2,
-      "type": "antagonistic",
-      "title": "TOP G DESTROYS DEBATE OPPONENT",
-      "reason": "High conflict moment, very engaging",
-      "caption": "Bro didn't stand a chance...",
-      "hashtags": ["#viral", "#shorts", "#fyp", "#sigma"],
-      "hook": {{
-          "hook_phrase": "You're a LIAR",
-          "hook_timestamp": 25.2,
-          "visual_hook_time": 30.0
-      }},
+      "type": "market_update",
+      "title": "WHY THIS MARKET IS ABOUT TO SHIFT",
+      "reason": "Compelling market analysis with actionable data",
+      "caption": "Every buyer needs to hear this...",
+      "hashtags": ["#realestate", "#housingmarket", "#fyp", "#homebuying"],
+      "recommended_platform": "tiktok",
       "emotional_arc": {{
           "setup_end": 12.0,
           "escalation_peak": 35.0,
@@ -955,19 +970,19 @@ Return ONLY valid JSON in this format:
       ],
       "question_moments": [18.5, 38.0],
       "trigger_words": [
-          {{"word": "DESTROYED", "start": 20.5, "end": 21.0}},
-          {{"word": "LIAR", "start": 25.2, "end": 25.8}},
-          {{"word": "WAR", "start": 30.0, "end": 30.3}}
+          {{"word": "MARKET", "start": 20.5, "end": 21.0}},
+          {{"word": "INVESTMENT", "start": 25.2, "end": 25.8}},
+          {{"word": "OPPORTUNITY", "start": 30.0, "end": 30.3}}
       ],
       "broll_insertions": [
-          {{"time": 5, "source": "youtube", "query": "Trump Iowa rally footage 2025", "visual": "Rally crowd footage"}},
-          {{"time": 12, "source": "youtube", "query": "Trump Iowa rally crowd footage", "visual": "Stadium crowd energy"}},
-          {{"time": 20, "source": "youtube", "query": "Trump Iowa rally footage 2025", "visual": "Trump on stage"}},
-          {{"time": 28, "source": "local", "category": "victory", "visual": "Winning/success imagery"}},
-          {{"time": 35, "source": "local", "category": "power", "visual": "Dominance imagery"}}
+          {{"time": 5, "source": "youtube", "query": "luxury home tour walkthrough 2025", "visual": "Property exterior"}},
+          {{"time": 12, "source": "local", "category": "interior", "visual": "Stunning interior design"}},
+          {{"time": 20, "source": "local", "category": "kitchen", "visual": "Modern kitchen showcase"}},
+          {{"time": 28, "source": "local", "category": "growth", "visual": "Market growth imagery"}},
+          {{"time": 35, "source": "local", "category": "celebration", "visual": "Closing day celebration"}}
       ],
-      "topic_broll": ["Trump Iowa rally footage crowd 2025", "Trump rally live stream full"],
-      "topic_broll_keywords": ["Trump", "rally", "Iowa", "crowd", "supporters", "speech"],
+      "topic_broll": ["luxury home tour 2025 walkthrough", "real estate market update 2025"],
+      "topic_broll_keywords": ["property", "market", "home", "listing", "price", "tour"],
       "effects": {{
           "color_grade": "teal_orange",
           "camera_shake": {{"intensity": 8, "frequency": 2.0}},
@@ -986,16 +1001,12 @@ Return ONLY valid JSON in this format:
       "end": 165.5,
       "climax_time": 145.0,
       "template_id": 7,
-      "type": "inspirational",
-      "title": "THE TRUTH ABOUT WESTERN CIVILIZATION",
-      "reason": "Profound monologue about faith and heritage",
-      "caption": "This hit different 🙏",
-      "hashtags": ["#faith", "#western", "#truth", "#based"],
-      "hook": {{
-          "hook_phrase": "Christ is KING",
-          "hook_timestamp": 142.5,
-          "visual_hook_time": 145.0
-      }},
+      "type": "educational",
+      "title": "THE TRUTH ABOUT BUYING IN THIS MARKET",
+      "reason": "Expert breakdown of current market conditions with actionable advice",
+      "caption": "Every first-time buyer needs to hear this",
+      "hashtags": ["#realestate", "#firsttimebuyer", "#housingmarket", "#homebuying"],
+      "recommended_platform": "reels",
       "emotional_arc": {{
           "setup_end": 8.0,
           "escalation_peak": 28.0,
@@ -1012,19 +1023,19 @@ Return ONLY valid JSON in this format:
       "rapid_fire_sections": [],
       "question_moments": [15.0, 32.0],
       "trigger_words": [
-          {{"word": "TRUTH", "start": 125.0, "end": 125.5}},
-          {{"word": "CIVILIZATION", "start": 130.0, "end": 130.8}},
-          {{"word": "CHRIST", "start": 142.5, "end": 143.0}},
-          {{"word": "KING", "start": 143.0, "end": 143.4}}
+          {{"word": "MARKET", "start": 125.0, "end": 125.5}},
+          {{"word": "EQUITY", "start": 130.0, "end": 130.8}},
+          {{"word": "INVESTMENT", "start": 142.5, "end": 143.0}},
+          {{"word": "OPPORTUNITY", "start": 143.0, "end": 143.4}}
       ],
       "broll_insertions": [
-          {{"time": 5, "source": "youtube", "query": "Gothic cathedral interior footage", "visual": "Gothic cathedral interior"}},
-          {{"time": 12, "source": "local", "category": "faith", "visual": "Religious symbols, crosses"}},
-          {{"time": 20, "source": "youtube", "query": "Medieval European castle footage", "visual": "Medieval European castle"}},
-          {{"time": 28, "source": "local", "category": "history", "visual": "Historical footage"}}
+          {{"time": 5, "source": "youtube", "query": "housing market analysis 2025", "visual": "Market data presentation"}},
+          {{"time": 12, "source": "local", "category": "property", "visual": "Beautiful home exterior"}},
+          {{"time": 20, "source": "local", "category": "neighborhood", "visual": "Tree-lined neighborhood street"}},
+          {{"time": 28, "source": "local", "category": "family", "visual": "Happy family in new home"}}
       ],
-      "topic_broll": ["Western civilization documentary footage", "European cathedral footage"],
-      "topic_broll_keywords": ["Western", "civilization", "faith", "heritage", "tradition"],
+      "topic_broll": ["real estate investing strategy 2025", "home buying tips first time buyer"],
+      "topic_broll_keywords": ["market", "equity", "investment", "buyer", "mortgage", "rates"],
       "effects": {{
           "color_grade": "golden_hour",
           "retro_glow": 0.4,
@@ -1179,7 +1190,8 @@ Return ONLY valid JSON in this format:
                             "model": "x-ai/grok-4.1-fast",
                             "messages": [{"role": "user", "content": prompt}],
                             "response_format": {"type": "json_object"},
-                            "temperature": 0.7
+                            "temperature": 0.7,
+                            "max_tokens": 16384  # Ensure full JSON response for 20 clips
                         },
                         timeout=300.0  # Increased timeout for large transcripts
                     )

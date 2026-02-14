@@ -92,7 +92,7 @@ def download_video_with_subs(url: str, video_id: str) -> Tuple[Optional[Path], O
     if not host_output.exists():
         try:
             result = subprocess.run([
-                "docker", "exec", "SocialGen_video_processor",
+                "docker", "exec", "RealContentAI_video_processor",
                 "yt-dlp",
                 "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]/best",
                 "--merge-output-format", "mp4",
@@ -112,7 +112,7 @@ def download_video_with_subs(url: str, video_id: str) -> Tuple[Optional[Path], O
     title = None
     try:
         result = subprocess.run([
-            "docker", "exec", "SocialGen_video_processor",
+            "docker", "exec", "RealContentAI_video_processor",
             "yt-dlp", "--get-title", url
         ], capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
@@ -124,7 +124,7 @@ def download_video_with_subs(url: str, video_id: str) -> Tuple[Optional[Path], O
     if not host_subs.exists():
         try:
             subprocess.run([
-                "docker", "exec", "SocialGen_video_processor",
+                "docker", "exec", "RealContentAI_video_processor",
                 "yt-dlp",
                 "--write-auto-subs",
                 "--sub-lang", "en",
@@ -185,7 +185,7 @@ def cut_clips(video_path: Path, video_id: str, title: str, segments: List[Dict])
     # Get video duration
     try:
         result = subprocess.run([
-            "docker", "exec", "SocialGen_video_processor",
+            "docker", "exec", "RealContentAI_video_processor",
             "ffprobe", "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -223,7 +223,7 @@ def cut_clips(video_path: Path, video_id: str, title: str, segments: List[Dict])
 
             try:
                 result = subprocess.run([
-                    "docker", "exec", "SocialGen_video_processor",
+                    "docker", "exec", "RealContentAI_video_processor",
                     "ffmpeg", "-y",
                     "-ss", str(timestamp),
                     "-i", f"{CONTAINER_BROLL}/{temp_name}",
@@ -246,7 +246,7 @@ def cut_clips(video_path: Path, video_id: str, title: str, segments: List[Dict])
 
             try:
                 result = subprocess.run([
-                    "docker", "exec", "SocialGen_video_processor",
+                    "docker", "exec", "RealContentAI_video_processor",
                     "ffmpeg", "-y",
                     "-ss", str(t),
                     "-i", f"{CONTAINER_BROLL}/{temp_name}",

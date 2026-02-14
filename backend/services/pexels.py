@@ -1,10 +1,11 @@
 """
 Pexels API Service for fetching and caching B-roll footage.
-Focuses on masculine/warfare themes for viral clip factory climax montages.
+Provides visual content for real estate video montages and viral clip rendering.
 """
 
 import os
 import random
+import json
 import httpx
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -17,9 +18,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# Pre-defined search queries for trad/masculine B-roll themes
+# Pre-defined search queries for B-roll themes
 # Each category has multiple search terms for variety
-# Focus on REAL footage - documentary, news, nature - NOT reenactments
+# Focus on REAL footage - documentary, nature, real estate - NOT reenactments
 BROLL_SEARCH_QUERIES = {
     # MILITARY / WARFARE - real footage, documentary style
     "warfare": ["war documentary", "combat footage", "military operation", "troops deployment", "battlefield", "war zone", "military patrol", "armed forces"],
@@ -31,8 +32,8 @@ BROLL_SEARCH_QUERIES = {
     "navy": ["warship", "aircraft carrier", "battleship ocean", "submarine", "naval", "destroyer"],
 
     # ARCHITECTURE - real buildings
-    "crusades": ["jerusalem", "holy land", "ancient ruins", "medieval architecture", "stone walls", "fortress"],
-    "swords": ["sword closeup", "blade steel", "knife sharp", "weapon metal"],
+    "architecture": ["modern architecture", "luxury home exterior", "architectural detail", "grand entrance", "stone walls", "building facade"],
+    "interiors": ["luxury interior design", "modern kitchen", "open floor plan", "home staging", "interior decor"],
     "castles": ["castle ruins", "fortress walls", "medieval castle", "ancient castle", "stone fortress"],
     "cathedrals": ["cathedral interior", "gothic architecture", "stained glass", "church interior", "notre dame", "cologne cathedral", "chapel"],
 
@@ -73,14 +74,14 @@ BROLL_SEARCH_QUERIES = {
     "ocean": ["ocean storm", "massive waves", "tsunami", "rough sea", "surfing big wave"],
     "wilderness": ["wilderness", "forest", "jungle", "backcountry", "wild nature"],
 
-    # HISTORICAL / WARRIORS - sculptures, art, architecture (not cosplay)
-    "spartans": ["greek statue", "roman sculpture", "colosseum", "ancient rome", "parthenon", "gladiator statue"],
-    "vikings": ["viking ship", "norse", "longship", "scandinavian"],
-    "samurai": ["katana sword", "japanese temple", "japan shrine", "samurai armor museum"],
+    # REAL ESTATE / LIFESTYLE - property and neighborhood footage
+    "homes": ["luxury home tour", "modern house exterior", "dream home", "house walkthrough", "curb appeal", "new construction"],
+    "neighborhoods": ["suburban neighborhood", "tree lined street", "family neighborhood", "community park", "residential area"],
+    "moving": ["moving day", "new home keys", "sold sign", "packing boxes", "housewarming"],
 }
 
 # Default categories for B-roll if none specified
-# Includes both new influencer footage and legacy warfare clips
+# Includes a mix of lifestyle, real estate, and general footage categories
 DEFAULT_BROLL_CATEGORIES = [
     # New authentic influencer categories
     "money", "luxury", "gym", "sports", "cars", "city",
@@ -92,9 +93,9 @@ DEFAULT_BROLL_CATEGORIES = [
 
 # Category weights for selection
 # Higher weight = more likely to be selected
-# All categories weighted equally now since Grok selects the right ones
+# Weights tuned for content mix - Grok selects the right categories per clip
 CATEGORY_WEIGHTS = {
-    # New authentic influencer categories - HIGH priority (weight 4)
+    # Lifestyle and real estate categories - HIGH priority (weight 4)
     "money": 4,
     "luxury": 4,
     "gym": 4,
@@ -168,14 +169,29 @@ class PexelsService:
         self._used_clips_path = self.BROLL_DIR / "used_clips.json"
 
     def _load_used_clips(self) -> dict:
-        """Load the used clips tracking state per category."""
+        """
+        Load the used clips tracking state per category.
+        New format: {category: {filename: timestamp_iso}}
+        Migrates old format [{filename}] to new format on load.
+        """
         if self._used_clips_path.exists():
             try:
                 with open(self._used_clips_path, "r") as f:
-                    return json.load(f)
-            except:
-                pass
-        return {}  # category -> [list of used filenames]
+                    data = json.load(f)
+                    # Migrate old list format to new dict format
+                    migrated = False
+                    for cat, value in data.items():
+                        if isinstance(value, list):
+                            # Old format: convert list to dict with old timestamps
+                            data[cat] = {fn: "1970-01-01T00:00:00" for fn in value}
+                            migrated = True
+                    if migrated:
+                        self._save_used_clips(data)
+                        logger.info("Migrated used_clips.json to timestamp format")
+                    return data
+            except (IOError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to load used clips state: {e}")
+        return {}  # category -> {filename: timestamp}
 
     def _save_used_clips(self, used: dict):
         """Save the used clips tracking state."""
@@ -186,33 +202,46 @@ class PexelsService:
             logger.warning(f"Failed to save used clips state: {e}")
 
     def _mark_clip_used(self, clip_path: str, category: str):
-        """Mark a clip as used for a category. Resets when category exhausted."""
+        """Mark a clip as used for a category with current timestamp."""
+        from datetime import datetime
         used = self._load_used_clips()
         filename = Path(clip_path).name
         if category not in used:
-            used[category] = []
-        if filename not in used[category]:
-            used[category].append(filename)
+            used[category] = {}
+        used[category][filename] = datetime.utcnow().isoformat()
         self._save_used_clips(used)
+        logger.debug(f"Marked B-roll clip used: {filename} in category '{category}'")
 
     def _get_unused_clips(self, available: list, category: str) -> list:
         """
-        Filter to unused clips for this category.
-        If all clips exhausted, reset tracking and return all.
+        Filter to unused clips for this category, using LRU (least recently used) ordering.
+        If all clips in category exhausted, reset tracking and return all sorted by last used.
         """
         used = self._load_used_clips()
-        used_in_cat = set(used.get(category, []))
+        used_in_cat = used.get(category, {})
 
-        # Filter to unused
+        # Filter to clips that haven't been used yet
         unused = [p for p in available if Path(p).name not in used_in_cat]
 
         if not unused and available:
-            # Category exhausted - reset and return all
-            logger.info(f"B-roll category '{category}' exhausted ({len(used_in_cat)} clips), resetting")
-            used[category] = []
-            self._save_used_clips(used)
-            return available
+            # Category exhausted - reset tracking but return clips sorted by LRU
+            logger.info(f"B-roll category '{category}' exhausted ({len(used_in_cat)} clips), resetting for round-robin")
 
+            # Sort available clips by last used timestamp (oldest first = LRU)
+            def get_timestamp(path):
+                fn = Path(path).name
+                ts = used_in_cat.get(fn, "9999-12-31T23:59:59")
+                return ts
+
+            sorted_by_lru = sorted(available, key=get_timestamp)
+
+            # Clear the category tracking for fresh round
+            used[category] = {}
+            self._save_used_clips(used)
+
+            return sorted_by_lru
+
+        # Return unused clips (they haven't been used yet, so order doesn't matter)
         return unused if unused else available
 
     def search_videos(
@@ -576,12 +605,12 @@ class PexelsService:
                     # OTHER
                     "history": ["history", "historical", "ww2", "archive", "rockets", "vintage"],
                     "people": ["people", "men", "women", "person", "human", "relationships"],
-                    "fashion": ["fashion", "runway", "streetwear", "designer"],
+                    "victory": ["victory", "winning", "success", "celebrate", "champion", "triumph"],
+                    "power": ["power", "dominance", "control", "authority", "leadership"],
 
                     # Legacy mappings (for backwards compatibility)
+                    "fashion": ["fashion", "runway", "streetwear", "designer"],
                     "nature_power": ["nature_power", "volcano", "tsunami", "tornado", "avalanche"],
-                    "power": ["power", "dominance", "control", "authority", "money"],
-                    "victory": ["victory", "winning", "success", "celebrate", "champion"],
                     "warfare": ["warfare", "military", "combat", "soldier"],  # alias for war
                     "fighter_jets": ["fighter", "jets", "aircraft"],  # alias for jets
                 }

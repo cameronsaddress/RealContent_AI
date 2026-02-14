@@ -3,7 +3,7 @@ Video Processing Service for n8n - Hybird Version (Legacy + CapCut Upgrade)
 - Downloads videos from TikTok, Instagram, YouTube using yt-dlp
 - Processes videos with MoviePy (TikTok looks) + FFmpeg (NVENC on DGX)
 - Combines avatar videos with background footage (Legacy/RealEstate)
-- Viral Clips: TradWest-style Grid, Pulse, Grading, Captions/Karaoke (MoviePy TikTok Style)
+- Content Clips: Grid, Pulse, Grading, Captions/Karaoke (TikTok Style)
 """
 
 import os
@@ -334,7 +334,7 @@ def make_tiktok_captions(
     clip_start_offset: float,
     clip_duration: float,
     font: str = "Arial",
-    preset: str = "trad_west"
+    preset: str = "default"
 ) -> List[TextClip]:
     """
     TikTok-ish caption look:
@@ -348,7 +348,7 @@ def make_tiktok_captions(
         return captions
 
     # Style knobs per preset
-    if preset == "trad_west":
+    if preset == "default":
         fontsize = 86
         stroke_w = 4
         y = 0.78
@@ -470,7 +470,7 @@ def apply_tiktok_looks(clip: VideoFileClip, preset: str) -> VideoFileClip:
     Implemented with MoviePy effects + lightweight per-frame.
     """
     # Effects from your imports
-    if preset == "trad_west":
+    if preset == "default":
         clip = clip.with_effects([
             LumContrast(lum=0, contrast=0.20, contrast_thr=127),
             MultiplyColor(1.05),
@@ -490,7 +490,7 @@ def apply_tiktok_looks(clip: VideoFileClip, preset: str) -> VideoFileClip:
         r = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
         r /= (np.sqrt(cx ** 2 + cy ** 2) + 1e-6)
         # vignette strength
-        strength = 0.22 if preset == "trad_west" else 0.16
+        strength = 0.22 if preset == "default" else 0.16
         mask = 1.0 - strength * (r ** 1.6)
         mask = np.clip(mask, 0.0, 1.0)
         fr *= mask[..., None]

@@ -69,11 +69,11 @@ def seed_settings():
         # Seed Viral Prompt
         key = "VIRAL_SYSTEM_PROMPT"
         if not db.query(LLMSettingsModel).filter(LLMSettingsModel.key == key).first():
-            default_prompt = """You are a viral content expert. Your goal is to find the most controversial, vulgar, intelligent, exciting, and viral moments. 
-Focus on high-conflict debates, shock value, deep insights, or high-energy moments. 
-Ignore boring or mundane filler. 
-Prioritize clips that trigger strong emotional reactions (anger, laughter, awe).
-Ensure clips have a clear hook and payoff."""
+            default_prompt = """You are a real estate content strategist. Your goal is to find the most engaging, informative, and shareable moments from real estate content.
+Focus on market insights, property highlights, expert advice, and compelling narratives.
+Ignore filler content that doesn't provide value to potential buyers, sellers, or investors.
+Prioritize clips that educate, inspire, or showcase unique properties and market opportunities.
+Ensure clips have a clear hook and actionable takeaway."""
             db.add(LLMSettingsModel(key=key, value=default_prompt, description="Strategy for detecting viral clips"))
             db.commit()
             print("Seeded VIRAL_SYSTEM_PROMPT")

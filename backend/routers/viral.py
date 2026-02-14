@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import or_, func, case
 from datetime import datetime
 from typing import List, Optional
 from datetime import datetime
@@ -20,7 +21,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/viral", tags=["viral"])
 
 # Import Celery task
-from tasks.viral import process_viral_clip_render
+from tasks.viral import process_viral_clip_render, publish_single_clip
 
 # --- Schemas ---
 class InfluencerCreate(BaseModel):
@@ -48,31 +49,68 @@ class AutoModeConfig(BaseModel):
 # --- Endpoints ---
 
 @router.get("/influencers", response_model=List[dict])
-def list_influencers(db: Session = Depends(get_db)):
-    influencers = db.query(Influencer).all()
-    result = []
-    for i in influencers:
-        # Get video count and most recent thumbnail
-        videos = db.query(InfluencerVideo).filter(InfluencerVideo.influencer_id == i.id).all()
-        video_count = len(videos)
+def list_influencers(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    # Clamp limit to reasonable max
+    limit = min(limit, 500)
 
-        # Get thumbnail from most recent video with a thumbnail
+    # Subquery for video counts per influencer
+    video_count_subq = (
+        db.query(
+            InfluencerVideo.influencer_id,
+            func.count(InfluencerVideo.id).label('video_count')
+        )
+        .group_by(InfluencerVideo.influencer_id)
+        .subquery()
+    )
+
+    # Subquery for clip counts per influencer (total and ready)
+    clip_count_subq = (
+        db.query(
+            InfluencerVideo.influencer_id,
+            func.count(ViralClip.id).label('clip_count'),
+            func.sum(case(
+                (ViralClip.status.in_(['ready', 'completed']), 1),
+                else_=0
+            )).label('ready_clips')
+        )
+        .join(ViralClip, ViralClip.source_video_id == InfluencerVideo.id)
+        .group_by(InfluencerVideo.influencer_id)
+        .subquery()
+    )
+
+    # Main query with eager loading of videos for thumbnail extraction
+    influencers = (
+        db.query(Influencer)
+        .options(selectinload(Influencer.videos))
+        .outerjoin(video_count_subq, Influencer.id == video_count_subq.c.influencer_id)
+        .outerjoin(clip_count_subq, Influencer.id == clip_count_subq.c.influencer_id)
+        .add_columns(
+            func.coalesce(video_count_subq.c.video_count, 0).label('video_count'),
+            func.coalesce(clip_count_subq.c.clip_count, 0).label('clip_count'),
+            func.coalesce(clip_count_subq.c.ready_clips, 0).label('ready_clips')
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    result = []
+    for row in influencers:
+        i = row[0]  # Influencer object
+        video_count = row.video_count
+        clip_count = row.clip_count
+        ready_clips = row.ready_clips
+
+        # Get thumbnail from most recent video with a thumbnail (already loaded)
         thumbnail_url = None
-        for v in sorted(videos, key=lambda x: x.publication_date or x.created_at or datetime.min, reverse=True):
+        for v in sorted(i.videos, key=lambda x: x.publication_date or x.created_at or datetime.min, reverse=True):
             if v.thumbnail_url:
                 thumbnail_url = v.thumbnail_url
                 break
-
-        # Count total clips across all videos
-        clip_count = db.query(ViralClip).join(InfluencerVideo).filter(
-            InfluencerVideo.influencer_id == i.id
-        ).count()
-
-        # Count ready clips
-        ready_clips = db.query(ViralClip).join(InfluencerVideo).filter(
-            InfluencerVideo.influencer_id == i.id,
-            ViralClip.status.in_(['ready', 'completed'])
-        ).count()
 
         result.append({
             "id": i.id,
@@ -104,6 +142,45 @@ def create_influencer(inf: InfluencerCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_inf)
     return db_inf
+
+
+@router.delete("/influencers/{id}")
+def delete_influencer(id: int, db: Session = Depends(get_db)):
+    """Delete an influencer and cascade delete all their videos and clips."""
+    inf = db.query(Influencer).filter(Influencer.id == id).first()
+    if not inf:
+        raise HTTPException(status_code=404, detail="Influencer not found")
+
+    # Get counts for response
+    video_count = db.query(InfluencerVideo).filter(InfluencerVideo.influencer_id == id).count()
+    clip_count = db.query(ViralClip).join(InfluencerVideo).filter(
+        InfluencerVideo.influencer_id == id
+    ).count()
+
+    # Delete clips first (foreign key constraint)
+    db.query(ViralClip).filter(
+        ViralClip.source_video_id.in_(
+            db.query(InfluencerVideo.id).filter(InfluencerVideo.influencer_id == id)
+        )
+    ).delete(synchronize_session=False)
+
+    # Delete videos
+    db.query(InfluencerVideo).filter(InfluencerVideo.influencer_id == id).delete(synchronize_session=False)
+
+    # Delete influencer
+    influencer_name = inf.name
+    db.delete(inf)
+    db.commit()
+
+    logger.info(f"Deleted influencer '{influencer_name}' (id={id}) with {video_count} videos and {clip_count} clips")
+
+    return {
+        "status": "deleted",
+        "influencer_id": id,
+        "influencer_name": influencer_name,
+        "videos_deleted": video_count,
+        "clips_deleted": clip_count
+    }
 
 
 # --- Auto-Mode Configuration Endpoints ---
@@ -151,7 +228,8 @@ def configure_influencer_auto_mode(influencer_id: int, config: AutoModeConfig, d
     influencer.fetch_frequency_hours = config.fetch_frequency_hours
     influencer.max_videos_per_fetch = config.max_videos_per_fetch
     influencer.auto_analyze_enabled = config.auto_analyze_enabled
-    influencer.auto_render_enabled = config.auto_render_enabled
+    # Auto-render is always enabled when auto-mode is on
+    influencer.auto_render_enabled = config.auto_mode_enabled
     influencer.auto_publish_enabled = config.auto_publish_enabled
 
     db.commit()
@@ -183,10 +261,11 @@ async def fetch_videos(id: int, background_tasks: BackgroundTasks, db: Session =
                 videos = data.get("videos", [])
                 created_count = 0
                 for v in videos:
-                    # Check duplicate
+                    # Check duplicate by platform_video_id (not URL - URLs can have different tracking params)
+                    video_id = v.get("id")
                     exists = db.query(InfluencerVideo).filter(
                         InfluencerVideo.influencer_id == id,
-                        InfluencerVideo.url == v["url"]
+                        InfluencerVideo.platform_video_id == video_id
                     ).first()
                     if not exists:
                         new_video = InfluencerVideo(
@@ -271,6 +350,129 @@ async def render_viral_clip(clip_id: int, db: Session = Depends(get_db)):
     
     return {"message": "Rendering started", "clip_id": clip_id}
 
+
+class PublishClipRequest(BaseModel):
+    platforms: Optional[List[str]] = None  # None = all configured platforms
+
+
+@router.post("/viral-clips/{clip_id}/publish")
+async def publish_clip_now(clip_id: int, body: PublishClipRequest = None, db: Session = Depends(get_db)):
+    """Immediately publish a ready clip to Blotato accounts."""
+    clip = db.query(ViralClip).filter(ViralClip.id == clip_id).first()
+    if not clip or clip.status != "ready":
+        raise HTTPException(status_code=404, detail="Clip not found or not ready")
+
+    video = db.query(InfluencerVideo).filter(InfluencerVideo.id == clip.source_video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Source video not found")
+
+    influencer = db.query(Influencer).filter(Influencer.id == video.influencer_id).first()
+    if not influencer:
+        raise HTTPException(status_code=404, detail="Influencer not found")
+
+    configs = db.query(PublishingConfig).filter(
+        or_(
+            PublishingConfig.influencer_id == influencer.id,
+            PublishingConfig.persona_id == influencer.persona_id,
+        ),
+        PublishingConfig.enabled == True,
+    ).all()
+
+    if not configs:
+        raise HTTPException(status_code=400, detail="No active publishing configs for this influencer")
+
+    requested_platforms = (body.platforms if body and body.platforms else None)
+    queued = 0
+    config_names = []
+
+    for config in configs:
+        # Filter platforms if specified
+        config_platforms = config.platforms or ["tiktok"]
+        if requested_platforms:
+            platforms_to_use = [p for p in config_platforms if p in requested_platforms]
+            if not platforms_to_use:
+                continue
+        else:
+            platforms_to_use = config_platforms
+
+        # Skip if already queued
+        existing = db.query(PublishingQueueItem).filter(
+            PublishingQueueItem.clip_id == clip.id,
+            PublishingQueueItem.config_id == config.id,
+            PublishingQueueItem.status.in_(["approved", "publishing", "published"]),
+        ).first()
+        if existing:
+            continue
+
+        item = PublishingQueueItem(
+            clip_id=clip.id,
+            config_id=config.id,
+            target_platforms=platforms_to_use,
+            status="approved",
+            scheduled_time=datetime.utcnow(),
+            requires_approval=False,
+        )
+        db.add(item)
+        db.flush()
+        publish_single_clip.delay(item.id)
+        queued += 1
+        config_names.append(config.blotato_account_name or str(config.blotato_account_id))
+
+    if queued > 0:
+        clip.publishing_status = "queued"
+        db.commit()
+
+    return {"queued": queued, "configs": config_names, "clip_id": clip_id}
+
+
+@router.get("/publishing-configs/{influencer_id}")
+async def get_publishing_configs(influencer_id: int, db: Session = Depends(get_db)):
+    """Get publishing configs for an influencer."""
+    influencer = db.query(Influencer).filter(Influencer.id == influencer_id).first()
+    configs = db.query(PublishingConfig).filter(
+        or_(
+            PublishingConfig.influencer_id == influencer_id,
+            PublishingConfig.persona_id == (influencer.persona_id if influencer else None),
+        ),
+        PublishingConfig.enabled == True,
+    ).all()
+    return [
+        {
+            "id": c.id,
+            "blotato_account_id": c.blotato_account_id,
+            "blotato_account_name": c.blotato_account_name,
+            "platforms": c.platforms,
+            "enabled": c.enabled,
+        }
+        for c in configs
+    ]
+
+
+@router.get("/settings/auto-publish")
+async def get_auto_publish_setting(db: Session = Depends(get_db)):
+    """Get the global auto-publish toggle state."""
+    from models import SystemSettings
+    setting = db.query(SystemSettings).filter(SystemSettings.key == "auto_publish_enabled").first()
+    return {"enabled": setting.value if setting else False}
+
+
+class AutoPublishToggle(BaseModel):
+    enabled: bool
+
+@router.put("/settings/auto-publish")
+async def set_auto_publish_setting(body: AutoPublishToggle, db: Session = Depends(get_db)):
+    """Set the global auto-publish toggle."""
+    from models import SystemSettings
+    setting = db.query(SystemSettings).filter(SystemSettings.key == "auto_publish_enabled").first()
+    if setting:
+        setting.value = body.enabled
+    else:
+        setting = SystemSettings(key="auto_publish_enabled", value=body.enabled)
+        db.add(setting)
+    db.commit()
+    return {"enabled": body.enabled}
+
+
 @router.post("/videos/{id}/analyze")
 async def analyze_video(id: int, db: Session = Depends(get_db)):
     # This involves:
@@ -344,44 +546,96 @@ def list_influencer_videos(id: int, db: Session = Depends(get_db)):
             "clip_type": c.clip_type,
             "edited_video_path": c.edited_video_path,
             "template_id": c.template_id,
-            "recommended_template_id": c.recommended_template_id
+            "recommended_template_id": c.recommended_template_id,
+            "publishing_status": c.publishing_status
         } for c in v.clips]
     } for v in videos]
     
 @router.get("/viral-clips", response_model=List[dict])
-def list_viral_clips(db: Session = Depends(get_db)):
-    clips = db.query(ViralClip).order_by(ViralClip.created_at.desc()).limit(50).all()
+def list_viral_clips(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    # Clamp limit to reasonable max
+    limit = min(limit, 500)
+
+    # Join with InfluencerVideo and Influencer to get influencer name and id
+    clips = db.query(
+        ViralClip,
+        Influencer.name.label("influencer_name"),
+        Influencer.id.label("influencer_id")
+    ).outerjoin(
+        InfluencerVideo, ViralClip.source_video_id == InfluencerVideo.id
+    ).outerjoin(
+        Influencer, InfluencerVideo.influencer_id == Influencer.id
+    ).order_by(ViralClip.created_at.desc()).offset(skip).limit(limit).all()
+
     return [{
-        "id": c.id,
-        "title": c.title,
-        "hashtags": c.hashtags,
-        "clip_type": c.clip_type,
-        "status": c.status,
-        "source_video_id": c.source_video_id,
-        "edited_video_path": c.edited_video_path,
-        "template_id": c.template_id,
-        "recommended_template_id": c.recommended_template_id,
-        "created_at": c.created_at.isoformat() if c.created_at else None,
-        "updated_at": c.updated_at.isoformat() if c.updated_at else None
+        "id": c.ViralClip.id,
+        "title": c.ViralClip.title,
+        "hashtags": c.ViralClip.hashtags,
+        "clip_type": c.ViralClip.clip_type,
+        "status": c.ViralClip.status,
+        "source_video_id": c.ViralClip.source_video_id,
+        "edited_video_path": c.ViralClip.edited_video_path,
+        "template_id": c.ViralClip.template_id,
+        "recommended_template_id": c.ViralClip.recommended_template_id,
+        "render_metadata": c.ViralClip.render_metadata,
+        "publishing_status": c.ViralClip.publishing_status,
+        "influencer_name": c.influencer_name,
+        "influencer_id": c.influencer_id,
+        "created_at": c.ViralClip.created_at.isoformat() if c.ViralClip.created_at else None,
+        "updated_at": c.ViralClip.updated_at.isoformat() if c.ViralClip.updated_at else None
     } for c in clips]
 
 
 from fastapi.responses import FileResponse
 
+# Valid status values for viral clips (used by webhook callbacks)
+VALID_CLIP_STATUSES = [
+    "pending",
+    "queued for rendering",
+    "rendering",
+    "ready",
+    "published",
+    "error"
+]
+
+# Status prefixes allowed for progress updates (video-processor sends "Processing: ..." updates)
+VALID_STATUS_PREFIXES = ["Processing:", "queued ("]
+
+def is_valid_clip_status(status: str) -> bool:
+    """Check if status is valid - either in whitelist or has valid prefix."""
+    if status in VALID_CLIP_STATUSES:
+        return True
+    for prefix in VALID_STATUS_PREFIXES:
+        if status.startswith(prefix):
+            return True
+    return False
+
 class StatusUpdate(BaseModel):
     status: str
+    error_message: Optional[str] = None
 
 @router.put("/viral-clips/{id}/status")
 def update_viral_clip_status(id: int, status_update: StatusUpdate, db: Session = Depends(get_db)):
+    # Validate status value
+    if not is_valid_clip_status(status_update.status):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of {VALID_CLIP_STATUSES} or start with {VALID_STATUS_PREFIXES}"
+        )
+
     clip = db.query(ViralClip).filter(ViralClip.id == id).first()
     if not clip:
-        raise HTTPException(status_code=404)
-        
-    # Prevent overwriting final states unless explicitly requested?
-    # For now, just trust the worker.
+        raise HTTPException(status_code=404, detail="Clip not found")
+
     clip.status = status_update.status
+    if status_update.error_message:
+        clip.error_message = status_update.error_message
     db.commit()
-    return {"status": "updated"}
+    return {"status": "updated", "clip_id": id, "new_status": status_update.status}
 
 @router.get("/file/{filename}")
 async def get_viral_file(filename: str, request: Request):
@@ -660,12 +914,34 @@ class BRollUploadRequest(BaseModel):
 
 # In-memory job tracking (for simplicity - could use Redis for persistence)
 broll_upload_jobs = {}
+BROLL_JOB_TTL_SECONDS = 3600  # Clean up jobs older than 1 hour
+
+def cleanup_old_broll_jobs():
+    """Remove jobs older than TTL to prevent memory leaks."""
+    now = datetime.now()
+    expired_keys = [
+        job_id for job_id, job in broll_upload_jobs.items()
+        if (now - job.get("created_at", now)).total_seconds() > BROLL_JOB_TTL_SECONDS
+    ]
+    for job_id in expired_keys:
+        del broll_upload_jobs[job_id]
+    if expired_keys:
+        logger.debug(f"Cleaned up {len(expired_keys)} expired B-roll jobs")
 
 @router.get("/broll")
-def list_broll_clips():
+def list_broll_clips(
+    limit: int = 50,
+    offset: int = 0,
+    category: str = None
+):
     """
-    List all B-roll clips with their metadata and categories.
+    List B-roll clips with pagination and optional category filter.
     Returns clip info from metadata.json if available.
+
+    Query params:
+    - limit: max clips to return (default 50)
+    - offset: starting position (default 0)
+    - category: filter by category (optional, 'untagged' for untagged clips)
     """
     import json
     broll_dir = Path("/app/assets/broll")
@@ -680,11 +956,11 @@ def list_broll_clips():
         except:
             pass
 
-    # Build response
-    clips = []
+    # Build full clips list
+    all_clips = []
     if metadata and "clips" in metadata:
         for clip_data in metadata["clips"]:
-            clips.append({
+            all_clips.append({
                 "filename": clip_data.get("filename"),
                 "caption": clip_data.get("caption", ""),
                 "categories": clip_data.get("categories", []),
@@ -696,7 +972,7 @@ def list_broll_clips():
         if broll_dir.exists():
             for f in broll_dir.glob("*.mp4"):
                 if not f.name.startswith("pexels_"):
-                    clips.append({
+                    all_clips.append({
                         "filename": f.name,
                         "caption": "",
                         "categories": [],
@@ -704,18 +980,38 @@ def list_broll_clips():
                         "tagged": False
                     })
 
-    # Get category counts
+    # Get category counts (always from full list)
     category_counts = {}
     if metadata and "category_counts" in metadata:
         category_counts = metadata["category_counts"]
 
+    # Apply category filter
+    if category:
+        if category == "untagged":
+            filtered_clips = [c for c in all_clips if not c.get("categories")]
+        else:
+            filtered_clips = [c for c in all_clips if category in c.get("categories", [])]
+    else:
+        filtered_clips = all_clips
+
+    total_filtered = len(filtered_clips)
+
+    # Apply pagination
+    paginated_clips = filtered_clips[offset:offset + limit]
+
     return {
-        "clips": clips,
+        "clips": paginated_clips,
         "metadata": {
-            "total_clips": len(clips),
-            "tagged_clips": sum(1 for c in clips if c.get("tagged")),
+            "total_clips": len(all_clips),
+            "filtered_clips": total_filtered,
+            "tagged_clips": sum(1 for c in all_clips if c.get("tagged")),
             "category_counts": category_counts,
             "generated_at": metadata.get("generated_at") if metadata else None
+        },
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total_filtered
         }
     }
 
@@ -735,6 +1031,9 @@ async def upload_youtube_broll(request: BRollUploadRequest, background_tasks: Ba
     import uuid
     job_id = str(uuid.uuid4())[:8]
 
+    # Clean up old jobs to prevent memory leaks
+    cleanup_old_broll_jobs()
+
     # Initialize job status
     broll_upload_jobs[job_id] = {
         "status": "queued",
@@ -742,7 +1041,8 @@ async def upload_youtube_broll(request: BRollUploadRequest, background_tasks: Ba
         "clip_duration": request.clip_duration,
         "progress": 0,
         "message": "Job queued",
-        "clips_created": 0
+        "clips_created": 0,
+        "created_at": datetime.now()
     }
 
     # Run in background
@@ -758,9 +1058,130 @@ async def upload_youtube_broll(request: BRollUploadRequest, background_tasks: Ba
 @router.get("/broll/status/{job_id}")
 def get_broll_upload_status(job_id: str):
     """Get the status of a B-roll upload job."""
+    # Clean up old jobs on status check
+    cleanup_old_broll_jobs()
+
     if job_id not in broll_upload_jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return broll_upload_jobs[job_id]
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+
+    # Return job without exposing internal created_at field
+    job = broll_upload_jobs[job_id].copy()
+    job.pop("created_at", None)
+    return job
+
+@router.get("/broll/usage")
+def get_broll_usage_stats():
+    """
+    Get B-roll usage statistics showing which clips have been used per category.
+    Helps track round-robin usage and see when clips were last used.
+    """
+    import json
+    from pathlib import Path
+
+    broll_dir = Path("/app/assets/broll")
+    used_clips_path = broll_dir / "used_clips.json"
+    metadata_path = broll_dir / "metadata.json"
+
+    # Load usage data
+    usage_data = {}
+    if used_clips_path.exists():
+        try:
+            with open(used_clips_path, "r") as f:
+                usage_data = json.load(f)
+        except (IOError, json.JSONDecodeError):
+            pass
+
+    # Load metadata for total counts
+    metadata = {}
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        except (IOError, json.JSONDecodeError):
+            pass
+
+    category_index = metadata.get("category_index", {})
+
+    # Build stats per category
+    stats = {}
+    for category, clips_used in usage_data.items():
+        total_in_category = len(category_index.get(category, []))
+        used_count = len(clips_used) if isinstance(clips_used, dict) else 0
+
+        # Get most recent and oldest used times
+        timestamps = []
+        if isinstance(clips_used, dict):
+            timestamps = list(clips_used.values())
+            timestamps.sort()
+
+        stats[category] = {
+            "total_clips": total_in_category,
+            "used_clips": used_count,
+            "remaining": max(0, total_in_category - used_count),
+            "usage_percent": round((used_count / total_in_category * 100), 1) if total_in_category > 0 else 0,
+            "oldest_used": timestamps[0] if timestamps else None,
+            "newest_used": timestamps[-1] if timestamps else None,
+            "exhausted": used_count >= total_in_category and total_in_category > 0
+        }
+
+    # Add categories that haven't been used yet
+    for category in category_index.keys():
+        if category not in stats:
+            stats[category] = {
+                "total_clips": len(category_index[category]),
+                "used_clips": 0,
+                "remaining": len(category_index[category]),
+                "usage_percent": 0,
+                "oldest_used": None,
+                "newest_used": None,
+                "exhausted": False
+            }
+
+    # Sort by usage percentage descending
+    sorted_stats = dict(sorted(stats.items(), key=lambda x: x[1]["usage_percent"], reverse=True))
+
+    return {
+        "categories": sorted_stats,
+        "summary": {
+            "total_categories": len(sorted_stats),
+            "categories_with_usage": len([c for c in sorted_stats.values() if c["used_clips"] > 0]),
+            "exhausted_categories": len([c for c in sorted_stats.values() if c["exhausted"]])
+        }
+    }
+
+@router.post("/broll/reset-usage")
+def reset_broll_usage(category: str = None):
+    """
+    Reset B-roll usage tracking. Optionally reset a single category.
+    """
+    import json
+    from pathlib import Path
+
+    broll_dir = Path("/app/assets/broll")
+    used_clips_path = broll_dir / "used_clips.json"
+
+    if category:
+        # Reset single category
+        usage_data = {}
+        if used_clips_path.exists():
+            try:
+                with open(used_clips_path, "r") as f:
+                    usage_data = json.load(f)
+            except (IOError, json.JSONDecodeError):
+                pass
+
+        if category in usage_data:
+            del usage_data[category]
+            with open(used_clips_path, "w") as f:
+                json.dump(usage_data, f, indent=2)
+            return {"message": f"Reset usage for category '{category}'"}
+        else:
+            return {"message": f"Category '{category}' had no usage to reset"}
+    else:
+        # Reset all
+        with open(used_clips_path, "w") as f:
+            json.dump({}, f)
+        return {"message": "Reset all B-roll usage tracking"}
 
 @router.post("/broll/retag")
 async def retag_all_broll(background_tasks: BackgroundTasks):
@@ -771,11 +1192,15 @@ async def retag_all_broll(background_tasks: BackgroundTasks):
     import uuid
     job_id = str(uuid.uuid4())[:8]
 
+    # Clean up old jobs to prevent memory leaks
+    cleanup_old_broll_jobs()
+
     broll_upload_jobs[job_id] = {
         "status": "queued",
         "task": "retag",
         "progress": 0,
-        "message": "Retagging job queued"
+        "message": "Retagging job queued",
+        "created_at": datetime.now()
     }
 
     background_tasks.add_task(process_broll_retag, job_id)
@@ -912,11 +1337,12 @@ async def process_broll_retag(job_id: str):
 @router.get("/broll/file/{filename}")
 def get_broll_file(filename: str):
     """Serve a B-roll video file."""
-    broll_dir = Path("/app/assets/broll")
-    file_path = broll_dir / filename
+    broll_dir = Path("/app/assets/broll").resolve()
+    # Resolve the full path to catch any traversal attempts (including URL-encoded)
+    file_path = (broll_dir / filename).resolve()
 
-    # Security: prevent directory traversal
-    if ".." in filename or "/" in filename:
+    # Security: verify resolved path is within broll directory
+    if not str(file_path).startswith(str(broll_dir) + "/"):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     if not file_path.exists():
@@ -925,7 +1351,7 @@ def get_broll_file(filename: str):
     return FileResponse(
         path=str(file_path),
         media_type="video/mp4",
-        filename=filename
+        filename=file_path.name  # Use resolved filename
     )
 
 
@@ -934,12 +1360,12 @@ def delete_broll_clip(filename: str):
     """Delete a B-roll clip and remove from metadata."""
     import json
 
-    broll_dir = Path("/app/assets/broll")
-    file_path = broll_dir / filename
+    broll_dir = Path("/app/assets/broll").resolve()
+    file_path = (broll_dir / filename).resolve()
     metadata_path = broll_dir / "metadata.json"
 
-    # Security: prevent directory traversal
-    if ".." in filename or "/" in filename:
+    # Security: verify resolved path is within broll directory
+    if not str(file_path).startswith(str(broll_dir) + "/"):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     # Delete the file

@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: SocialGen_postgres
+    container_name: realcontent_postgres
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
@@ -15,7 +15,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: SocialGen_redis
+    container_name: realcontent_redis
     restart: unless-stopped
     ports:
       - "6380:6379"
@@ -26,7 +26,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: SocialGen_backend
+    container_name: realcontent_backend
     restart: unless-stopped
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     environment:
@@ -60,7 +60,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: SocialGen_celery_worker
+    container_name: realcontent_celery_worker
     restart: unless-stopped
     working_dir: /app
     command: celery -A celery_app worker --loglevel=info --concurrency=16
@@ -101,7 +101,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: SocialGen_celery_beat
+    container_name: realcontent_celery_beat
     restart: unless-stopped
     working_dir: /app
     command: celery -A celery_app beat --loglevel=info
@@ -120,7 +120,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: SocialGen_frontend
+    container_name: realcontent_frontend
     restart: unless-stopped
     environment:
       - REACT_APP_API_URL=http://${N8N_HOST}:8000
@@ -135,8 +135,8 @@ services:
     build:
       context: ./video-downloader
       dockerfile: Dockerfile
-    image: socialgen-video-processor:latest
-    container_name: SocialGen_video_processor
+    image: realcontent-video-processor:latest
+    container_name: realcontent_video_processor
     restart: unless-stopped
     ipc: host
     shm_size: '8gb'
@@ -170,7 +170,7 @@ services:
 
   vpn:
     image: qmcgaw/gluetun
-    container_name: SocialGen_vpn
+    container_name: realcontent_vpn
     cap_add:
       - NET_ADMIN
     devices:

@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import api, {
-    getInfluencers, createInfluencer, fetchInfluencerVideos,
+    getInfluencers, createInfluencer, deleteInfluencer, fetchInfluencerVideos,
     analyzeVideo, getVideoDetails, getInfluencerVideos, getViralClips, API_URL,
     getBrollClips, uploadBrollFromYoutube, getBrollUploadStatus, retagBrollClips, deleteBrollClip,
     getEffectsCatalog, updateClipEffects, getDownloadProgress,
     getInfluencerAutoMode, updateInfluencerAutoMode,
     getPublishingStats, getPublishingQueue, getPublishingConfigs,
     createPublishingConfig, updatePublishingConfig, deletePublishingConfig,
-    approveQueueItem, rejectQueueItem, publishNow, getBlotatoAccounts
+    approveQueueItem, rejectQueueItem, publishNow, getBlotatoAccounts,
+    publishClipNow, getPublishingConfigsForInfluencer
 } from '../api';
 import './ViralManager.css'; // We'll assume standard styling or create it
 
@@ -26,6 +27,7 @@ const ViralManager = () => {
     // For Clips
     const [clips, setClips] = useState([]);
     const [viewingClip, setViewingClip] = useState(null);
+    const [clipsFilterInfluencer, setClipsFilterInfluencer] = useState(null); // Filter clips by influencer
 
     // For Templates
     const [templates, setTemplates] = useState([]);
@@ -33,6 +35,7 @@ const ViralManager = () => {
     // For Effects
     const [effectsModalClip, setEffectsModalClip] = useState(null);
     const [effectsCatalog, setEffectsCatalog] = useState(null);
+    const [effectsLocalState, setEffectsLocalState] = useState({}); // Lifted from EffectsModal to fix Rules of Hooks
 
     // For B-Roll
     const [brollClips, setBrollClips] = useState([]);
@@ -43,6 +46,9 @@ const ViralManager = () => {
     const [brollLoading, setBrollLoading] = useState(false);
     const [brollTagging, setBrollTagging] = useState(false);
     const [brollFilter, setBrollFilter] = useState('all');
+    const [brollHasMore, setBrollHasMore] = useState(true);
+    const [brollLoadingMore, setBrollLoadingMore] = useState(false);
+    const brollLoadMoreRef = useRef(null); // Intersection observer ref
 
     // For Auto-Mode
     const [autoModeModalInfluencer, setAutoModeModalInfluencer] = useState(null);
@@ -69,12 +75,38 @@ const ViralManager = () => {
     // Download progress tracking
     const [downloadProgress, setDownloadProgress] = useState({}); // { videoId: { bytes, speed, fragment } }
 
+    // Delete confirmation
+    const [deleteConfirmInfluencer, setDeleteConfirmInfluencer] = useState(null);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+
+    // Refs for cleanup on unmount
+    const mountedRef = useRef(true);
+    const pollTimeoutsRef = useRef([]);
+
+    // Refs for callback functions to avoid stale closures in intervals
+    const loadVideosRef = useRef(null);
+    const loadClipsRef = useRef(null);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            // Clear all active polling timeouts on unmount
+            pollTimeoutsRef.current.forEach(clearTimeout);
+            pollTimeoutsRef.current = [];
+        };
+    }, []);
+
     useEffect(() => {
         loadInfluencers();
         loadClips();
         loadTemplates();
         loadBroll();
         loadPublishingData();
+        // Load auto-publish setting
+        api.get('/api/viral/settings/auto-publish').then(res => {
+            setAutoPublishEnabled(res.data?.enabled || false);
+        }).catch(() => {});
     }, []);
 
     const loadPublishingData = async () => {
@@ -191,10 +223,91 @@ const ViralManager = () => {
         setConfigForm({ ...configForm, posting_hours: hours });
     };
 
-    const filteredQueue = publishingQueue.filter(item => {
-        if (queueFilter === 'all') return true;
-        return item.status === queueFilter;
-    });
+    const filteredQueue = useMemo(() => {
+        return publishingQueue.filter(item => {
+            if (queueFilter === 'all') return true;
+            return item.status === queueFilter;
+        });
+    }, [publishingQueue, queueFilter]);
+
+    // Memoized sorted videos list (deduplicated by URL)
+    const sortedVideos = useMemo(() => {
+        return Array.from(new Map(videos.map(item => [item.url, item])).values())
+            .sort((a, b) => new Date(b.publication_date || b.created_at || 0) - new Date(a.publication_date || a.created_at || 0));
+    }, [videos]);
+
+    // Memoized filtered and sorted clips list
+    const filteredSortedClips = useMemo(() => {
+        return [...clips]
+            .filter(c => !clipsFilterInfluencer || c.influencer_id === clipsFilterInfluencer.id)
+            .sort((a, b) => {
+                // Sort by updated_at (render time) first, then created_at
+                const aTime = new Date(a.updated_at || a.created_at || 0);
+                const bTime = new Date(b.updated_at || b.created_at || 0);
+                return bTime - aTime;
+            });
+    }, [clips, clipsFilterInfluencer]);
+
+    // Load more B-roll clips (server-side pagination)
+    const loadMoreBroll = useCallback(async () => {
+        if (brollLoadingMore || !brollHasMore) return;
+        setBrollLoadingMore(true);
+        try {
+            const category = brollFilter === 'all' ? null : brollFilter;
+            const data = await getBrollClips(50, brollClips.length, category);
+            setBrollClips(prev => [...prev, ...(data.clips || [])]);
+            setBrollHasMore(data.pagination?.has_more || false);
+        } catch (e) {
+            console.error('Failed to load more B-roll:', e);
+        } finally {
+            setBrollLoadingMore(false);
+        }
+    }, [brollLoadingMore, brollHasMore, brollFilter, brollClips.length]);
+
+    // Reset and reload when filter changes
+    useEffect(() => {
+        const loadFiltered = async () => {
+            setBrollClips([]);
+            setBrollHasMore(true);
+            try {
+                const category = brollFilter === 'all' ? null : brollFilter;
+                const data = await getBrollClips(50, 0, category);
+                setBrollClips(data.clips || []);
+                setBrollMetadata(data.metadata || null);
+                setBrollHasMore(data.pagination?.has_more || false);
+            } catch (e) {
+                console.error('Failed to load B-roll:', e);
+            }
+        };
+        if (activeTab === 'broll') {
+            loadFiltered();
+        }
+    }, [brollFilter, activeTab]);
+
+    // Intersection Observer for B-roll lazy loading
+    useEffect(() => {
+        if (activeTab !== 'broll' || !brollHasMore) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting) {
+                    loadMoreBroll();
+                }
+            },
+            { threshold: 0.1 }
+        );
+
+        const loadMoreElement = brollLoadMoreRef.current;
+        if (loadMoreElement) {
+            observer.observe(loadMoreElement);
+        }
+
+        return () => {
+            if (loadMoreElement) {
+                observer.unobserve(loadMoreElement);
+            }
+        };
+    }, [activeTab, brollHasMore, loadMoreBroll]);
 
     const formatPublishDate = (dateStr) => {
         if (!dateStr) return '-';
@@ -236,11 +349,18 @@ const ViralManager = () => {
         } catch (e) { console.error(e); }
     };
 
+    // Keep refs in sync with latest function references (avoids stale closures in intervals)
+    useEffect(() => {
+        loadClipsRef.current = loadClips;
+    });
+
     const loadBroll = async () => {
         try {
-            const data = await getBrollClips();
+            const category = brollFilter === 'all' ? null : brollFilter;
+            const data = await getBrollClips(50, 0, category);
             setBrollClips(data.clips || []);
             setBrollMetadata(data.metadata || null);
+            setBrollHasMore(data.pagination?.has_more || false);
         } catch (e) { console.error('Failed to load B-roll:', e); }
     };
 
@@ -265,8 +385,14 @@ const ViralManager = () => {
 
     const pollBrollJob = async (jobId) => {
         const poll = async () => {
+            // Check if component is still mounted before proceeding
+            if (!mountedRef.current) return;
+
             try {
                 const status = await getBrollUploadStatus(jobId);
+                // Check again after async call
+                if (!mountedRef.current) return;
+
                 setBrollUploadJobs(prev => prev.map(j =>
                     j.job_id === jobId ? { ...j, ...status } : j
                 ));
@@ -274,7 +400,9 @@ const ViralManager = () => {
                     loadBroll(); // Refresh clips list
                     return;
                 }
-                setTimeout(poll, 3000);
+                // Store timeout ID for cleanup on unmount
+                const timeoutId = setTimeout(poll, 3000);
+                pollTimeoutsRef.current.push(timeoutId);
             } catch (e) {
                 console.error('Poll error:', e);
             }
@@ -407,6 +535,9 @@ const ViralManager = () => {
                 setEffectsCatalog(catalog);
             } catch (e) { console.error('Failed to load effects catalog:', e); }
         }
+        // Initialize local effects state when opening modal (fixes Rules of Hooks)
+        const currentEffects = clip.render_metadata?.director_effects || {};
+        setEffectsLocalState({...currentEffects});
         setEffectsModalClip(clip);
     };
 
@@ -425,11 +556,12 @@ const ViralManager = () => {
         } catch (e) { console.error('Failed to save effects:', e); }
     };
 
-    // Effects override modal component
+    // Effects override modal component (uses lifted state to fix Rules of Hooks)
     const EffectsModal = () => {
         if (!effectsModalClip) return null;
-        const currentEffects = effectsModalClip.render_metadata?.director_effects || {};
-        const [localEffects, setLocalEffects] = useState({...currentEffects});
+        // Use parent's state instead of local useState (fixes Rules of Hooks violation)
+        const localEffects = effectsLocalState;
+        const setLocalEffects = setEffectsLocalState;
 
         const updateLocal = (key, value) => setLocalEffects(prev => ({...prev, [key]: value}));
 
@@ -588,6 +720,38 @@ const ViralManager = () => {
         loadVideos(inf.id);
     };
 
+    const handleViewInfluencerClips = (inf, e) => {
+        e.stopPropagation();
+        setClipsFilterInfluencer(inf);
+        setActiveTab('clips');
+    };
+
+    const handleDeleteInfluencer = async () => {
+        if (!deleteConfirmInfluencer) return;
+        setDeleteLoading(true);
+        try {
+            const result = await deleteInfluencer(deleteConfirmInfluencer.id);
+            console.log('Deleted influencer:', result);
+            // Clear selection if deleted influencer was selected
+            if (selectedInfluencer?.id === deleteConfirmInfluencer.id) {
+                setSelectedInfluencer(null);
+                setVideos([]);
+            }
+            // Clear clips filter if filtering by deleted influencer
+            if (clipsFilterInfluencer?.id === deleteConfirmInfluencer.id) {
+                setClipsFilterInfluencer(null);
+            }
+            setDeleteConfirmInfluencer(null);
+            loadInfluencers();
+            loadClips();
+        } catch (e) {
+            console.error('Failed to delete influencer:', e);
+            alert('Failed to delete influencer: ' + (e.response?.data?.detail || e.message));
+        } finally {
+            setDeleteLoading(false);
+        }
+    };
+
     const loadVideos = async (id, silent = false) => {
         try {
             const data = await getInfluencerVideos(id);
@@ -597,7 +761,12 @@ const ViralManager = () => {
         }
     }
 
-    // Auto-refresh poll
+    // Keep ref in sync with latest function reference (avoids stale closure in interval)
+    useEffect(() => {
+        loadVideosRef.current = loadVideos;
+    });
+
+    // Auto-refresh poll - uses ref to avoid stale closure
     useEffect(() => {
         if (!selectedInfluencer) return;
 
@@ -614,13 +783,13 @@ const ViralManager = () => {
         let interval;
         if (hasActiveTasks) {
             interval = setInterval(() => {
-                loadVideos(selectedInfluencer.id, true);
+                loadVideosRef.current?.(selectedInfluencer.id, true);
             }, 3000);
         }
         return () => clearInterval(interval);
     }, [videos, selectedInfluencer]);
 
-    // Auto-refresh for clips tab
+    // Auto-refresh for clips tab - uses ref to avoid stale closure
     useEffect(() => {
         if (activeTab !== 'clips') return;
 
@@ -632,7 +801,7 @@ const ViralManager = () => {
         let interval;
         if (hasActiveClips) {
             interval = setInterval(() => {
-                loadClips();
+                loadClipsRef.current?.();
             }, 3000);
         }
         return () => clearInterval(interval);
@@ -668,6 +837,49 @@ const ViralManager = () => {
         }
     };
 
+    const [publishingClips, setPublishingClips] = useState({});
+    const [autoPublishEnabled, setAutoPublishEnabled] = useState(false);
+
+    const handlePublish = async (clipId, recommendedPlatform = null) => {
+        // Build prompt with AI recommendation highlighted
+        const aiRec = recommendedPlatform ?
+            `\n🤖 AI recommends: ${recommendedPlatform === 'tiktok' ? 'TikTok' : 'Reels'}\n` : '';
+
+        // Default to AI recommendation (1=TikTok, 2=Reels) or 3=All
+        const defaultChoice = recommendedPlatform === 'tiktok' ? '1' :
+                              recommendedPlatform === 'reels' ? '2' : '3';
+
+        const choice = window.prompt(
+            `Publish to which platforms?${aiRec}\n` +
+            "1 = TikTok only\n" +
+            "2 = Reels only\n" +
+            "3 = Both TikTok + Reels\n" +
+            "4 = X (Twitter) only\n\n" +
+            "Enter 1, 2, 3, or 4:",
+            defaultChoice
+        );
+        if (!choice) return;
+
+        let platforms = null; // null = all configured
+        if (choice.trim() === "1") platforms = ["tiktok"];
+        else if (choice.trim() === "2") platforms = ["reels", "instagram_reels"];
+        else if (choice.trim() === "3") platforms = ["tiktok", "reels", "instagram_reels"];
+        else if (choice.trim() === "4") platforms = ["twitter"];
+        // anything else = all configured (null)
+
+        setPublishingClips(prev => ({ ...prev, [clipId]: true }));
+        try {
+            const result = await publishClipNow(clipId, platforms);
+            alert(`Published to ${result.queued} account(s): ${result.configs.join(', ')}`);
+            if (selectedInfluencer) loadVideos(selectedInfluencer.id, true);
+            loadClips();
+        } catch (e) {
+            alert("Publish error: " + (e.response?.data?.detail || e.message));
+        } finally {
+            setPublishingClips(prev => ({ ...prev, [clipId]: false }));
+        }
+    };
+
     const handleRender = async (clipId) => {
         setRenderingClips(prev => ({ ...prev, [clipId]: true }));
         try {
@@ -684,12 +896,52 @@ const ViralManager = () => {
         }
     };
 
+    const [renderingAll, setRenderingAll] = useState(false);
+
+    const handleRenderAll = async () => {
+        // Get all clips that can be rendered (pending, error, failed, or ready for re-render)
+        const renderableClips = filteredSortedClips.filter(c =>
+            c.status === 'pending' || c.status === 'error' || c.status === 'failed' || c.status === 'ready'
+        );
+
+        if (renderableClips.length === 0) {
+            alert('No clips to render');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `Render ${renderableClips.length} clip(s)?\n\n` +
+            `This will queue all pending/error clips and re-render ready clips.`
+        );
+        if (!confirmed) return;
+
+        setRenderingAll(true);
+        let queued = 0;
+        let errors = 0;
+
+        for (const clip of renderableClips) {
+            try {
+                await api.post(`/api/viral/viral-clips/${clip.id}/render`);
+                queued++;
+            } catch (e) {
+                console.error(`Failed to queue clip ${clip.id}:`, e);
+                errors++;
+            }
+        }
+
+        setRenderingAll(false);
+        loadClips();
+        if (selectedInfluencer) loadVideos(selectedInfluencer.id, true);
+
+        alert(`Queued ${queued} clip(s) for rendering${errors > 0 ? `, ${errors} failed` : ''}`);
+    };
+
     return (
         <div className="viral-manager-container">
             <div className="header">
-                <h2>Viral Clip Factory</h2>
+                <h2>Content Discovery</h2>
                 <div className="tabs">
-                    <button className={activeTab === 'influencers' ? 'active' : ''} onClick={() => setActiveTab('influencers')}>Influencers</button>
+                    <button className={activeTab === 'influencers' ? 'active' : ''} onClick={() => setActiveTab('influencers')}>Content Sources</button>
                     <button className={activeTab === 'videos' ? 'active' : ''} onClick={() => setActiveTab('videos')}>Videos</button>
                     <button className={activeTab === 'clips' ? 'active' : ''} onClick={() => setActiveTab('clips')}>Clips</button>
                     <button className={activeTab === 'broll' ? 'active' : ''} onClick={() => setActiveTab('broll')}>B-Roll</button>
@@ -703,10 +955,10 @@ const ViralManager = () => {
                 {activeTab === 'influencers' && (
                     <div className="influencers-panel">
                         <div className="influencer-grid">
-                            {/* Add Influencer Card */}
+                            {/* Add Source Card */}
                             <div className="add-influencer-card" onClick={() => setShowAddModal(true)}>
                                 <div className="add-icon">+</div>
-                                <span>Add Influencer</span>
+                                <span>Add Source</span>
                             </div>
                             {influencers.map(inf => (
                                 <div key={inf.id} className="influencer-card-v2" onClick={() => handleSelectInfluencer(inf)}>
@@ -774,10 +1026,22 @@ const ViralManager = () => {
                                                 Settings
                                             </button>
                                             <button
+                                                className="inf-clips-btn"
+                                                onClick={(e) => handleViewInfluencerClips(inf, e)}
+                                            >
+                                                Clips
+                                            </button>
+                                            <button
                                                 className="inf-view-btn"
                                                 onClick={(e) => { e.stopPropagation(); handleSelectInfluencer(inf); }}
                                             >
                                                 View Videos
+                                            </button>
+                                            <button
+                                                className="inf-delete-btn"
+                                                onClick={(e) => { e.stopPropagation(); setDeleteConfirmInfluencer(inf); }}
+                                            >
+                                                Delete
                                             </button>
                                         </div>
                                     </div>
@@ -787,10 +1051,46 @@ const ViralManager = () => {
                     </div>
                 )}
 
+                {/* Delete Confirmation Modal */}
+                {deleteConfirmInfluencer && (
+                    <div className="modal-overlay" onClick={() => !deleteLoading && setDeleteConfirmInfluencer(null)}>
+                        <div className="modal delete-confirm-modal" onClick={e => e.stopPropagation()}>
+                            <h2>Delete Source</h2>
+                            <p className="delete-warning">
+                                Are you sure you want to delete <strong>{deleteConfirmInfluencer.name}</strong>?
+                            </p>
+                            <p className="delete-details">
+                                This will permanently delete:
+                            </p>
+                            <ul className="delete-list">
+                                <li>{deleteConfirmInfluencer.video_count || 0} videos</li>
+                                <li>{deleteConfirmInfluencer.clip_count || 0} clips</li>
+                            </ul>
+                            <p className="delete-warning-text">This action cannot be undone.</p>
+                            <div className="modal-actions">
+                                <button
+                                    className="cancel-btn"
+                                    onClick={() => setDeleteConfirmInfluencer(null)}
+                                    disabled={deleteLoading}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="confirm-delete-btn"
+                                    onClick={handleDeleteInfluencer}
+                                    disabled={deleteLoading}
+                                >
+                                    {deleteLoading ? 'Deleting...' : 'Delete'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {activeTab === 'videos' && (
                     <div className="videos-panel">
                         {!selectedInfluencer ? (
-                            <p>Please select an influencer first.</p>
+                            <p>Please select a content source first.</p>
                         ) : (
                             <div>
                                 <div className="panel-header">
@@ -800,9 +1100,7 @@ const ViralManager = () => {
                                     </button>
                                 </div>
                                 <div className="video-list">
-                                    {Array.from(new Map(videos.map(item => [item.url, item])).values())
-                                        .sort((a, b) => new Date(b.publication_date || b.created_at || 0) - new Date(a.publication_date || a.created_at || 0))
-                                        .map(v => (
+                                    {sortedVideos.map(v => (
                                             <div key={v.id} className="video-item card">
                                                 <div className="video-card-content">
                                                     <a href={v.url} target="_blank" rel="noreferrer" className="thumbnail-link">
@@ -886,18 +1184,46 @@ const ViralManager = () => {
                     activeTab === 'clips' && (
                         <div className="clips-panel">
                             <div className="panel-header">
-                                <h2>All Clips</h2>
-                                <button onClick={loadClips}>Refresh</button>
+                                <h2>{clipsFilterInfluencer ? `Clips - ${clipsFilterInfluencer.name}` : 'All Clips'}</h2>
+                                <div className="header-actions">
+                                    <div className="auto-publish-toggle" onClick={(e) => e.stopPropagation()}>
+                                        <label className="toggle-switch-sm" title={autoPublishEnabled ? 'Auto-publish ON' : 'Auto-publish OFF'}>
+                                            <input
+                                                type="checkbox"
+                                                checked={autoPublishEnabled}
+                                                onChange={async (e) => {
+                                                    const newVal = e.target.checked;
+                                                    setAutoPublishEnabled(newVal);
+                                                    try {
+                                                        await api.put('/api/viral/settings/auto-publish', { enabled: newVal });
+                                                    } catch (err) {
+                                                        setAutoPublishEnabled(!newVal);
+                                                        alert('Failed to update auto-publish: ' + (err.response?.data?.detail || err.message));
+                                                    }
+                                                }}
+                                            />
+                                            <span className="toggle-slider-sm"></span>
+                                        </label>
+                                        <span className="toggle-label-sm">Auto-Publish</span>
+                                        {autoPublishEnabled && <span className="inf-auto-badge">ON</span>}
+                                    </div>
+                                    {clipsFilterInfluencer && (
+                                        <button className="clear-filter-btn" onClick={() => setClipsFilterInfluencer(null)}>
+                                            Clear Filter ✕
+                                        </button>
+                                    )}
+                                    <button
+                                        className="render-all-btn"
+                                        onClick={handleRenderAll}
+                                        disabled={renderingAll}
+                                    >
+                                        {renderingAll ? 'Queuing...' : 'Render All'}
+                                    </button>
+                                    <button onClick={loadClips}>Refresh</button>
+                                </div>
                             </div>
                             <div className="card-grid">
-                                {[...clips]
-                                    .sort((a, b) => {
-                                        // Sort by updated_at (render time) first, then created_at
-                                        const aTime = new Date(a.updated_at || a.created_at || 0);
-                                        const bTime = new Date(b.updated_at || b.created_at || 0);
-                                        return bTime - aTime; // Newest first
-                                    })
-                                    .map(c => {
+                                {filteredSortedClips.map(c => {
                                     const isReady = ['completed', 'ready'].includes(c.status?.toLowerCase());
                                     const isRendering = ['rendering', 'processing', 'queued'].some(s => c.status?.toLowerCase().includes(s));
                                     const canRender = c.status === 'pending' || c.status === 'error' || c.status === 'failed';
@@ -914,16 +1240,43 @@ const ViralManager = () => {
 
                                     return (
                                         <div key={c.id} className="card clip-card">
+                                            {isReady && c.publishing_status !== 'published' && (
+                                                <button
+                                                    className="publish-icon-btn"
+                                                    onClick={() => handlePublish(c.id, c.render_metadata?.recommended_platform)}
+                                                    disabled={publishingClips[c.id]}
+                                                    title="Publish"
+                                                >
+                                                    {publishingClips[c.id] ? '...' : '↑'}
+                                                </button>
+                                            )}
+                                            {c.influencer_name && (
+                                                <div className="clip-influencer">
+                                                    <span className="influencer-badge">{c.influencer_name}</span>
+                                                </div>
+                                            )}
                                             <div className="clip-header">
                                                 <h4>{c.title}</h4>
-                                                {formattedTime && <span className="clip-timestamp">{formattedTime}</span>}
                                             </div>
                                             <div className="status-row">
                                                 {isRendering && <span className="spinner-small"></span>}
-                                                <span className={`status ${c.status}`}>{c.status}</span>
+                                                <span className={`status ${c.status?.split(':')[0]?.split(' ')[0]?.toLowerCase() || 'pending'}`}>
+                                                    {c.status?.includes('Processing:')
+                                                        ? c.status.replace('Processing:', '').trim()
+                                                        : c.status}
+                                                </span>
                                             </div>
-                                            <p>Type: {c.clip_type}</p>
-                                            <EffectBadges clip={c} />
+                                            <div className="clip-meta-row">
+                                                <span className="clip-type">Type: {c.clip_type}</span>
+                                                {(() => {
+                                                    const platform = c.render_metadata?.recommended_platform || 'tiktok';
+                                                    return (
+                                                        <span className={`platform-badge ${platform}`}>
+                                                            {platform === 'tiktok' ? '🎵 TikTok' : '📷 Reels'}
+                                                        </span>
+                                                    );
+                                                })()}
+                                            </div>
                                             {c.render_metadata?.effect_failures?.length > 0 && (
                                                 <div className="effect-failures" title={c.render_metadata.effect_failures.join(', ')}>
                                                     <span className="failure-badge">⚠ {c.render_metadata.effect_failures.length} effect{c.render_metadata.effect_failures.length > 1 ? 's' : ''} failed</span>
@@ -944,11 +1297,18 @@ const ViralManager = () => {
                                                 {isReady && (
                                                     <>
                                                         <button onClick={() => setViewingClip(c)}>▶ Play</button>
-                                                        <button onClick={() => {
+                                                        <button onClick={async () => {
                                                             const filename = c.edited_video_path?.split('/').pop();
                                                             if (!filename) return;
                                                             const downloadUrl = new URL(`/api/viral/file/${filename}`, API_URL).toString();
-                                                            window.open(downloadUrl, '_blank');
+                                                            const response = await fetch(downloadUrl);
+                                                            const blob = await response.blob();
+                                                            const blobUrl = URL.createObjectURL(blob);
+                                                            const a = document.createElement('a');
+                                                            a.href = blobUrl;
+                                                            a.download = filename;
+                                                            a.click();
+                                                            URL.revokeObjectURL(blobUrl);
                                                         }}>Download</button>
                                                         <button
                                                             onClick={() => handleRender(c.id)}
@@ -959,6 +1319,12 @@ const ViralManager = () => {
                                                         </button>
                                                     </>
                                                 )}
+                                            </div>
+                                            <div className="clip-footer">
+                                                {c.publishing_status === 'published' && (
+                                                    <span className="published-pill">Published</span>
+                                                )}
+                                                {formattedTime && <span className="clip-timestamp">{formattedTime}</span>}
                                             </div>
                                         </div>
                                     );
@@ -1083,29 +1449,20 @@ const ViralManager = () => {
                                 <option value="untagged">Untagged</option>
                             </select>
                             <span className="filter-count">
-                                {brollClips.filter(c =>
-                                    brollFilter === 'all' ? true :
-                                        brollFilter === 'untagged' ? (!c.categories || c.categories.length === 0) :
-                                            c.categories?.includes(brollFilter)
-                                ).length} clips
+                                {brollMetadata?.filtered_clips || brollClips.length} clips
                             </span>
                         </div>
 
-                        {/* Clips Grid */}
+                        {/* Clips Grid - Server-side Paginated */}
                         <div className="broll-grid">
-                            {brollClips
-                                .filter(c =>
-                                    brollFilter === 'all' ? true :
-                                        brollFilter === 'untagged' ? (!c.categories || c.categories.length === 0) :
-                                            c.categories?.includes(brollFilter)
-                                )
-                                .map(clip => (
+                            {brollClips.map(clip => (
                                     <div key={clip.filename} className="broll-card card">
                                         <div className="broll-preview">
                                             <video
                                                 src={`${API_URL}/api/viral/broll/file/${clip.filename}`}
                                                 muted
                                                 loop
+                                                preload="none"
                                                 onMouseEnter={e => e.target.play().catch(() => {})}
                                                 onMouseLeave={e => { e.target.pause(); e.target.currentTime = 0; }}
                                             />
@@ -1140,7 +1497,33 @@ const ViralManager = () => {
                                         </div>
                                     </div>
                                 ))}
+
+                            {/* Skeleton placeholders while loading more */}
+                            {brollHasMore && (
+                                [...Array(4)].map((_, i) => (
+                                    <div key={`skeleton-${i}`} className="broll-card card skeleton">
+                                        <div className="broll-preview skeleton-preview"></div>
+                                        <div className="broll-info">
+                                            <span className="skeleton-text skeleton-filename"></span>
+                                            <span className="skeleton-text skeleton-duration"></span>
+                                            <div className="skeleton-text skeleton-caption"></div>
+                                            <div className="broll-categories">
+                                                <span className="skeleton-text skeleton-tag"></span>
+                                                <span className="skeleton-text skeleton-tag"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
+
+                        {/* Load More Trigger */}
+                        {brollHasMore && (
+                            <div ref={brollLoadMoreRef} className="load-more-trigger">
+                                <span className="loading-text">{brollLoadingMore ? 'Loading...' : 'Scroll for more'}</span>
+                                <span className="load-count">{brollClips.length} of {brollMetadata?.filtered_clips || '?'}</span>
+                            </div>
+                        )}
 
                         {brollClips.length === 0 && (
                             <div className="empty-state">
@@ -1285,7 +1668,7 @@ const ViralManager = () => {
                 showAddModal && (
                     <div className="modal-overlay">
                         <div className="modal">
-                            <h3>Add Influencer</h3>
+                            <h3>Add Content Source</h3>
                             <form onSubmit={handleAddInfluencer}>
                                 <input
                                     placeholder="Name"
@@ -1325,9 +1708,10 @@ const ViralManager = () => {
                             </div>
                             <video
                                 controls
-                                autoPlay
                                 src={`${API_URL}/api/viral/file/${viewingClip.edited_video_path?.split('/').pop()}`}
                                 className="modal-video-player"
+                                onLoadedData={e => e.target.play().catch(() => {})}
+                                onError={e => console.warn('Video load error:', e)}
                             />
                         </div>
                     </div>
@@ -1404,18 +1788,6 @@ const ViralManager = () => {
                                     Auto-Render Clips
                                 </label>
                                 <p className="help-text">Automatically render identified viral clips</p>
-                            </div>
-
-                            <div className="form-group">
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={autoModeSettings.auto_publish_enabled || false}
-                                        onChange={(e) => setAutoModeSettings({ ...autoModeSettings, auto_publish_enabled: e.target.checked })}
-                                    />
-                                    Auto-Queue for Publishing
-                                </label>
-                                <p className="help-text">Automatically add rendered clips to publishing queue</p>
                             </div>
 
                             {autoModeSettings.auto_mode_enabled_at && (
