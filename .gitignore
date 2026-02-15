@@ -39,6 +39,9 @@ Thumbs.db
 # Docker
 *.log
 
+# Credential files (contain API keys)
+**/credentials*.json
+
 # Claude / AI config (may contain project-specific settings)
 .claude/
 CLAUDE.md
