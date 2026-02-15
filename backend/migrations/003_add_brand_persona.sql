@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS brand_persona (
     id SERIAL PRIMARY KEY,
 
     -- Identity
-    name VARCHAR DEFAULT 'Beth Anderson',
+    name VARCHAR DEFAULT 'Sarah Mitchell',
     title VARCHAR DEFAULT 'Real Estate Expert',
-    location VARCHAR DEFAULT 'Coeur d''Alene, Idaho & Liberty Lake, Washington',
+    location VARCHAR DEFAULT 'Pacific Northwest',
 
     -- Bio/Background (shown to LLM for context)
     bio TEXT DEFAULT 'A knowledgeable and approachable real estate professional who helps first-time homebuyers and families find their dream homes in the beautiful Pacific Northwest.',
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS brand_persona (
     -- Signature phrases/CTAs
     signature_intro VARCHAR DEFAULT 'Hey neighbors!',
     signature_cta VARCHAR DEFAULT 'DM me to chat about your home journey in {location}',
-    hashtags JSONB DEFAULT '["CDAhomes", "LibertyLake", "NorthIdahoRealEstate", "PNWliving"]'::jsonb,
+    hashtags JSONB DEFAULT '["PNWhomes", "RealEstateLife", "HomeBuying", "PNWliving"]'::jsonb,
 
     updated_at TIMESTAMP DEFAULT NOW()
 );

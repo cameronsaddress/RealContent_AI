@@ -795,7 +795,7 @@ Webhook ──> Specific ID? ──┬─> Get Specific Idea ──┬──> Me
 - `X-Title: n8n-video-pipeline`
 
 **System Prompt Key Points:**
-- Persona: Beth Anderson, realtor in Coeur d'Alene, Idaho and Liberty Lake, Washington
+- Persona: Sarah Mitchell, realtor in Pacific Northwest, Idaho and Pacific Northwest, Washington
 - Structure: Hook, Body, Call to Action
 - Markers: `[PAUSE]` for pauses, `*asterisks*` for emphasis
 - Length: 150-250 words

@@ -292,7 +292,7 @@ class BrandPersona(Base):
     id = Column(Integer, primary_key=True, default=1)
 
     # Identity
-    name = Column(String, default="Beth Anderson")
+    name = Column(String, default="Sarah Mitchell")
     title = Column(String, default="Real Estate Expert")
     location = Column(String, default="North Idaho & Spokane area")
 

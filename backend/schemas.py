@@ -512,7 +512,7 @@ class VideoSettingsResponse(VideoSettingsBase):
 
 class BrandPersonaBase(BaseModel):
     # Identity
-    name: str = "Beth Anderson"
+    name: str = "Sarah Mitchell"
     title: str = "Real Estate Expert"
     location: str = "North Idaho & Spokane area"
     bio: str = "A knowledgeable and approachable real estate professional who helps first-time homebuyers and families find their dream homes in the beautiful Pacific Northwest."

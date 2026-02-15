@@ -238,68 +238,50 @@ async def _transcribe_video_async(video_id: int):
             logger.info(f"Raw transcript saved for video {video_id}")
 
             # --- Intro Skipping Logic for specific creators ---
+            # Some influencers have recurring intro sequences that should be trimmed
+            # before content analysis. The logic finds the last intro marker and removes
+            # everything before it.
             try:
-                # For Nicholas J Fuentes, skip the "intro" loop until he says "Good evening! This is America First"
                 channel_id = (video.influencer.channel_id or "").lower()
                 influencer_name = (video.influencer.name or "").lower()
-                
-                if video.influencer and ("nicholasjfuentes" in channel_id or "nicholas" in influencer_name):
+                intro_phrases = getattr(video.influencer, "intro_phrases", None)
+
+                if video.influencer and intro_phrases:
                     logger.info(f"Checking for intro skip for influencer: {video.influencer.name}")
                     segments = result.get("segments", [])
-                    # Find LAST occurrence of the intro phrase
                     last_cutoff_time = 0.0
                     found_match = False
-                    
+
                     for i, seg in enumerate(segments):
                         text = (seg.get("text") or "").lower()
-                        
-                        # Check current segment
-                        # Primary Trigger: "America First" + context
-                        match_primary = "america first" in text and ("good evening" in text or "watching" in text)
-                        
-                        # Secondary Trigger: "We have a great show for you" (explicit start marker)
+
+                        # Match any configured intro phrase
+                        phrase_match = any(p.lower() in text for p in intro_phrases)
+
+                        # Secondary trigger: "we have a great show for you"
                         match_secondary = "we have a great show for you" in text
 
-                        # Check previous segment context for Primary Trigger
-                        match_sequence = False
-                        if i > 0:
-                            prev_text = (segments[i-1].get("text") or "").lower()
-                            if "good evening" in prev_text and "america" in text:
-                                match_sequence = True
-
-                        if match_primary or match_secondary or match_sequence:
+                        if phrase_match or match_secondary:
                             cutoff_candidate = seg["end"]
-                            
-                            # Look ahead for name drop extension
-                            if i + 1 < len(segments):
-                                next_seg = segments[i+1]
-                                next_text = (next_seg.get("text") or "").lower()
-                                if "nicholas" in next_text:
-                                    cutoff_candidate = next_seg["end"]
-                            
                             last_cutoff_time = cutoff_candidate
                             found_match = True
                             logger.info(f"Found intro candidate at {cutoff_candidate}s")
-                    
+
                     if found_match:
-                        logger.info(f"Final Nick Fuentes intro cleanup cutoff: {last_cutoff_time}s")
-                        
-                        # Filter transcript to exclude everything before cutoff
-                        new_segments = []
-                        for seg in segments:
-                            if seg["end"] > last_cutoff_time:
-                                new_segments.append(seg)
-                        
+                        logger.info(f"Final intro cleanup cutoff: {last_cutoff_time}s")
+
+                        new_segments = [
+                            seg for seg in segments if seg["end"] > last_cutoff_time
+                        ]
+
                         if new_segments:
                             result["segments"] = new_segments
-                            # Update with filtered result
                             video.transcript_json = result
                             logger.info(f"Intro skipping applied. Removed segments before {last_cutoff_time}s.")
                         else:
                             logger.warning("Intro skipping removed ALL segments! Reverting...")
                     else:
-                        # Fallback Rule: If no intro phrase found, assume Video starts at 0:00
-                        logger.info("No 'Nick Fuentes' intro sequence found in transcript. Treating video start as actual beginning (0:00).")
+                        logger.info("No intro sequence found in transcript. Treating video start as actual beginning (0:00).")
             except Exception as logic_err:
                 logger.error(f"Intro Logic Failed (continuing with raw transcript): {logic_err}")
                 # Do not re-raise; keep the raw transcript we already saved

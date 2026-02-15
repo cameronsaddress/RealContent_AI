@@ -29,7 +29,7 @@ class ScriptRequest(BaseModel):
 
 class BrandPersonaContext(BaseModel):
     """Brand persona for script context."""
-    name: str = "Beth Anderson"
+    name: str = "Sarah Mitchell"
     title: str = "Real Estate Expert"
     location: str = "North Idaho & Spokane area"
     bio: str = ""
